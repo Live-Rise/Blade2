@@ -1,0 +1,19 @@
+# 默认所有文本按 LF 出入库：本机 core.autocrlf=true（Git for Windows 系统级默认），
+# 没有这层规则时 Windows 克隆者会把 Kernel/ 与 rust/tests 下的 .sh 脚本检出成
+# CRLF，Git Bash 执行会坏（bad interpreter）。构建产物经 MSBuild 直接从工作副本
+# 拷贝，不受此规则影响。
+* text=auto eol=lf
+
+# 二进制（禁止行尾转换与 diff）
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.bmp binary
+*.ico binary
+*.msix binary
+*.exe binary
+*.dll binary
+*.node binary
+*.pdb binary

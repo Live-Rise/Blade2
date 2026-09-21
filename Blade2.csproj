@@ -1,0 +1,98 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.22621.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <RootNamespace>Blade2</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <UseWinUI>true</UseWinUI>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <PublishReadyToRun>false</PublishReadyToRun>
+    <Version>0.8.0.0</Version>
+    <AssemblyName>Blade2</AssemblyName>
+    <!-- 版本信息里的显示名走品牌名：无包形态下 AppNotificationManager 的无参 Register 让
+         shell 解析发送者显示名，取的是 exe 的版本信息（FileDescription 由 AssemblyTitle 生成，
+         不是 Description）。但那只在平台没有该身份的注册记录时生效——显示名按身份只认首次
+         注册，历史版本注册过的 DshWinUI 要靠 ShellToast.MigrateStaleSenderName 清一次才刷新，
+         这里只是让「万一走到隐式解析」时拿到的也是品牌名而非内部程序集名。 -->
+    <Product>Blade²</Product>
+    <Company>Blade²</Company>
+    <Description>Blade²</Description>
+    <Copyright>© 2026 SAKUSORA</Copyright>
+    <AssemblyTitle>Blade²</AssemblyTitle>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <WindowsSdkPackageVersion>10.0.22621.38</WindowsSdkPackageVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250602001" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
+  </ItemGroup>
+
+  <!-- 内核自包含：Kernel/（node.exe + dsh 树）原样打进 MSIX。
+       运行时 DshKernelHost 从 AppContext.BaseDirectory 解析；MSIX 安装目录只读，
+       因此内核数据走 DSH_HOME=%LOCALAPPDATA%\Blade2。 -->
+  <ItemGroup>
+    <Content Include="Kernel\**\*" CopyToOutputDirectory="PreserveNewest" TargetPath="Kernel\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- 界面语言包（zh 之外的翻译表，键 = MainWindow ShellEnglish 的中文键）：
+       运行时 LoadLocaleTable 按 AppContext.BaseDirectory\Assets\i18n\<locale>.json 读取。 -->
+  <ItemGroup>
+    <Content Include="Assets\i18n\*.json" CopyToOutputDirectory="PreserveNewest" TargetPath="Assets\i18n\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- 品牌图标（侧栏品牌行 + 空态主标）：ms-appx:/// 靠包图解析，开发形态直接跑 bin 下的
+       exe（无包标识）时既没有包图、Assets 也不在输出目录 → 图不显示（实测截图：品牌行与
+       空态主标位置为空）。把用到的图显式带到输出目录，代码里按文件加载、失败再回落 ms-appx
+       （打包形态安装目录下同样有该文件，所以文件优先在所有形态下都成立）。 -->
+  <ItemGroup>
+    <None Include="Assets\Square44x44Logo.png" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- 任务栏/Shell 小图标走 Square44x44Logo 的 targetsize 变体；缺 *_altform-unplated 时
+       系统会把 44x44 图垫在方形底板（plated）上缩放渲染 → 圆角徽章外出现一圈方框（0.7.8.4 实测）。
+       显式带上 unplated 变体，Shell 直接贴图、无底板。 -->
+  <ItemGroup>
+    <Content Include="Assets\Square44x44Logo.targetsize-*_altform-unplated.png" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- 防复发：仓库内 artifacts/ 与 probe/ 属工作产物区，其中的 .xaml（备份/诊断）
+       会被 WinUI 默认 Page 通配当成页面编译，导致 XamlCompiler 静默失败。此处显式排除。
+       _scratch/ 同理：草稿脚本与半成品 .cs 不得进入编译（Compile Remove）。
+       根目录的 _styles_*.xaml 是样式重构期的诊断副本（真身在 Theme\Styles.xaml，
+       无人引用）：同为 Page 通配误伤，且被删掉其中一份后 input.json 仍留着失效项，
+       XamlCompiler 直接崩（退出码 1 且无任何诊断）。 -->
+  <ItemGroup>
+    <Page Remove="artifacts\**" />
+    <Page Remove="probe\**" />
+    <Page Remove="_scratch\**" />
+    <Page Remove="_styles_*.xaml" />
+    <ApplicationDefinition Remove="artifacts\**" />
+    <ApplicationDefinition Remove="probe\**" />
+    <ApplicationDefinition Remove="_styles_*.xaml" />
+    <Compile Remove="artifacts\**" />
+    <Compile Remove="probe\**" />
+    <Compile Remove="_scratch\**" />
+  </ItemGroup>
+
+</Project>
+
+
+
+
+
+
+
+
+
+
+

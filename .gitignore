@@ -1,0 +1,41 @@
+# ── 构建产物 ──
+bin/
+obj/
+AppxPkgs*/
+rust/target/
+# rust/ 下历次验证/自测留下的 target-verify*、target-ui*、target-boot 等整目录构建产物，
+# 命名不叫 target 故上一行规则覆盖不到（实测合计约 12.9 GB，含 >100 MB 的 .rlib）。
+rust/target-*/
+# rust/ 下的测试散落输出（截图、崩溃日志、boot 报告）与 Syncthing 冲突副本
+# （冲突副本名形如 SyncthingDshWinUIrusttarget-ui8，是把父目录名拼在一起的结果）。
+rust/tmp/
+rust/Syncthing*
+mac/.build/
+
+# ── 旧工作副本残留 ──
+# 0.7.4 时代 code2-work 工作副本的交付说明：路径已失效、品牌名仍是 DshWinUI/Code²。
+/DELIVERY-NOTES-0.7.4.md
+
+# ── 调试/测试散落残留（后缀规则仅锚定仓库根目录：Assets/、docs/、Kernel/ 内的
+#    同名资产——图标、语言包、插件素材、许可证 txt——不受影响）──
+/_scratch/
+/*.png
+/*.jpg
+/*.jpeg
+/*.gif
+/*.webp
+/*.bmp
+/*.log
+/*.err
+/*.txt
+/*.bin
+/*.bak
+/*.petbak
+
+# ── IDE / 系统垃圾 ──
+.vs/
+*.user
+*.suo
+Thumbs.db
+desktop.ini
+.DS_Store

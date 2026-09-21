@@ -1,0 +1,30 @@
+<Window x:Class="Blade2.Dsh.PetWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="桌面宠物">
+
+    <!-- 透明根：本窗口无题栏无边框、ExtendsContentIntoTitleBar=true 且题栏/按钮底色全透明
+         （见 PetWindow.xaml.cs 的 SetupChrome）。少任何一个，WinUI 都会按主题给客户区
+         刷一层不透明白，宠物四周就出现白矩形。
+         但根 Grid 透明还不够：WinAppSDK 1.1+ 把窗口内容放进 DesktopChildSiteBridge 子窗
+         的合成岛里，岛根视觉那层白关不掉。所以本窗口只当离屏内容源，像素由
+         PetSurfaceLayer 栅格化后画进逐像素透明的分层窗口，桌面才是最终背景。
+         除精灵这一处不透明内容外，其余像素必须透出去，否则桌面上会糊一大块矩形。 -->
+    <Grid x:Name="PetRoot" Background="Transparent">
+        <StackPanel x:Name="PetStack"
+                    HorizontalAlignment="Right" VerticalAlignment="Bottom">
+            <!-- 视口：宽高与 Clip 由 DshPetSprite 按 display.size 现算，
+                 命中区恰为可见的那一格（图集本体不参与命中测试）。 -->
+            <Grid x:Name="PetSpriteViewport" Width="128" Height="139"
+                  AutomationProperties.AutomationId="PetSprite"
+                  AutomationProperties.Name="桌面宠物"
+                  ToolTipService.ToolTip="拖动可移动，点一下逗逗它">
+                <Image x:Name="PetSprite"
+                       Stretch="None"
+                       IsHitTestVisible="False"
+                       HorizontalAlignment="Left"
+                       VerticalAlignment="Top" />
+            </Grid>
+        </StackPanel>
+    </Grid>
+</Window>

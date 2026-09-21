@@ -1,0 +1,86 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10">
+
+  <Identity Name="Blade2" Publisher="CN=DshWinUI" Version="0.8.0.0" />
+
+  <Properties>
+    <DisplayName>Blade²</DisplayName>
+    <PublisherDisplayName>Blade²</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <!-- 关闭 %LOCALAPPDATA% 写虚拟化：DSH_HOME=%LOCALAPPDATA%\Blade2 必须落真实路径
+         （凭据/会话/插件 profile 全在真家），否则引导器新建的文件被重定向进 Packages
+         包家、与既有数据分裂，pnpm 在虚拟卷上建 store/链接会报「拒绝访问」。 -->
+    <desktop6:FileSystemWriteVirtualization>disabled</desktop6:FileSystemWriteVirtualization>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+    <Resource Language="zh-cn" />
+  </Resources>
+
+  <Applications>
+    <Application Id="App" Executable="Blade2.exe" EntryPoint="Windows.FullTrustApplication">
+      <!-- 系统 toast（Windows App SDK AppNotificationManager）的 COM 激活器。必须挂在
+           Application 下：manifest schema 只在这里认 desktop/com 前缀的 Extension，放在
+           Package 级 MakeAppx 直接报 C00CE014。打包形态下 Register() 靠这两项把本进程
+           注册为通知调用的 COM 服务；缺失时 Register 抛 "No COM servers are registered
+           for this app"，通知只能静默退化成托盘气球。ToastActivatorCLSID 与 com:Class
+           的 Id 必须一致；ExeServer 的 Executable 必须就是调用 Register 的本进程；
+           Arguments 的四连字符前缀是 WindowsAppSDK 识别 AppNotification 冷启动激活的
+           约定，改一个字符即失效。 -->
+      <Extensions>
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <!-- DisplayName 即 AppID 键值：打包形态的 toast 头部应用名由它渲染（曾误留 exe 名 DshWinUI，
+                 与托盘/开始菜单的品牌名 Blade² 不一致）。CLSID 与 Arguments 不含显示语义，勿动。 -->
+            <com:ExeServer Executable="Blade2.exe" DisplayName="Blade²" Arguments="----AppNotificationActivated:">
+              <com:Class Id="0EE63121-66A6-499C-9201-7449C515E248" />
+            </com:ExeServer>
+          </com:ComServer>
+        </com:Extension>
+        <desktop:Extension Category="windows.toastNotificationActivation">
+          <desktop:ToastNotificationActivation ToastActivatorCLSID="0EE63121-66A6-499C-9201-7449C515E248" />
+        </desktop:Extension>
+      </Extensions>
+      <uap:VisualElements
+        DisplayName="Blade²"
+        Description="Blade² — a WinUI 3 desktop distribution powered by the dsh kernel (npm: @deepseek-ai/dsh)"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!-- runFullTrust：壳直连内核 RPC 并管理其进程树。 -->
+    <rescap:Capability Name="runFullTrust" />
+    <!-- unvirtualizedResources：关闭 %LOCALAPPDATA% 文件虚拟化，DSH_HOME=%LOCALAPPDATA%\Blade2
+         直接落真实路径（凭据/会话/插件 profile 全在真家）；否则引导器新建的文件会被重定向进
+         Packages 包家、与既有数据分裂，且 pnpm 在虚拟卷上建 junction 会报「拒绝访问」。 -->
+    <rescap:Capability Name="unvirtualizedResources" />
+  </Capabilities>
+</Package>
+
+
+
+
+
+
+
+
+
+
+
+

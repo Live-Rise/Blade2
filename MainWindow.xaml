@@ -1,0 +1,1745 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="Blade2.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:local="using:Blade2"
+    mc:Ignorable="d"
+    Title="Blade²">
+
+    <!-- 顶栏 + 两栏主体：第 1 行 = 顶条（应用标 + 字标 | 居中搜索 | caption 预留区，
+         整条兼作标题栏拖拽区），第 2 行 = NavigationView（侧栏 + 内容面）。
+         设置不是浮层：它和聊天页平级放在内容面里，靠主侧栏的分区项 + 返回钮切换。 -->
+    <!-- WinUI3 的 Window 无 Resources 属性（Window 不是 FrameworkElement），图标资源挂在根 Grid 上 -->
+    <!-- 根层隧道键：Esc = 从设置页返回聊天/退出浮层（浮层打开时让路给输入框的分支处理） -->
+    <Grid x:Name="RootGrid" PreviewKeyDown="OnRootPreviewKeyDown">
+        <Grid.Resources>
+            <!-- 输入区图标：16px Outline 系列的 Fluent 几何，以 PathIcon 落地
+                 （附件 = 回形针，模式 = 中心点 + 星云环，两 path 合并）。 -->
+            <x:String x:Key="DshPaperclipPath">M5.5498 9.75V5H6.9502V9.75C6.9502 10.3299 7.4201 10.7998 8 10.7998C8.5799 10.7998 9.0498 10.3299 9.0498 9.75V4.5C9.0498 2.9536 7.7964 1.7002 6.25 1.7002C4.7036 1.7002 3.4502 2.9536 3.4502 4.5V9.75C3.4502 12.2629 5.4871 14.2998 8 14.2998C10.5129 14.2998 12.5498 12.2629 12.5498 9.75V4H13.9502V9.75C13.9502 13.0361 11.2861 15.7002 8 15.7002C4.71391 15.7002 2.0498 13.0361 2.0498 9.75V4.5C2.04981 2.1804 3.9304 0.299806 6.25 0.299805C8.5696 0.299805 10.4502 2.1804 10.4502 4.5V9.75C10.4502 11.1031 9.3531 12.2002 8 12.2002C6.6469 12.2002 5.5498 11.1031 5.5498 9.75Z</x:String>
+            <x:String x:Key="DshThinkPath">M8.00192 6.64454C8.75026 6.64454 9.35732 7.25169 9.35739 8.00001C9.35739 8.74838 8.7503 9.35548 8.00192 9.35548C7.25367 9.35533 6.64743 8.74829 6.64743 8.00001C6.6475 7.25178 7.25371 6.64468 8.00192 6.64454Z M9.97165 1.29981C11.5853 0.718916 13.271 0.642197 14.3144 1.68555C15.3577 2.72902 15.2811 4.41466 14.7002 6.02833C14.4707 6.66561 14.1504 7.32937 13.75 8.00001C14.1504 8.67062 14.4707 9.33444 14.7002 9.97169C15.2811 11.5854 15.3578 13.271 14.3144 14.3145C13.271 15.3579 11.5854 15.2811 9.97165 14.7002C9.3344 14.4708 8.67059 14.1505 7.99997 13.75C7.32933 14.1505 6.66558 14.4708 6.02829 14.7002C4.41461 15.2811 2.72899 15.3578 1.68552 14.3145C0.642155 13.271 0.71887 11.5854 1.29977 9.97169C1.52915 9.33454 1.84865 8.67049 2.24899 8.00001C1.84866 7.32953 1.52915 6.66544 1.29977 6.02833C0.718852 4.41459 0.64207 2.729 1.68552 1.68555C2.72897 0.642112 4.41456 0.718887 6.02829 1.29981C6.66541 1.52918 7.32949 1.8487 7.99997 2.24903C8.67045 1.84869 9.33451 1.52919 9.97165 1.29981ZM12.9404 9.2129C12.4391 9.893 11.8616 10.5681 11.2148 11.2149C10.568 11.8616 9.89296 12.4391 9.21286 12.9404C9.62532 13.1579 10.0271 13.338 10.4121 13.4766C11.9146 14.0174 12.9172 13.8738 13.3955 13.3955C13.8737 12.9173 14.0174 11.9146 13.4765 10.4121C13.3379 10.0271 13.1578 9.62535 12.9404 9.2129ZM3.05856 9.2129C2.84121 9.62523 2.66197 10.0272 2.52341 10.4121C1.98252 11.9146 2.12627 12.9172 2.60446 13.3955C3.08278 13.8737 4.08544 14.0174 5.58786 13.4766C5.97264 13.338 6.37389 13.1577 6.7861 12.9404C6.10624 12.4393 5.43168 11.8614 4.78513 11.2149C4.13823 10.5679 3.55992 9.89313 3.05856 9.2129ZM7.99899 3.792C7.23179 4.31419 6.45306 4.95512 5.70407 5.70411C4.95509 6.45309 4.31415 7.23184 3.79196 7.99903C4.3143 8.76666 4.95471 9.54653 5.70407 10.2959C6.45309 11.0449 7.23271 11.6848 7.99997 12.207C8.76725 11.6848 9.54683 11.0449 10.2959 10.2959C11.0449 9.54686 11.6848 8.76729 12.207 8.00001C11.6848 7.23275 11.0449 6.45312 10.2959 5.70411C9.5465 4.95475 8.76662 4.31434 7.99899 3.792ZM5.58786 2.52344C4.08533 1.98255 3.08272 2.12625 2.60446 2.6045C2.12621 3.08275 1.98252 4.08536 2.52341 5.5879C2.66189 5.97253 2.8414 6.37409 3.05856 6.78614C3.55983 6.10611 4.1384 5.43189 4.78513 4.78516C5.43186 4.13843 6.10606 3.55987 6.7861 3.0586C6.37405 2.84144 5.97249 2.66192 5.58786 2.52344ZM13.3955 2.6045C12.9172 2.12631 11.9146 1.98257 10.4121 2.52344C10.0272 2.66201 9.62519 2.84125 9.21286 3.0586C9.8931 3.55996 10.5679 4.13827 11.2148 4.78516C11.8614 5.43172 12.4392 6.10627 12.9404 6.78614C13.1577 6.37393 13.338 5.97267 13.4765 5.5879C14.0174 4.08549 13.8736 3.08281 13.3955 2.6045Z</x:String>
+        </Grid.Resources>
+        <Grid.RowDefinitions>
+            <!-- 顶条：48px 固定高（内层第一行固定 48），不再随任何状态条增减。 -->
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- 主题 brush 探针：C# 构造的设置页控件拿不到 {ThemeResource} 的窗口主题解析
+             （Application.Current.Resources 按应用主题/跟随系统解析，不随窗口换肤）。
+             探针元素属性上的 ThemeResource 由 XAML 框架随窗口 RequestedTheme 解析与重估，
+             ThemeBrush() 经 ActualThemeBrush 读到的即窗口当前主题的 brush 实例。
+             探针键 = Tokens.xaml 的语义令牌（与控制台/页面的消费点同源，代码不直接引 WinUI 原始色键）。 -->
+        <TextBlock x:Name="ThemeProbeTextPrimaryBrush" Visibility="Collapsed" Foreground="{ThemeResource TextPrimaryBrush}" />
+        <TextBlock x:Name="ThemeProbeTextSecondaryBrush" Visibility="Collapsed" Foreground="{ThemeResource TextSecondaryBrush}" />
+        <TextBlock x:Name="ThemeProbeTextTertiaryBrush" Visibility="Collapsed" Foreground="{ThemeResource TextTertiaryBrush}" />
+        <TextBlock x:Name="ThemeProbeTextDisabledBrush" Visibility="Collapsed" Foreground="{ThemeResource TextDisabledBrush}" />
+        <!-- 「无材质」时根网格的纯色底（SurfaceBrush = 不透明 SolidBackgroundFillColorBase） -->
+        <TextBlock x:Name="ThemeProbeSurfaceBrush" Visibility="Collapsed" Foreground="{ThemeResource SurfaceBrush}" />
+        <!-- 气泡笔刷探针：ApplyBubbleMaterial 把生效的那支气泡笔刷写进根网格本地资源，
+             ThemeResource 绑定保证这里读到的是随窗口 RequestedTheme 解析出来的那一份实例
+             （换肤后框架重估，读到的即新主题面色） -->
+        <Border x:Name="ThemeProbeBubbleBrush" Visibility="Collapsed" Background="{ThemeResource BubbleMicaBrush}" />
+        <TextBlock x:Name="ThemeProbeCardBrush" Visibility="Collapsed" Foreground="{ThemeResource CardBrush}" />
+        <TextBlock x:Name="ThemeProbeCardSecondaryBrush" Visibility="Collapsed" Foreground="{ThemeResource CardSecondaryBrush}" />
+        <TextBlock x:Name="ThemeProbeCardHoverBrush" Visibility="Collapsed" Foreground="{ThemeResource CardHoverBrush}" />
+        <TextBlock x:Name="ThemeProbeStrokeBrush" Visibility="Collapsed" Foreground="{ThemeResource StrokeBrush}" />
+        <TextBlock x:Name="ThemeProbeStrokeSubtleBrush" Visibility="Collapsed" Foreground="{ThemeResource StrokeSubtleBrush}" />
+        <TextBlock x:Name="ThemeProbeInfoBrush" Visibility="Collapsed" Foreground="{ThemeResource InfoBrush}" />
+        <TextBlock x:Name="ThemeProbeWarningBrush" Visibility="Collapsed" Foreground="{ThemeResource WarningBrush}" />
+        <TextBlock x:Name="ThemeProbeSuccessBrush" Visibility="Collapsed" Foreground="{ThemeResource SuccessBrush}" />
+        <TextBlock x:Name="ThemeProbeErrorBrush" Visibility="Collapsed" Foreground="{ThemeResource ErrorBrush}" />
+        <TextBlock x:Name="ThemeProbeAccentBrush" Visibility="Collapsed" Foreground="{ThemeResource AccentBrush}" />
+        <TextBlock x:Name="ThemeProbeControlFillBrush" Visibility="Collapsed" Foreground="{ThemeResource ControlFillBrush}" />
+        <TextBlock x:Name="ThemeProbeControlHoverBrush" Visibility="Collapsed" Foreground="{ThemeResource ControlHoverBrush}" />
+        <TextBlock x:Name="ThemeProbeControlPressedBrush" Visibility="Collapsed" Foreground="{ThemeResource ControlPressedBrush}" />
+        <!-- 统计面板的数据可视化令牌：与上面同机制（代码构造的图表元素按窗口主题取色） -->
+        <TextBlock x:Name="ThemeProbeChartSeries1Brush" Visibility="Collapsed" Foreground="{ThemeResource ChartSeries1Brush}" />
+        <TextBlock x:Name="ThemeProbeChartSeries2Brush" Visibility="Collapsed" Foreground="{ThemeResource ChartSeries2Brush}" />
+        <TextBlock x:Name="ThemeProbeChartSeries3Brush" Visibility="Collapsed" Foreground="{ThemeResource ChartSeries3Brush}" />
+        <TextBlock x:Name="ThemeProbeChartSeries4Brush" Visibility="Collapsed" Foreground="{ThemeResource ChartSeries4Brush}" />
+        <TextBlock x:Name="ThemeProbeChartSeries5Brush" Visibility="Collapsed" Foreground="{ThemeResource ChartSeries5Brush}" />
+        <TextBlock x:Name="ThemeProbeChartSeries6Brush" Visibility="Collapsed" Foreground="{ThemeResource ChartSeries6Brush}" />
+        <TextBlock x:Name="ThemeProbeChartHeatEmptyBrush" Visibility="Collapsed" Foreground="{ThemeResource ChartHeatEmptyBrush}" />
+        <TextBlock x:Name="ThemeProbeChartGridBrush" Visibility="Collapsed" Foreground="{ThemeResource ChartGridBrush}" />
+
+        <!-- 顶条：返回钮（窗口左上角，仅非聊天页显示）+ 应用标 + 字标 | 居中搜索 | caption 预留区；
+             检索状态直接反映在建议下拉里（无结果 = 下拉内提示行，不再弹出独立面板）。
+             TitleBarDragRegion 铺满顶条 48px 并压在返回钮/品牌/搜索框下层：SetTitleBar 只接管这条带，
+             内容面顶部因此不再需要拖拽预留条。 -->
+        <Grid Grid.Row="0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="48" />
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <!-- 左侧一组：返回钮 → 品牌字标（侧栏收起按钮已移除）。 -->
+                <!-- 返回钮：Windows 11 设置同构，位置固定在窗口左上角（顶栏最左），
+                     不依赖 NavigationView 内建返回钮（后者落在侧栏区域，位置随侧栏形态浮动）。 -->
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <!-- caption 预留区：系统绘制的窗口按钮占位 -->
+                <ColumnDefinition Width="152" />
+            </Grid.ColumnDefinitions>
+            <!-- SetTitleBar 目标：必须可命中（IsHitTestVisible=true）。
+                 设 False 时系统会把整条顶栏当 HTCAPTION，返回/菜单/搜索全吃掉点击。
+                 本元素在按钮下层：点空白拖窗，点按钮进按钮。 -->
+            <Grid x:Name="TitleBarDragRegion" Grid.Row="0" Grid.ColumnSpan="4" Background="Transparent" />
+            <!-- 返回钮：只留箭头图标（无圆形描边/圆形底色容器）。点击热区仍是 32×32 令牌尺寸；
+                 键盘聚焦提示由框架焦点视觉（UseSystemFocusVisuals 默认开启）绘制，不依赖底色。
+                 注意 CornerRadius：原先写 CornerPill(24)，在 32×32 上等于**整圆** —— 静止态看不出来
+                 （Background=Transparent），但 Button 模板的 PointerOver/Pressed 状态会刷背景，
+                 悬停/按下就会浮出一圈圆形底色。改用与同排图标按钮一致的 CornerSmall(4)：
+                 反馈保留、形状变圆角方形。 -->
+            <Button x:Name="ShellBackButton"
+                    Grid.Row="0" Grid.Column="0"
+                    Visibility="Collapsed"
+                    Margin="8,0,0,0"
+                    Width="{ThemeResource ShellBackButtonSize}" Height="{ThemeResource ShellBackButtonSize}" Padding="0"
+                    MinWidth="0"
+                    Style="{StaticResource IconButtonStyle}"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    CornerRadius="{ThemeResource CornerSmall}"
+                    Click="OnShellBackClick"
+                    AutomationProperties.AutomationId="ShellBackButton"
+                    AutomationProperties.Name="返回"
+                    AutomationProperties.HelpText="返回聊天页"
+                    ToolTipService.ToolTip="返回">
+                <FontIcon Glyph="&#xE72B;" FontSize="{ThemeResource GlyphSizeBody}" />
+            </Button>
+            <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="10" Margin="14,0,0,0" MinHeight="48" VerticalAlignment="Center">
+                <Image x:Name="TopBarBrandMark" Width="20" Height="20" Source="ms-appx:///Assets/Square44x44Logo.png" VerticalAlignment="Center"
+                       AutomationProperties.AccessibilityView="Raw" />
+                <TextBlock Text="Blade²" VerticalAlignment="Center" FontWeight="SemiBold" />
+            </StackPanel>
+            <!-- 搜索：展开态 = 胶囊输入框；压缩态 = 仅放大镜图标（对齐 Windows 11 设置顶栏）。
+                 两者共用 Column=2；SearchIconButton 在 UpdateShellCompactState 里切换。 -->
+            <Grid Grid.Row="0" Grid.Column="2"
+                  MaxWidth="420"
+                  MinWidth="120"
+                  Margin="24,0,24,0"
+                  HorizontalAlignment="Stretch"
+                  VerticalAlignment="Center">
+                <Border x:Name="SearchPillSurface"
+                        Background="{ThemeResource ControlFillBrush}"
+                        BorderBrush="{ThemeResource StrokeBrush}"
+                        BorderThickness="{ThemeResource StrokeThickness}"
+                        CornerRadius="{ThemeResource CornerPill}"
+                        IsHitTestVisible="False"
+                        AutomationProperties.AccessibilityView="Raw" />
+                <!-- 不设 TextMemberPath：键盘选中建议项不回填标题（Win11 设置同构），
+                     也避免无结果提示行的文字被写回输入框。选中跳转走 QuerySubmitted 的 ChosenSuggestion。 -->
+                <AutoSuggestBox x:Name="SearchBox"
+                                PlaceholderText="搜索会话…"
+                                MinHeight="{ThemeResource TouchTargetSize}"
+                                VerticalContentAlignment="Center"
+                                AutomationProperties.AutomationId="SessionSearchBox"
+                                AutomationProperties.Name="搜索会话"
+                                AutomationProperties.HelpText="按标题或内容检索会话">
+                    <AutoSuggestBox.Resources>
+                        <SolidColorBrush x:Key="TextControlBackground" Color="Transparent" />
+                        <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent" />
+                        <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="Transparent" />
+                        <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent" />
+                        <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
+                        <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent" />
+                    </AutoSuggestBox.Resources>
+                    <AutoSuggestBox.ItemTemplate>
+                        <DataTemplate x:DataType="local:SearchHitVm">
+                            <StackPanel Padding="0,2,0,2">
+                                <!-- 结果行：标题 + 片段（提示行时整体隐藏） -->
+                                <TextBlock Text="{Binding Title}"
+                                           TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                                           Visibility="{x:Bind HitVisibility}" />
+                                <TextBlock Text="{Binding Snippet}"
+                                           Style="{StaticResource CaptionTextStyle}"
+                                           Foreground="{ThemeResource TextSecondaryBrush}"
+                                           TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                                           Visibility="{x:Bind HitVisibility}" />
+                                <!-- 无结果提示行：单行纯文字，不可选中跳转（QuerySubmitted 拦截） -->
+                                <TextBlock Text="{Binding Title}"
+                                           TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                                           Visibility="{x:Bind NoticeVisibility}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </AutoSuggestBox.ItemTemplate>
+                </AutoSuggestBox>
+                <FontIcon x:Name="SearchPillGlyph"
+                          Glyph="&#xE721;"
+                          FontSize="{ThemeResource GlyphSizeBody}"
+                          Margin="12,0,0,0"
+                          HorizontalAlignment="Left" VerticalAlignment="Center"
+                          Foreground="{ThemeResource TextSecondaryBrush}"
+                          IsHitTestVisible="False"
+                          AutomationProperties.AccessibilityView="Raw" />
+                <!-- 压缩态：只留放大镜按钮（装饰 glyph 随 SearchPillGlyph 一起收起，避免叠影） -->
+                <Button x:Name="SearchIconButton"
+                        Visibility="Collapsed"
+                        HorizontalAlignment="Left"
+                        Width="{ThemeResource ShellBackButtonSize}" Height="{ThemeResource ShellBackButtonSize}"
+                        MinWidth="0" Padding="0"
+                        Style="{StaticResource IconButtonStyle}"
+                        Background="Transparent" BorderThickness="0"
+                        CornerRadius="{ThemeResource CornerSmall}"
+                        Click="OnSearchIconButtonClick"
+                        AutomationProperties.AutomationId="SearchIconButton"
+                        AutomationProperties.Name="搜索"
+                        ToolTipService.ToolTip="搜索会话">
+                    <FontIcon Glyph="&#xE721;" FontSize="{ThemeResource GlyphSizeBody}" />
+                </Button>
+            </Grid>
+            <!-- 状态区留空（内核连接状态不展示） -->
+            <Grid Grid.Row="0" Grid.Column="4" />
+        </Grid>
+
+        <!-- 主体：NavigationView 侧栏（亚克力透出）+ 内容面。
+             侧栏固定项（新会话 + 工作区段标题）XAML 声明、只建一次；会话树每次重建（见 RebuildNavMenu）。
+             设置态/统计态：返回入口是顶栏左上角那枚 ShellBackButton，内建返回钮恒为 Collapsed
+             （它落在侧栏区域、位置随侧栏形态浮动，不再作为导航返回）；固定项让位给分区项。
+             BackRequested 保留同一路由，兜住系统返回键之类的残余触发路径。 -->
+        <NavigationView Grid.Row="1"
+                        x:Name="Nav"
+                        IsBackButtonVisible="Collapsed"
+                        IsSettingsVisible="False"
+                        IsPaneToggleButtonVisible="False"
+                        PaneDisplayMode="Left"
+                        OpenPaneLength="264"
+                        IsPaneOpen="True"
+                        BackRequested="OnNavBackRequested"
+                        SelectionChanged="OnNavSelectionChanged">
+            <NavigationView.Resources>
+                <ResourceDictionary>
+                    <!-- 亚克力透出的关键：默认不透明主题层必须覆盖为 Transparent -->
+                    <SolidColorBrush x:Key="NavigationViewContentBackground" Color="Transparent" />
+                    <SolidColorBrush x:Key="NavigationViewExpandedPaneBackground" Color="Transparent" />
+                </ResourceDictionary>
+            </NavigationView.Resources>
+
+
+            <!-- 固定项（Tag 路由走 ItemInvoked；RebuildNavMenu 只重建其后的会话树，不再替换这两项） -->
+            <NavigationView.MenuItems>
+                <NavigationViewItem x:Name="NewSessionItem" Content="新会话" SelectsOnInvoked="False" Tag="new-session"
+                                    AutomationProperties.AutomationId="NewSessionItem"
+                                    AutomationProperties.Name="新建会话">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE710;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <!-- 工作区段标题（段头行 + 右侧动作图标）：右侧 视图选项/添加工作区 两图标。
+                     搜索已回到顶栏正中，段头不再重复挂搜索入口。 -->
+                <NavigationViewItem x:Name="WorkspaceSectionItem" SelectsOnInvoked="False" Tag="workspace-section"
+                                    AutomationProperties.AutomationId="WorkspaceSectionItem"
+                                    AutomationProperties.Name="工作区">
+                    <NavigationViewItem.Content>
+                        <StackPanel Spacing="{ThemeResource Space2}">
+                            <Grid ColumnSpacing="{ThemeResource Space2}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="WorkspaceSectionHeaderText" Text="工作区" Style="{StaticResource CaptionTextStyle}"
+                                           Foreground="{ThemeResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                                <!-- 与 IconButtonStyle 的 CornerSmall(4) 一致：悬停/按下只出圆角方形底色，
+                                     不再是 CornerPill(24) 在 32×32 上形成的整圆。 -->
+                                <Button x:Name="WorkspaceViewOptionsButton" Grid.Column="1"
+                                        Style="{StaticResource IconButtonStyle}"
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        CornerRadius="{ThemeResource CornerSmall}"
+                                        AutomationProperties.AutomationId="WorkspaceViewOptionsButton"
+                                        AutomationProperties.Name="视图选项"
+                                        ToolTipService.ToolTip="分组方式与排序方式">
+                                    <FontIcon Glyph="&#xE71C;" FontSize="{ThemeResource GlyphSizeBody}" />
+                                    <Button.Flyout>
+                                        <MenuFlyout x:Name="WorkspaceViewOptionsFlyout" Placement="Bottom" />
+                                    </Button.Flyout>
+                                </Button>
+                                <Button x:Name="AddWorkspaceButton" Grid.Column="2"
+                                        Style="{StaticResource IconButtonStyle}"
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        CornerRadius="{ThemeResource CornerSmall}"
+                                        Click="OnAddWorkspaceClick"
+                                        AutomationProperties.AutomationId="AddWorkspaceButton"
+                                        AutomationProperties.Name="添加工作区"
+                                        ToolTipService.ToolTip="添加工作区">
+                                    <FontIcon Glyph="&#xE710;" FontSize="{ThemeResource GlyphSizeBody}" />
+                                </Button>
+                            </Grid>
+                        </StackPanel>
+                    </NavigationViewItem.Content>
+                </NavigationViewItem>
+                <!-- 会话条目/工作区条目由代码动态插入（工作区分组树，session/list + workspace/follow 同步） -->
+            </NavigationView.MenuItems>
+
+            <NavigationView.FooterMenuItems>
+                <NavigationViewItem x:Name="SettingsItem" Content="设置" SelectsOnInvoked="False" Tag="settings"
+                                    AutomationProperties.AutomationId="SettingsItem"
+                                    AutomationProperties.Name="设置">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE713;" />
+                    </NavigationViewItem.Icon>
+                    <NavigationViewItem.KeyboardAccelerators>
+                        <KeyboardAccelerator Modifiers="Control" Key="S" />
+                    </NavigationViewItem.KeyboardAccelerators>
+                </NavigationViewItem>
+            </NavigationView.FooterMenuItems>
+
+            <!-- 内容面：聊天页。背景皮肤 ImageBrush 叠在 SurfaceAlt 上 -->
+            <Border x:Name="ContentSurface"
+                    Background="{ThemeResource SurfaceAltBrush}">
+                <Grid>
+                    <!-- ===== 聊天页 ===== -->
+                    <Grid x:Name="ChatPage">
+                        <Grid.RowDefinitions>
+                            <!-- 聊天流 + 空态 + 补全浮层 -->
+                            <RowDefinition Height="*" />
+                            <!-- 队列条（session/control 的 queues 数据；作业已移到会话头触发器） -->
+                            <RowDefinition Height="Auto" />
+                            <!-- 提问卡片（$events waterfall：user-questions/request） -->
+                            <RowDefinition Height="Auto" />
+                            <!-- 目标条（对标官方 GoalBar：composer 上方常驻） -->
+                            <RowDefinition Height="Auto" />
+                            <!-- 输入区 -->
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <!-- 列 1 = 工作区文件右栏（可收起）。既有行子元素都未设 Grid.Column，
+                                 默认落在列 0，因此新增列不影响它们的定位。 -->
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- 聊天流：正文列随窗口自适应 —— ChatColumn / ChatList 均为 Stretch
+                             无 MaxWidth，宽度完全由星型列驱动（窗口拉宽变宽、压窄变窄，
+                             文件右栏展开时同步让位）。此前 clamp(680,64%,920) 把列宽冻住，
+                             大窗两侧留白、小窗溢出，正是“不会自适应放大缩小”的根因。
+                             HorizontalScrollBarVisibility=Disabled：否则 ListView 以无限宽测量条目，
+                             TextWrapping 永远不会生效，旧消息会被裁成单行。 -->
+                        <Grid x:Name="ChatViewport" Grid.Row="0">
+                            <Grid.RowDefinitions>
+                                <!-- 会话头（对标官方 conversation.session.header）：标题 + 子代理回跳 + 后台作业入口 -->
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <!-- 列 1 = 历史快速定位（turn rail）：聊天流右缘一列刻度，
+                                     轮次数 ≥2 时才占位（UpdateTurnRailVisibility 管），不占正文宽。 -->
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <!-- 会话头：无活动会话整行收起（UpdateEmptyState 管）；作业触发器另有
+                                 自己的显隐（无作业即 Collapsed，RefreshJobsPanel 管）。
+                                 标题是侧栏之外唯一的会话身份展示位，子代理回跳仅子代理会话出现。 -->
+                            <Grid x:Name="ChatSessionHeader" Grid.Row="0" Margin="16,10,16,2" ColumnSpacing="{ThemeResource Space8}"
+                                  Visibility="Collapsed">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Grid Grid.Column="0" ColumnSpacing="{ThemeResource Space4}">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <Grid Grid.Row="0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <!-- 子代理回跳父会话（官方 SubagentHeaderLineage 的最小同语义：
+                                             当前壳只展示直接父，血缘链由逐级回跳覆盖） -->
+                                        <Button x:Name="SubagentParentButton" Grid.Column="0"
+                                                Style="{StaticResource IconButtonStyle}"
+                                                Background="Transparent" BorderThickness="0"
+                                                CornerRadius="{ThemeResource CornerSmall}"
+                                                Width="{ThemeResource ShellBackButtonSize}" Height="{ThemeResource ShellBackButtonSize}"
+                                                MinWidth="0" Padding="0"
+                                                Visibility="Collapsed"
+                                                Click="OnSubagentParentClick"
+                                                AutomationProperties.AutomationId="SubagentParentButton"
+                                                AutomationProperties.Name="返回父会话"
+                                                ToolTipService.ToolTip="返回父会话">
+                                            <FontIcon Glyph="&#xE72B;" FontSize="{ThemeResource GlyphSizeBody}" />
+                                        </Button>
+                                        <TextBlock x:Name="ChatSessionTitle" Grid.Column="1"
+                                                   TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                                                   VerticalAlignment="Center"
+                                                   Style="{StaticResource BodyStrongTextStyle}"
+                                                   AutomationProperties.AutomationId="ChatSessionTitle"
+                                                   AutomationProperties.Name="当前会话标题" />
+                                    </Grid>
+                                    <!-- 子代理只读提示（官方 SubagentReadOnlyComposer 同语义）：
+                                         仅子代理会话出现，输入框与发送键同步禁用 -->
+                                    <TextBlock x:Name="SubagentReadOnlyHint" Grid.Row="1"
+                                               Visibility="Collapsed"
+                                               TextWrapping="Wrap"
+                                               Style="{StaticResource CaptionTextStyle}"
+                                               Foreground="{ThemeResource TextTertiaryBrush}"
+                                               AutomationProperties.AutomationId="SubagentReadOnlyHint" />
+                                </Grid>
+                                <!-- 后台作业入口（对标官方 JobListAction）：live 圆点 + 计数文本 + 下拉。
+                                     圆点只在有 running/stopping 作业时出现；下拉行 = 状态点/kind 徽章/
+                                     标签/状态/时长（时长 1s tick，开面板期间）。 -->
+                                <Button x:Name="JobsTriggerButton" Grid.Column="1"
+                                        Background="Transparent" BorderThickness="0"
+                                        CornerRadius="{ThemeResource CornerSmall}"
+                                        Padding="8,4"
+                                        Visibility="Collapsed"
+                                        AutomationProperties.AutomationId="JobsTriggerButton"
+                                        AutomationProperties.Name="后台作业"
+                                        ToolTipService.ToolTip="后台作业">
+                                    <StackPanel Orientation="Horizontal" Spacing="{ThemeResource Space6}" VerticalAlignment="Center">
+                                        <Ellipse x:Name="JobsTriggerDot" Width="8" Height="8" Fill="{ThemeResource InfoBrush}"
+                                                 VerticalAlignment="Center" Visibility="Collapsed" />
+                                        <TextBlock x:Name="JobsTriggerText" VerticalAlignment="Center"
+                                                   Style="{StaticResource CaptionTextStyle}" />
+                                        <FontIcon Glyph="&#xE70D;" FontSize="{ThemeResource GlyphSizeBody}" VerticalAlignment="Center"
+                                                   Foreground="{ThemeResource TextTertiaryBrush}" />
+                                    </StackPanel>
+                                    <Button.Flyout>
+                                        <!-- 官方 JobListAction 菜单宽 336 / 限高 420；WinUI3 用 Flyout
+                                             承接富文本行（MenuFlyoutItem 只能放图标+字符串），
+                                             Esc/外点关闭由 Flyout 原生提供。 -->
+                                        <Flyout x:Name="JobsFlyout" Opening="OnJobsFlyoutOpening">
+                                            <ScrollViewer Width="336" MaxHeight="420" VerticalScrollBarVisibility="Auto"
+                                                          HorizontalScrollBarVisibility="Disabled">
+                                                <StackPanel x:Name="JobsFlyoutHost" Spacing="2" />
+                                            </ScrollViewer>
+                                        </Flyout>
+                                    </Button.Flyout>
+                                </Button>
+                            </Grid>
+
+                            <Border x:Name="ChatColumn" Grid.Row="1"
+                                    HorizontalAlignment="Stretch"
+                                    Margin="12,4,12,4">
+                                <ListView x:Name="ChatList" SelectionMode="None" IsItemClickEnabled="False"
+                                          VerticalAlignment="Top"
+                                          VerticalContentAlignment="Top"
+                                          HorizontalAlignment="Stretch"
+                                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                          ScrollViewer.HorizontalScrollMode="Disabled"
+                                          AutomationProperties.AutomationId="ChatList"
+                                          AutomationProperties.Name="对话消息列表">
+                                    <ListView.ItemContainerStyle>
+                                        <Style TargetType="ListViewItem">
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                            <Setter Property="HorizontalAlignment" Value="Stretch" />
+                                            <Setter Property="Padding" Value="0" />
+                                            <Setter Property="MinHeight" Value="0" />
+                                            <Setter Property="Margin" Value="0,3" />
+                                        </Style>
+                                    </ListView.ItemContainerStyle>
+                                    <ListView.ItemTemplateSelector>
+                                        <local:BubbleTemplateSelector xmlns:local="using:Blade2" />
+                                    </ListView.ItemTemplateSelector>
+                                    <ListView.Resources>
+                                        <!-- 用户：右对齐 Mica 质感胶囊气泡。上方操作行（时间戳 + 复制，
+                                             OnUserBubbleLoaded 装配）对标官方 UserStyleBubble chrome。 -->
+                                        <DataTemplate x:Key="UserTpl" x:DataType="local:ChatBubble">
+                                            <StackPanel HorizontalAlignment="Right" MaxWidth="560" Spacing="2">
+                                                <ContentControl x:Name="UserActionsHost"
+                                                                Loaded="OnUserBubbleLoaded"
+                                                                HorizontalAlignment="Right"
+                                                                HorizontalContentAlignment="Right" />
+                                                <Border HorizontalAlignment="Right"
+                                                        Loaded="OnBubbleBorderLoaded"
+                                                        Background="{ThemeResource BubbleMicaBrush}"
+                                                        BorderBrush="{ThemeResource StrokeSubtleBrush}" BorderThickness="{ThemeResource StrokeThickness}"
+                                                        CornerRadius="{ThemeResource CornerBubbleUser}" Padding="{ThemeResource BubblePaddingUser}">
+                                                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap" IsTextSelectionEnabled="True"
+                                                               Foreground="{ThemeResource TextPrimaryBrush}" />
+                                                </Border>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                        <!-- 用户附件图片：历史回读（session/attachment）后的字节贴图。
+                                             与用户文本气泡同侧右对齐，尺寸上限内等比缩放；操作行同 UserTpl。
+                                             图片包一层透明 Button 承接点击放大（Image 自身没有点击事件；
+                                             Button 顺带给了键盘与 UIA 身份，名称即文件名）。 -->
+                                        <DataTemplate x:Key="UserImageTpl" x:DataType="local:ChatBubble">
+                                            <StackPanel HorizontalAlignment="Right" Spacing="2">
+                                                <ContentControl x:Name="UserImageActionsHost"
+                                                                Loaded="OnUserBubbleLoaded"
+                                                                HorizontalAlignment="Right"
+                                                                HorizontalContentAlignment="Right" />
+                                                <Border HorizontalAlignment="Right"
+                                                        Loaded="OnBubbleBorderLoaded"
+                                                        Background="{ThemeResource BubbleMicaBrush}"
+                                                        BorderBrush="{ThemeResource StrokeSubtleBrush}" BorderThickness="{ThemeResource StrokeThickness}"
+                                                        CornerRadius="{ThemeResource CornerLarge}" Padding="4">
+                                                    <Button Click="OnChatImageOpenClick"
+                                                            Padding="0" MinWidth="0" MinHeight="0"
+                                                            Background="Transparent" BorderThickness="0"
+                                                            HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                            AutomationProperties.AutomationId="ChatImageOpenButton"
+                                                            AutomationProperties.Name="{Binding Text}">
+                                                        <Image Source="{Binding Image}"
+                                                               MaxWidth="360"
+                                                               MaxHeight="300"
+                                                               Stretch="Uniform" />
+                                                    </Button>
+                                                </Border>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                        <!-- 助手：左对齐 Mica 质感卡片（AI 在左，用户在右，与 UserTpl 同材质）。
+                                             不绑定 Content：字符串 Content 会由 ContentPresenter 变成 NoWrap TextBlock，
+                                             虚拟化回收后 Loaded 不一定能再次替换，旧消息因此被裁成单行。
+                                             由 OnAssistantBubbleLoaded 从 DataContext 取文本渲染。 -->
+                                        <DataTemplate x:Key="AssistantTpl" x:DataType="local:ChatBubble">
+                                            <Border Loaded="OnBubbleBorderLoaded"
+                                                    Background="{ThemeResource BubbleMicaBrush}"
+                                                    BorderBrush="{ThemeResource StrokeSubtleBrush}" BorderThickness="{ThemeResource StrokeThickness}"
+                                                    HorizontalAlignment="Stretch"
+                                                    CornerRadius="{ThemeResource CornerLarge}" Padding="{ThemeResource BubblePaddingAssistant}" Margin="0,0,0,2">
+                                                <StackPanel Spacing="{ThemeResource Space2}" HorizontalAlignment="Stretch">
+                                                    <ContentControl x:Name="MdHost"
+                                                                    Loaded="OnAssistantBubbleLoaded"
+                                                                    HorizontalAlignment="Stretch"
+                                                                    HorizontalContentAlignment="Stretch" />
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                        <!-- 工具/系统：小字行，贴左 -->
+                                        <DataTemplate x:Key="ToolTpl" x:DataType="local:ChatBubble">
+                                            <TextBlock Text="{Binding Text}" Style="{StaticResource CaptionTextStyle}" Opacity="0.62" Padding="6,2"
+                                                       TextWrapping="Wrap" HorizontalAlignment="Stretch" />
+                                        </DataTemplate>
+                                        <!-- 推理块：可折叠「思考」行（对标官方 ReasoningRow，默认折叠、首行作摘要）。
+                                             正文经 OnReasoningLoaded 从 DataContext 取文本渲染（同助手气泡的回收策略）。 -->
+                                        <DataTemplate x:Key="ReasoningTpl" x:DataType="local:ChatBubble">
+                                            <ContentControl x:Name="ReasoningHost"
+                                                            Loaded="OnReasoningLoaded"
+                                                            HorizontalAlignment="Stretch"
+                                                            HorizontalContentAlignment="Stretch" />
+                                        </DataTemplate>
+                                        <!-- 「少女祈祷中」占位行：会话忙碌、模型首个增量未到时挂在流尾。
+                                             自转 ProgressRing 自带动画，无需代码驱动（虚拟化回收也不停）。
+                                             文字扫光由 OnPendingLoaded 起 Storyboard（RenderTransform 独立动画，
+                                             不抢逐字重绘预算），Unloaded 停。 -->
+                                        <DataTemplate x:Key="PendingTpl" x:DataType="local:ChatBubble">
+                                            <Grid Loaded="OnPendingLoaded" Unloaded="OnPendingUnloaded">
+                                                <StackPanel Orientation="Horizontal" Spacing="{ThemeResource Space8}"
+                                                            Padding="10,6" Margin="0,0,0,2"
+                                                            AutomationProperties.Name="少女祈祷中">
+                                                    <ProgressRing Width="14" Height="14" IsActive="True"
+                                                                  VerticalAlignment="Center" />
+                                                    <TextBlock Text="少女祈祷中…" Style="{StaticResource HintTextStyle}"
+                                                               VerticalAlignment="Center"
+                                                               AutomationProperties.AutomationId="PendingThinkingText" />
+                                                </StackPanel>
+                                                <Rectangle HorizontalAlignment="Left" VerticalAlignment="Stretch"
+                                                           Width="140" Opacity="0" IsHitTestVisible="False" />
+                                            </Grid>
+                                        </DataTemplate>
+                                        <!-- 工具调用行：图标 + 工具标题 + 参数摘要（对标官方 ToolRow）。
+                                             行内容经 OnToolCallLoaded 从 DataContext 装配（回收后按新 DataContext 重建）。
+                                             执行窗口（tool/call→tool/result）行头起流光扫光，与 reasoning 行同机制。 -->
+                                        <DataTemplate x:Key="ToolCallTpl" x:DataType="local:ChatBubble">
+                                            <ContentControl x:Name="ToolCallHost"
+                                                            Loaded="OnToolCallLoaded"
+                                                            HorizontalAlignment="Stretch"
+                                                            HorizontalContentAlignment="Stretch" />
+                                        </DataTemplate>
+                                        <!-- 交付物：deliverables/presented 事件渲染成文件卡。
+                                             每行两个动作（都回内核宿主路由，壳不做本地兜底）：
+                                               打开       POST /api/present.open?…&action=open   （默认应用打开）
+                                               显示       POST /api/present.open?…&action=reveal （文件管理器定位）
+                                             路由由 dsh-client-ui-deliverables 的 node 半边提供，需 Cookie 鉴权。 -->
+                                        <DataTemplate x:Key="DeliverableTpl" x:DataType="local:ChatBubble">
+                                            <Border Loaded="OnBubbleBorderLoaded"
+                                                    Background="{ThemeResource BubbleMicaBrush}"
+                                                    BorderBrush="{ThemeResource StrokeSubtleBrush}" BorderThickness="{ThemeResource StrokeThickness}"
+                                                    CornerRadius="{ThemeResource CornerLarge}" Padding="12,10" Margin="0,0,0,2">
+                                                <StackPanel Spacing="{ThemeResource Space6}">
+                                                    <StackPanel Orientation="Horizontal" Spacing="{ThemeResource Space6}">
+                                                        <FontIcon Glyph="&#xE8B7;" FontSize="{ThemeResource GlyphSizeBody}" />
+                                                        <TextBlock Text="交付物" Style="{StaticResource ChipTextStyle}"
+                                                                   AutomationProperties.AutomationId="DeliverableCardTitle" />
+                                                    </StackPanel>
+                                                    <ItemsControl ItemsSource="{Binding Files}">
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate x:DataType="local:PresentedFileVm">
+                                                                <Border Background="{ThemeResource CardBrush}"
+                                                                        BorderBrush="{ThemeResource StrokeBrush}"
+                                                                        BorderThickness="1"
+                                                                        CornerRadius="{ThemeResource CornerMedium}"
+                                                                        Padding="10,8" Margin="0,0,0,4">
+                                                                    <Grid ColumnSpacing="{ThemeResource Space10}">
+                                                                        <Grid.ColumnDefinitions>
+                                                                            <ColumnDefinition Width="*" />
+                                                                            <ColumnDefinition Width="Auto" />
+                                                                        </Grid.ColumnDefinitions>
+                                                                        <StackPanel Grid.Column="0" Spacing="{ThemeResource Space2}">
+                                                                            <TextBlock Text="{x:Bind Name}" Style="{StaticResource BodyTextStyle}"
+                                                                                       TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+                                                                            <TextBlock Text="{x:Bind Path}" Style="{StaticResource CodeTextStyle}"
+                                                                                       TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                                                                                       IsTextSelectionEnabled="True" />
+                                                                            <TextBlock Text="{x:Bind Description}"
+                                                                                       Visibility="{x:Bind DescriptionVisibility}"
+                                                                                       Style="{StaticResource HintTextStyle}" TextWrapping="Wrap" />
+                                                                        </StackPanel>
+                                                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="{ThemeResource Space6}"
+                                                                                    VerticalAlignment="Center">
+                                                                            <Button Content="打开"
+                                                                                    AutomationProperties.AutomationId="PresentedFileOpenButton"
+                                                                                    Click="OnPresentedFileOpenClick" />
+                                                                            <Button Content="显示"
+                                                                                    AutomationProperties.AutomationId="PresentedFileRevealButton"
+                                                                                    Click="OnPresentedFileRevealClick" />
+                                                                        </StackPanel>
+                                                                    </Grid>
+                                                                </Border>
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListView.Resources>
+                                </ListView>
+                            </Border>
+
+                            <!-- 历史快速定位（对标官方 TurnNavigator）：聊天流右缘一列轮次刻度，
+                                 数据源 = 内核 turnOutline 投影（dsh-session-turn-outline）。
+                                 收起（Collapsed）时不占宽；悬停刻度出预览卡（prompt + response 摘要），
+                                 点击滚动到该轮首条用户气泡。跨行 0-1（含会话头）保持右缘对齐。 -->
+                            <Grid x:Name="TurnRailHost" Grid.Row="0" Grid.RowSpan="2" Grid.Column="1"
+                                  Width="44" Margin="0,4,4,4"
+                                  Visibility="Collapsed"
+                                  AutomationProperties.AutomationId="TurnRailHost"
+                                  AutomationProperties.Name="历史快速定位">
+                                <Grid.ColumnDefinitions>
+                                    <!-- 列 1 = 刻度列（ListView）；列 0 = 悬停预览卡（横向左偏出）。 -->
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <ListView x:Name="TurnRailMarks" Grid.Column="0"
+                                          SelectionMode="None" IsItemClickEnabled="False"
+                                          Padding="0,8"
+                                          VerticalAlignment="Stretch"
+                                          HorizontalAlignment="Right"
+                                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                          ScrollViewer.HorizontalScrollMode="Disabled"
+                                          ScrollViewer.VerticalScrollBarVisibility="Hidden"
+                                          AutomationProperties.AutomationId="TurnRailMarks"
+                                          AutomationProperties.Name="轮次刻度列表">
+                                    <ListView.ItemContainerStyle>
+                                        <Style TargetType="ListViewItem">
+                                            <Setter Property="HorizontalContentAlignment" Value="Center" />
+                                            <Setter Property="Padding" Value="0" />
+                                            <Setter Property="MinHeight" Value="0" />
+                                            <Setter Property="Margin" Value="0,3" />
+                                        </Style>
+                                    </ListView.ItemContainerStyle>
+                                    <ListView.ItemTemplate>
+                                        <!-- 刻度 = 右缘小圆条（活动轮更长）。ListViewItem 本身是命中区；
+                                             Tapped 由 OnTurnRailMarkClick 处理（sender 是 ListViewItem）。 -->
+                                        <DataTemplate x:DataType="local:TurnRailMark">
+                                            <Rectangle Width="{x:Bind MarkWidth}" Height="4"
+                                                       HorizontalAlignment="Right"
+                                                       RadiusX="2" RadiusY="2"
+                                                       Fill="{ThemeResource AccentBrush}"
+                                                       Opacity="{x:Bind MarkOpacity}" />
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+                                <!-- 悬停预览卡：内容由 ShowTurnRailPreview 代码填充（预览文案来自投影，
+                                     非静态文本），横向左偏出聊天流。 -->
+                                <Border x:Name="TurnRailPreviewCard" Grid.Column="0"
+                                        Width="276" HorizontalAlignment="Left" VerticalAlignment="Top"
+                                        Margin="0"
+                                        Visibility="Collapsed"
+                                        Background="{ThemeResource CardBrush}"
+                                        BorderBrush="{ThemeResource StrokeBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="{ThemeResource CornerMedium}"
+                                        Padding="10,8"
+                                        IsHitTestVisible="False">
+                                    <StackPanel Spacing="{ThemeResource Space4}">
+                                        <TextBlock x:Name="TurnRailPreviewPrompt"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   MaxLines="2" />
+                                        <TextBlock x:Name="TurnRailPreviewResponse"
+                                                   Style="{StaticResource HintTextStyle}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   MaxLines="3" />
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+
+                            <!-- 空态（WinUI 空态范式：应用标 + 一句引导文案）：应用图标 + 空态标题。
+                                 仅无会话/未选会话/无消息时显示（UpdateEmptyState 控制）。 -->
+                            <StackPanel x:Name="ChatHero" Grid.Row="1"
+                                        Visibility="Collapsed"
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center"
+                                        Spacing="{ThemeResource Space12}"
+                                        AutomationProperties.AutomationId="ChatHero"
+                                        AutomationProperties.Name="空态：开始一段新的会话">
+                                <Image x:Name="HeroMarkImage" Width="{ThemeResource EmptyStateMarkSize}" Height="{ThemeResource EmptyStateMarkSize}" Source="ms-appx:///Assets/Square44x44Logo.png" HorizontalAlignment="Center" />
+                                <TextBlock Text="开始一段新的会话" Style="{StaticResource EmptyStateTitleTextStyle}" HorizontalAlignment="Center" />
+                            </StackPanel>
+
+                            <!-- 内核加载态：壳先亮相（不再用全屏不透明加载层盖住整个窗口），
+                                 内核在后台起，进度摆在主页正中间（品牌标 + 阶段 + 确定性进度条 +
+                                 第几步/百分比 + 秒数）。失败时这张卡留着给原因与重试钮；
+                                 内核就绪前界面其余部分照常可用（皮肤/托盘/导航/设置都不依赖内核）。 -->
+                            <StackPanel x:Name="KernelBootPanel" Grid.Row="1"
+                                        Visibility="Collapsed"
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center"
+                                        MaxWidth="360"
+                                        Spacing="{ThemeResource Space12}"
+                                        AutomationProperties.AutomationId="KernelBootPanel"
+                                        AutomationProperties.Name="内核加载进度">
+                                <Image x:Name="KernelBootMark" Width="{ThemeResource EmptyStateMarkSize}" Height="{ThemeResource EmptyStateMarkSize}" Source="ms-appx:///Assets/Square44x44Logo.png" HorizontalAlignment="Center" />
+                                <TextBlock x:Name="KernelBootStage" Text="正在启动内核…" Style="{StaticResource EmptyStateTitleTextStyle}" HorizontalAlignment="Center" />
+                                <ProgressBar x:Name="KernelBootBar" Width="260" HorizontalAlignment="Center" Minimum="0" Maximum="100" Value="0" />
+                                <TextBlock x:Name="KernelBootStep" Text="第 1 步，共 4 步 · 0%" Style="{StaticResource BodyStrongTextStyle}" HorizontalAlignment="Center" />
+                                <TextBlock x:Name="KernelBootHint" Style="{StaticResource HintTextStyle}" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Visibility="Collapsed" />
+                                <Button x:Name="KernelBootRetry" Content="重试" Visibility="Collapsed" HorizontalAlignment="Center" Click="OnKernelBootRetryClick" />
+                            </StackPanel>
+
+                            <!-- 审批卡片：底部居中浮动（限宽，窄窗收缩） -->
+                            <ContentControl x:Name="ApprovalHost" Grid.Row="1" VerticalAlignment="Bottom" HorizontalAlignment="Center" Visibility="Collapsed">
+                                <!-- 宽度随内容收拢：Border 必须 Left 对齐。Stretch 会被 ContentControl
+                                     的测量约束拉到整列宽（短原因也占满 480，正是「面板不自适应大小」）；
+                                     MaxWidth 兜住长原因换行，MinWidth 保证两个按钮不挤。 -->
+                                <Border Background="{ThemeResource SurfaceBrush}"
+                                        BorderBrush="{ThemeResource InfoBrush}" BorderThickness="1"
+                                        CornerRadius="{ThemeResource CornerMedium}" Padding="{ThemeResource CardPaddingLarge}" Margin="{ThemeResource Space12}"
+                                        MinWidth="300" MaxWidth="480"
+                                        HorizontalAlignment="Left">
+                                    <StackPanel Spacing="{ThemeResource Space8}">
+                                        <StackPanel Orientation="Horizontal" Spacing="{ThemeResource Space8}">
+                                            <Ellipse Width="8" Height="8" Fill="{ThemeResource InfoBrush}" />
+                                            <TextBlock Text="等待审批" Style="{StaticResource BodyStrongTextStyle}" />
+                                        </StackPanel>
+                                        <!-- 主行始终中文（工具名 + 越权表述）。内核/模型给的 reason 是自由
+                                             英文文本，壳里翻不动，原样降级为下方详情行——界面语言统一，
+                                             技术细节不丢。 -->
+                                        <TextBlock x:Name="ApprovalReason" TextWrapping="Wrap" />
+                                        <TextBlock x:Name="ApprovalDetail" TextWrapping="Wrap" Opacity="0.7"
+                                                   Style="{StaticResource CaptionTextStyle}" Visibility="Collapsed" />
+                                        <StackPanel Orientation="Horizontal" Spacing="{ThemeResource Space8}" HorizontalAlignment="Right">
+                                            <Button x:Name="ApprovalReject" Content="拒绝" Click="OnApprovalReject" />
+                                            <Button x:Name="ApprovalAllow" Content="允许一次" Click="OnApprovalAllow" Style="{ThemeResource AccentButtonStyle}" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                            </ContentControl>
+                        </Grid>
+
+                        <!-- 斜杠命令补全浮层：贴在聊天区底部（输入框正上方）。
+                             用普通元素做浮层而不是 Flyout/Popup——浮层不能抢焦点，
+                             键盘（上/下/Enter/Esc/Tab）全部由 InputBox 的 KeyDown 处理，
+                             鼠标点选后把焦点还给 InputBox。 -->
+                        <Border x:Name="CommandPalette"
+                                Grid.Row="1"
+                                Visibility="Collapsed"
+                                HorizontalAlignment="Stretch"
+                                VerticalAlignment="Bottom"
+                                MaxWidth="640"
+                                MaxHeight="264"
+                                Margin="{ThemeResource OverlayMargin}"
+                                Background="{ThemeResource CardBrush}"
+                                BorderBrush="{ThemeResource StrokeBrush}"
+                                BorderThickness="1"
+                                CornerRadius="{ThemeResource CornerMedium}"
+                                AutomationProperties.AutomationId="CommandPalette">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <TextBlock x:Name="CommandPaletteHeader"
+                                           Margin="{ThemeResource OverlayHeaderMargin}"
+                                           Style="{StaticResource HintTextStyle}"
+                                           Text="命令（↑↓ 选择，Enter 执行，Esc 关闭）" />
+                                <ListView x:Name="CommandList"
+                                          Grid.Row="1"
+                                          MaxHeight="216"
+                                          Padding="{ThemeResource OverlayListPadding}"
+                                          SelectionMode="Single"
+                                          IsItemClickEnabled="True"
+                                          IsTabStop="False"
+                                          ItemClick="OnCommandItemClick"
+                                          AutomationProperties.AutomationId="CommandPaletteList">
+                                    <ListView.ItemContainerStyle>
+                                        <Style TargetType="ListViewItem">
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                            <Setter Property="Padding" Value="8,5,8,5" />
+                                            <Setter Property="MinHeight" Value="0" />
+                                        </Style>
+                                    </ListView.ItemContainerStyle>
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate x:DataType="local:CommandVm">
+                                            <Grid ColumnSpacing="{ThemeResource Space10}">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0"
+                                                           Text="{Binding SlashName}"
+                                                           Style="{StaticResource CodeTextStyle}"
+                                                           TextWrapping="NoWrap"
+                                                           VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="1"
+                                                           Text="{Binding Description}"
+                                                           Style="{StaticResource CaptionTextStyle}"
+                                                           Foreground="{ThemeResource TextSecondaryBrush}"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           TextWrapping="NoWrap"
+                                                           VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="2"
+                                                           Text="{Binding Hint}"
+                                                           Style="{StaticResource HintTextStyle}"
+                                                           TextWrapping="NoWrap"
+                                                           VerticalAlignment="Center" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+                            </Grid>
+                        </Border>
+
+                        <!-- @ 引用补全浮层：与命令浮层同构（贴底、不抢焦点、键盘归 InputBox）。
+                             候选来自两个内核端点（都按 agent 作用域）：
+                               fileReferences/list                 { agentId, query } → [{path, kind}]
+                               sessionReferenceResolver/candidates { agentId, query }
+                                 → [{sessionId,label,cwd,sameWorkspace,createdAt,mention}]
+                             mention 字段是内核给好的引用串 @[标签](dsh-session:<base64>)，
+                             选中即整串插入输入内容（不做二次拼装）。 -->
+                        <Border x:Name="ReferencePalette"
+                                Grid.Row="1"
+                                Visibility="Collapsed"
+                                HorizontalAlignment="Stretch"
+                                VerticalAlignment="Bottom"
+                                MaxWidth="640"
+                                MaxHeight="264"
+                                Margin="{ThemeResource OverlayMargin}"
+                                Background="{ThemeResource CardBrush}"
+                                BorderBrush="{ThemeResource StrokeBrush}"
+                                BorderThickness="1"
+                                CornerRadius="{ThemeResource CornerMedium}"
+                                AutomationProperties.AutomationId="ReferencePalette">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <TextBlock x:Name="ReferencePaletteHeader"
+                                           Margin="{ThemeResource OverlayHeaderMargin}"
+                                           Style="{StaticResource HintTextStyle}"
+                                           Text="引用（↑↓ 选择，Enter 插入，Esc 关闭）" />
+                                <ListView x:Name="ReferenceList"
+                                          Grid.Row="1"
+                                          MaxHeight="216"
+                                          Padding="{ThemeResource OverlayListPadding}"
+                                          SelectionMode="Single"
+                                          IsItemClickEnabled="True"
+                                          IsTabStop="False"
+                                          ItemClick="OnReferenceItemClick"
+                                          AutomationProperties.AutomationId="ReferencePaletteList">
+                                    <ListView.ItemContainerStyle>
+                                        <Style TargetType="ListViewItem">
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                            <Setter Property="Padding" Value="8,5,8,5" />
+                                            <Setter Property="MinHeight" Value="0" />
+                                        </Style>
+                                    </ListView.ItemContainerStyle>
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate x:DataType="local:ReferenceVm">
+                                            <Grid ColumnSpacing="{ThemeResource Space10}">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0"
+                                                           Text="{Binding Glyph}"
+                                                           FontFamily="Segoe MDL2 Assets"
+                                                           VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="1"
+                                                           Text="{Binding Label}"
+                                                           Style="{StaticResource CodeTextStyle}"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           TextWrapping="NoWrap"
+                                                           VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="2"
+                                                           Text="{Binding Detail}"
+                                                           Style="{StaticResource HintTextStyle}"
+                                                           TextWrapping="NoWrap"
+                                                           VerticalAlignment="Center" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+                            </Grid>
+                        </Border>
+
+                        <!-- 队列条：排队中的消息（可编辑/插话/删除）。数据源 = session/control 流
+                             （内核队列是唯一真相）；无排队项时整块收起。作业入口已迁到会话头
+                             （对标官方 JobListAction 的 header trigger + 弹出列表），不再占
+                             composer 上方的横条空间。 -->
+                        <Border x:Name="QueuePanel"
+                                Grid.Row="1"
+                                Visibility="Collapsed"
+                                HorizontalAlignment="Stretch"
+                                Margin="{ThemeResource StripMargin}"
+                                Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1"
+                                CornerRadius="{ThemeResource CornerMedium}"
+                                Padding="{ThemeResource CardPaddingCompact}"
+                                AutomationProperties.AutomationId="QueuePanel">
+                                <StackPanel x:Name="QueueHost" Spacing="{ThemeResource Space6}" />
+                        </Border>
+
+                        <!-- 提问卡片：内核经 $events 推 waterfall 帧（user-questions/request）并挂起等待，
+                             回传 $events/result {answers:[{id,selected:[…],custom?}]} 才解挂。
+                             位置：贴在输入区上方，不混进聊天流。 -->
+                        <Border x:Name="QuestionPanel"
+                                Grid.Row="2"
+                                Visibility="Collapsed"
+                                HorizontalAlignment="Stretch"
+                                Margin="{ThemeResource StripMargin}"
+                                Background="{ThemeResource CardBrush}"
+                                BorderBrush="{ThemeResource InfoBrush}"
+                                BorderThickness="1"
+                                CornerRadius="{ThemeResource CornerMedium}"
+                                Padding="{ThemeResource CardPaddingWide}"
+                                AutomationProperties.AutomationId="QuestionPanel">
+                            <StackPanel x:Name="QuestionHost" Spacing="{ThemeResource Space10}" />
+                        </Border>
+
+                        <!-- 输入区：
+                             上方一行 = 工作区选择器 + Agent 模式选择器（仅空态出现）；
+                             下方 = 圆角输入卡：附件条（卡内）+ 输入框 + 底部动作行
+                             [ + 菜单 | 权限下拉 | 计划 chip ] … [ 模型+推理下拉 | 圆形蓝色 ↑ 发送 ]
+
+                             自适应（窄窗 → 最大化都成立）：输入区 Stretch 铺满内容列，
+                             宽度完全由星型列驱动（此前 MaxWidth=792 把它冻住，
+                             大窗输入框比正文窄一截，正是“不会自适应放大缩小”的一半根因）。
+                             窄窗收缩：两个选择器与两个胶囊（权限/模型）都有 MaxWidth 上限，
+                               内部标签走 TextTrimming 省略（Auto 列本身不可收缩，靠上限把
+                               「溢出」变成「受控收缩」）；上限按输入区实际可用宽度在
+                               ApplyComposerAdaptiveLayout() 里连续计算（不用 AdaptiveTrigger：
+                               断点按窗口宽算，而这里的约束其实是「内容列 - 侧栏 - 文件右栏」）。
+                             极窄窗换行：模型胶囊下移到动作行第二行并占满整行，避免与权限胶囊
+                               在同一行互相挤压。 -->
+                        <!-- 目标条（对标官方 GoalBar）：阶段 + 目标（截断）+ 管理入口，composer
+                             上方常驻。无目标 / 目标已完成 / 已被用户清除时整条收起；
+                             数据 = goals/get（会话切换与手动刷新时拉取）。 -->
+                        <Border x:Name="GoalBar"
+                                Grid.Row="3"
+                                Visibility="Collapsed"
+                                HorizontalAlignment="Stretch"
+                                Margin="{ThemeResource StripMargin}"
+                                Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1"
+                                CornerRadius="{ThemeResource CornerMedium}"
+                                Padding="{ThemeResource CardPaddingCompact}"
+                                AutomationProperties.AutomationId="GoalBar">
+                            <Grid ColumnSpacing="{ThemeResource Space8}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <FontIcon Grid.Column="0" Glyph="&#xE78B;" FontSize="{ThemeResource GlyphSizeBody}"
+                                          Foreground="{ThemeResource InfoBrush}" VerticalAlignment="Center" />
+                                <TextBlock x:Name="GoalBarPhase" Grid.Column="1" VerticalAlignment="Center"
+                                           Style="{StaticResource ChipTextStyle}"
+                                           AutomationProperties.AutomationId="GoalBarPhase" />
+                                <TextBlock x:Name="GoalBarObjective" Grid.Column="2" VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                                           AutomationProperties.AutomationId="GoalBarObjective" />
+                                <Button x:Name="GoalBarManageButton" Grid.Column="3" Content="管理"
+                                        Style="{StaticResource IconButtonStyle}"
+                                        Background="Transparent" BorderThickness="0"
+                                        CornerRadius="{ThemeResource CornerSmall}"
+                                        Click="OnGoalBarManageClick"
+                                        AutomationProperties.AutomationId="GoalBarManageButton"
+                                        AutomationProperties.Name="管理目标"
+                                        ToolTipService.ToolTip="管理目标" />
+                            </Grid>
+                        </Border>
+
+                        <Grid x:Name="ComposerBar" Grid.Row="4" Margin="{ThemeResource ComposerBarMargin}" HorizontalAlignment="Stretch">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <!-- 运行状态条：轮/步/解码速率 + 累计 token/缓存命中（对齐官方端，
+                                 数据 = journal 事件折叠：step/end 计数、assistant/message 的 usage 与首 token 时差） -->
+                            <StackPanel x:Name="RunStatsStrip" Grid.Row="0"
+                                        Orientation="Horizontal" HorizontalAlignment="Center" Spacing="{ThemeResource Space6}"
+                                        Visibility="Collapsed">
+                                <TextBlock x:Name="RunStatsTurnsText" Style="{StaticResource HintTextStyle}" VerticalAlignment="Center" />
+                                <TextBlock x:Name="RunStatsTokensText" Style="{StaticResource HintTextStyle}" VerticalAlignment="Center" />
+                            </StackPanel>
+
+                            <!-- 输入卡：可见的圆角边框/背景（卡底 + 1px 描边 + CornerLarge 圆角）。
+                                 整卡接收文件/图片拖放（AllowDrop）：拖入的图片走 image 附件、
+                                 其余文件走 receipt 上传，与粘贴/选择文件同一条附件管线。 -->
+                            <Border x:Name="ComposerCard"
+                                    Grid.Row="1"
+                                    Background="{ThemeResource CardBrush}"
+                                    BorderBrush="{ThemeResource StrokeBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="{ThemeResource CornerLarge}"
+                                    Padding="{ThemeResource ComposerCardPadding}"
+                                    AllowDrop="True"
+                                    DragOver="OnComposerDragOver"
+                                    DragLeave="OnComposerDragLeave"
+                                    Drop="OnComposerDrop">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+
+                                    <!-- 附件预览条（卡内、输入框上方，有附件时显示） -->
+                                    <ScrollViewer x:Name="AttachmentStrip" Grid.Row="0" Visibility="Collapsed"
+                                                  HorizontalScrollBarVisibility="Auto" HorizontalScrollMode="Auto"
+                                                  Margin="14,0,8,0" VerticalScrollBarVisibility="Disabled">
+                                        <StackPanel x:Name="AttachmentList" Orientation="Horizontal" Spacing="{ThemeResource Space8}" />
+                                    </ScrollViewer>
+
+                                    <!-- 输入框：无自绘边框/背景（卡即是边框），占位左对齐单行。
+                                         Enter 发送、Shift+Enter 换行、/ 与 @ 浮层逻辑不变。
+                                         聚焦不得有任何颜色反应：WinUI TextBox 的浮起描边/聚焦底色来自
+                                         控件模板消费的主题资源（TextControlElevationBorder* 等），
+                                         只改 BorderThickness/Background 属性挡不住模板状态，必须在控件级
+                                         覆盖这些资源键（见 TextBox.Resources），把几何留给卡片。 -->
+                                    <TextBox x:Name="InputBox"
+                                             Grid.Row="1"
+                                             PlaceholderText="描述你想要构建的内容, / 调用指令, @ 文件或对话"
+                                             AcceptsReturn="True"
+                                             TextWrapping="Wrap"
+                                             MinHeight="{ThemeResource ComposerInputMinHeight}"
+                                             MaxHeight="{ThemeResource ComposerInputMaxHeight}"
+                                             Background="Transparent"
+                                             BorderThickness="0"
+                                             Padding="{ThemeResource ComposerInputPadding}"
+                                             AutomationProperties.AutomationId="InputBox"
+                                             AutomationProperties.Name="消息输入框"
+                                             AutomationProperties.HelpText="Enter 发送，Shift+Enter 换行，输入 / 唤起命令，@ 引用文件或会话"
+                                             PreviewKeyDown="OnInputPreviewKeyDown"
+                                             KeyDown="OnInputKeyDown"
+                                             TextChanged="OnInputTextChanged"
+                                             Paste="OnInputPaste">
+                                        <TextBox.Resources>
+                                            <!-- 覆盖 TextBox 模板的聚焦/悬停视觉：底色与描边恒为透明，
+                                                 浮起线（ElevationBorder）同样透明 —— 四态之间零颜色差。 -->
+                                            <SolidColorBrush x:Key="TextControlBackground" Color="Transparent" />
+                                            <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent" />
+                                            <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="Transparent" />
+                                            <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="Transparent" />
+                                            <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent" />
+                                            <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
+                                            <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent" />
+                                            <SolidColorBrush x:Key="TextControlBorderBrushDisabled" Color="Transparent" />
+                                            <SolidColorBrush x:Key="TextControlElevationBorderBrush" Color="Transparent" />
+                                            <SolidColorBrush x:Key="TextControlElevationBorderFocusedBrush" Color="Transparent" />
+                                            <SolidColorBrush x:Key="TextControlElevationBorderDisabledBrush" Color="Transparent" />
+                                        </TextBox.Resources>
+                                    </TextBox>
+
+                                    <!-- 底部动作行：左 +/权限/计划，右 模型+推理/发送。
+                                         两行结构（窄窗时模型胶囊落到第二行，宽窗时第二行为空），
+                                         星型列吸收宽窗余量，胶囊按内容贴合。 -->
+                                    <Grid x:Name="ComposerActionRow" Grid.Row="2" Padding="{ThemeResource ComposerRowPadding}" ColumnSpacing="{ThemeResource Space8}">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <Grid.ColumnDefinitions>
+                                            <!-- 0 + 按钮 | 1 工作区选择器 | 2 Agent 模式 | 3 权限 |
+                                                 4 * 计划 chip | 5 模型胶囊 | 6 上下文容量 | 7 发送
+                                                 （1/2/3 是第 6 条要求紧邻的三个控件；后三列固定贴右，
+                                                  上下文容量落在模型与发送之间，对标官方端 ContextMeter） -->
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <!-- + 圆形按钮：菜单收纳 附件/工作区文件/在应用中打开/会话反馈 -->
+                                        <Button x:Name="ComposerAddButton"
+                                                Grid.Column="0"
+                                                Width="{ThemeResource ComposerAddButtonSize}" Height="{ThemeResource ComposerAddButtonSize}" Padding="0"
+                                                CornerRadius="{ThemeResource CornerPill}"
+                                                Background="{ThemeResource CardHoverBrush}"
+                                                BorderThickness="0"
+                                                AutomationProperties.AutomationId="ComposerAddButton"
+                                                AutomationProperties.Name="添加附件或操作"
+                                                ToolTipService.ToolTip="添加图片或文件">
+                                            <FontIcon Glyph="&#xE710;" FontSize="{ThemeResource GlyphSizeBody}" />
+                                            <Button.Flyout>
+                                                <MenuFlyout x:Name="ComposerAddFlyout" Placement="Top">
+                                                    <MenuFlyoutItem Text="添加图片或文件" Click="OnAttachClick">
+                                                        <MenuFlyoutItem.Icon>
+                                                            <PathIcon Data="{StaticResource DshPaperclipPath}" />
+                                                        </MenuFlyoutItem.Icon>
+                                                    </MenuFlyoutItem>
+                                                    <MenuFlyoutItem Text="工作区文件" Click="OnFilesPanelToggleClick">
+                                                        <MenuFlyoutItem.Icon>
+                                                            <FontIcon Glyph="&#xE8B7;" />
+                                                        </MenuFlyoutItem.Icon>
+                                                    </MenuFlyoutItem>
+                                                    <!-- 在应用中打开：宿主网页路由（打开时惰性拉内核应用清单） -->
+                                                    <MenuFlyoutSubItem x:Name="OpenInAppSubMenu" Text="在应用中打开">
+                                                        <MenuFlyoutSubItem.Icon>
+                                                            <FontIcon Glyph="&#xE8A7;" />
+                                                        </MenuFlyoutSubItem.Icon>
+                                                    </MenuFlyoutSubItem>
+                                                    <MenuFlyoutSeparator />
+                                                    <MenuFlyoutItem Text="会话反馈" Click="OnSessionFeedbackClick">
+                                                        <MenuFlyoutItem.Icon>
+                                                            <FontIcon Glyph="&#xE939;" />
+                                                        </MenuFlyoutItem.Icon>
+                                                    </MenuFlyoutItem>
+                                                </MenuFlyout>
+                                            </Button.Flyout>
+                                        </Button>
+
+                                        <!-- 工作区选择器（第 6 条：由输入卡上方的选择器行迁入本行）：
+                                             文件夹图标 + 工作区名 + 下拉。只在「即将开始新会话」时出现
+                                             （有活动会话时收起，与原选择器行的可见性联动等价）。 -->
+                                        <DropDownButton x:Name="WorkspacePickerButton"
+                                                        Grid.Column="1"
+                                                        Visibility="Collapsed"
+                                                        HorizontalContentAlignment="Left"
+                                                        AutomationProperties.AutomationId="WorkspacePickerButton"
+                                                        AutomationProperties.Name="选择工作区"
+                                                        ToolTipService.ToolTip="新会话将在此工作区中创建">
+                                            <DropDownButton.Content>
+                                                <Grid ColumnSpacing="{ThemeResource Space6}">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <FontIcon Glyph="&#xE8B7;" FontSize="{ThemeResource GlyphSizeBody}" />
+                                                    <TextBlock x:Name="WorkspaceChipLabel" Grid.Column="1" Text="选择工作区"
+                                                               Style="{StaticResource BodyTextStyle}"
+                                                               TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+                                                </Grid>
+                                            </DropDownButton.Content>
+                                            <DropDownButton.Flyout>
+                                                <MenuFlyout x:Name="WorkspacePickerFlyout" Placement="Top" />
+                                            </DropDownButton.Flyout>
+                                        </DropDownButton>
+
+                                        <!-- Agent 模式选择器（同上迁入）：图标 + 预设名 + 下拉 -->
+                                        <DropDownButton x:Name="AgentModeButton"
+                                                        Grid.Column="2"
+                                                        Visibility="Collapsed"
+                                                        HorizontalContentAlignment="Left"
+                                                        AutomationProperties.AutomationId="AgentModeButton"
+                                                        AutomationProperties.Name="Agent 模式"
+                                                        ToolTipService.ToolTip="即将开始的这个会话所用的 Agent 预设">
+                                            <DropDownButton.Content>
+                                                <Grid ColumnSpacing="{ThemeResource Space6}">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <FontIcon Glyph="&#xE9D9;" FontSize="{ThemeResource GlyphSizeBody}" />
+                                                    <TextBlock x:Name="AgentModeLabel" Grid.Column="1" Text="标准模式"
+                                                               Style="{StaticResource BodyTextStyle}"
+                                                               TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+                                                </Grid>
+                                            </DropDownButton.Content>
+                                            <DropDownButton.Flyout>
+                                                <MenuFlyout x:Name="AgentModeFlyout" Placement="Top" />
+                                            </DropDownButton.Flyout>
+                                        </DropDownButton>
+
+                                        <!-- 权限下拉：显示当前权限预设名 -->
+                                        <DropDownButton x:Name="PermissionButton"
+                                                        Grid.Column="3"
+                                                        Visibility="Collapsed"
+                                                        HorizontalContentAlignment="Left"
+                                                        AutomationProperties.AutomationId="PermissionButton"
+                                                        AutomationProperties.Name="访问模式"
+                                                        ToolTipService.ToolTip="访问模式">
+                                            <DropDownButton.Content>
+                                                <Grid ColumnSpacing="{ThemeResource Space6}">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <!-- 图标随当前预设切换（PermissionPresetGlyph）：
+                                                         只读=查看、工作区内修改=编辑、完全权限=警告、
+                                                         自动审批=对勾、自定义=设置；未知预设回落锁 -->
+                                                    <FontIcon x:Name="PermissionGlyph" Glyph="&#xE72E;" FontSize="{ThemeResource GlyphSizeBody}" />
+                                                    <TextBlock x:Name="PermissionLabel" Grid.Column="1" Text="工作区内修改"
+                                                               Style="{StaticResource BodyTextStyle}"
+                                                               TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+                                                </Grid>
+                                            </DropDownButton.Content>
+                                            <DropDownButton.Flyout>
+                                                <MenuFlyout x:Name="PermissionFlyout" Placement="Top" />
+                                            </DropDownButton.Flyout>
+                                        </DropDownButton>
+
+                                        <!-- 计划模式 chip：贴在权限旁 -->
+                                        <Border x:Name="PlanChip"
+                                                Grid.Column="4"
+                                                Visibility="Collapsed"
+                                                HorizontalAlignment="Left"
+                                                Background="{ThemeResource WarningBgBrush}"
+                                                CornerRadius="{ThemeResource CornerPill}"
+                                                Padding="{ThemeResource ChipPaddingCompact}"
+                                                AutomationProperties.AutomationId="PlanChip">
+                                            <StackPanel Orientation="Horizontal" Spacing="{ThemeResource Space6}">
+                                                <FontIcon Glyph="&#xE9D5;" FontSize="{ThemeResource GlyphSizeCaption}" />
+                                                <TextBlock x:Name="PlanChipText" Text="计划模式" Style="{StaticResource ChipTextStyle}" />
+                                                <Button x:Name="PlanChipExit" Content="退出" Click="OnPlanToggleClick"
+                                                        Padding="6,0" MinHeight="0" VerticalAlignment="Center"
+                                                        AutomationProperties.AutomationId="PlanChipExit"
+                                                        AutomationProperties.Name="退出计划模式" />
+                                            </StackPanel>
+                                        </Border>
+
+                                        <!-- 模型 + 推理档：一个触发器两个区 -->
+                                        <DropDownButton x:Name="ModelButton"
+                                                        Grid.Row="0" Grid.Column="5"
+                                                        HorizontalContentAlignment="Left"
+                                                        AutomationProperties.AutomationId="ModelButton"
+                                                        AutomationProperties.Name="模型与推理等级"
+                                                        ToolTipService.ToolTip="模型与推理等级">
+                                            <DropDownButton.Content>
+                                                <TextBlock x:Name="ModelEffortLabel"
+                                                           Style="{StaticResource BodyTextStyle}"
+                                                           TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+                                            </DropDownButton.Content>
+                                            <DropDownButton.Flyout>
+                                                <MenuFlyout x:Name="ModelFlyout" Placement="Top" />
+                                            </DropDownButton.Flyout>
+                                        </DropDownButton>
+
+                                        <!-- 上下文容量圈（对标官方端 ContextMeter）：28×28 圆形按钮，
+                                             轨道 + 已用弧双色、无文字（官方同款极简形态）；百分比只在
+                                             tooltip/无障碍名里，点开看已用/容量明细。分子 = 最近 usage
+                                             采样的 prompt 侧 token，分母 = request/context 事件的
+                                             contextWindow；无采样或无容量时隐藏（与官方「数据不齐
+                                             不显示」一致）。弧几何按 percent 由代码实时生成
+                                             （见 MainWindow.ContextMeter.cs）。 -->
+                                        <Button x:Name="ContextMeterRing"
+                                                Grid.Row="0" Grid.Column="6"
+                                                Visibility="Collapsed"
+                                                Width="28" Height="28" Padding="0"
+                                                HorizontalAlignment="Left"
+                                                VerticalAlignment="Center"
+                                                Background="{ThemeResource CardHoverBrush}"
+                                                BorderThickness="0"
+                                                CornerRadius="{ThemeResource CornerPill}"
+                                                AutomationProperties.AutomationId="ContextMeterRing"
+                                                AutomationProperties.Name="上下文容量">
+                                            <Grid Width="14" Height="14">
+                                                <!-- 轨道：14×14 视图、线宽 2、半径 6（与官方 viewBox 对齐） -->
+                                                <Ellipse Width="12" Height="12"
+                                                         HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                         Stroke="{ThemeResource StrokeBrush}" StrokeThickness="2" />
+                                                <!-- 已用弧：起点恒在 12 点、顺时针扫过 percent×3.6°；0 值隐藏、满值走整圆 -->
+                                                <Path x:Name="ContextMeterArc"
+                                                      Stroke="{ThemeResource TextTertiaryBrush}"
+                                                      StrokeThickness="2"
+                                                      StrokeStartLineCap="Round"
+                                                      StrokeEndLineCap="Round" />
+                                                <Ellipse x:Name="ContextMeterFullRing"
+                                                         Width="12" Height="12"
+                                                         HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                         Stroke="{ThemeResource TextTertiaryBrush}"
+                                                         StrokeThickness="2"
+                                                         Visibility="Collapsed" />
+                                            </Grid>
+                                        </Button>
+
+                                        <!-- 圆形发送按钮（↑ 图标，无文字）：WinUI 标准强调按钮形态
+                                             （AccentButtonStyle = 系统强调色 + 悬停/按下/禁用四态，
+                                             随用户个性化与高对比度自动适配），不重绑任何色值。 -->
+                                        <Button x:Name="SendButton"
+                                                Grid.Row="0" Grid.Column="7"
+                                                Width="{ThemeResource ComposerSendButtonSize}" Height="{ThemeResource ComposerSendButtonSize}" Padding="0"
+                                                CornerRadius="{ThemeResource CornerPill}"
+                                                Style="{ThemeResource AccentButtonStyle}"
+                                                Click="OnSendClick"
+                                                AutomationProperties.AutomationId="SendButton"
+                                                AutomationProperties.Name="发送消息"
+                                                ToolTipService.ToolTip="发送消息">
+                                            <FontIcon Glyph="&#xE74A;" FontSize="{ThemeResource GlyphSizeBody}" />
+                                        </Button>
+                                    </Grid>
+                                </Grid>
+                            </Border>
+                        </Grid>
+
+                        <!-- 工作区文件右栏（跨聊天页内容五行，收起时不占宽） -->
+                        <local:FilesPanel x:Name="FilesPanelView"
+                                          Grid.Row="0"
+                                          Grid.RowSpan="5"
+                                          Grid.Column="1"
+                                          Visibility="Collapsed" />
+                    </Grid>
+
+                    <!-- ===== 设置页（页内面板，与聊天页平级，不是浮层）：固定页头 + 内容列居中限宽 1064。
+                         分区切换走主侧栏的分区项（进设置时固定项让位），返回钮 / Esc 回聊天页。 ===== -->
+                    <Grid x:Name="SettingsPage" Visibility="Collapsed">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <!-- 固定页头：当前分区名（Title 层级），滚动时驻留。
+                             左对齐（不是居中）：左边缘必须与内容列一致 —— 静态边距只作首帧兜底，
+                             实际左边距由 AlignSettingsHeader() 按内容列实测偏移设定，
+                             因此宽窗（内容列居中限宽 1064）与窄窗（内容列铺满）都不会偏移，
+                             滚动条出现/消失也不会让页头与内容列错位。
+                             二级页（插件页点卡进入的分组设置页）的页头是面包屑「插件 › 终端」：
+                             上级名与分隔符用二级文字色、当前页名用一级文字色，同字号同一行。
+                             上级名本身即返回入口：点它收一层二级页（与左上角 ShellBackButton、Esc
+                             同走 CloseSettingsSubPage），标题旁因此不需要另放返回钮。 -->
+                        <StackPanel x:Name="SettingsHeaderRow"
+                                    Orientation="Horizontal"
+                                    Margin="36,24,36,4"
+                                    Spacing="{ThemeResource Space16}">
+                            <!-- 面包屑上级名：二级页才可见，点它返回上一层（收一层二级页，
+                                 与左上角 ShellBackButton、Esc 同一条 CloseSettingsSubPage 路由；
+                                 一级页时它 Collapsed，没有可回的上级）。
+                                 形态是普通标题文字（BreadcrumbLinkButtonStyle：透明底、无边框、
+                                 零内边距，二级文字色），只有悬停/按下时文字提回一级色（黑），
+                                 不刷底色框；用 Button 而不是 TextBlock 是为了拿键盘聚焦与
+                                 「按钮」朗读语义。文字色由按钮样式统一下发，TextBlock 不再自设。 -->
+                            <Button x:Name="SettingsBreadcrumbParent"
+                                    Style="{StaticResource BreadcrumbLinkButtonStyle}"
+                                    Visibility="Collapsed"
+                                    Click="OnSettingsBreadcrumbParentClick"
+                                    AutomationProperties.AutomationId="SettingsBreadcrumbParent"
+                                    AutomationProperties.HeadingLevel="Level2">
+                                <TextBlock x:Name="SettingsBreadcrumbParentText"
+                                           Style="{ThemeResource TitleTextBlockStyle}" />
+                            </Button>
+                            <TextBlock x:Name="SettingsBreadcrumbSeparator"
+                                       VerticalAlignment="Center"
+                                       Text="›"
+                                       Style="{ThemeResource TitleTextBlockStyle}"
+                                       Foreground="{ThemeResource TextSecondaryBrush}"
+                                       IsHitTestVisible="False"
+                                       Visibility="Collapsed" />
+                            <TextBlock x:Name="SettingsPageHeader"
+                                       HorizontalAlignment="Left"
+                                       VerticalAlignment="Center"
+                                       Style="{ThemeResource TitleTextBlockStyle}"
+                                       AutomationProperties.HeadingLevel="Level1" />
+                        </StackPanel>
+                        <ScrollViewer x:Name="SettingsScroller"
+                                      Grid.Row="1"
+                                      Padding="36,12,36,36"
+                                      VerticalScrollBarVisibility="Auto"
+                                      VerticalScrollMode="Auto">
+                            <!-- 一级页与二级页共用同一滚动区：两者互斥可见，切换只换可见性与内容，
+                                 不重建滚动条（滚动位置由调用方显式归零）。
+                                 x:Name 供 AlignSettingsHeader 实测左偏移：Grid 无内外边距且铺满滚动区，
+                                 X 与两个内容列一致，且不随某一列收起而失效。 -->
+                            <Grid x:Name="SettingsBodyGrid">
+                                <StackPanel x:Name="SettingsHost"
+                                            MaxWidth="1064"
+                                            HorizontalAlignment="Stretch"
+                                            AutomationProperties.AutomationId="SettingsHost"
+                                            AutomationProperties.Name="设置内容列"
+                                            Spacing="12">
+                                    <StackPanel.ChildrenTransitions>
+                                        <RepositionThemeTransition />
+                                    </StackPanel.ChildrenTransitions>
+                                </StackPanel>
+                                <!-- 二级页（Windows 设置「应用」式钻取：点一级页的导航卡进入）。
+                                     内容由 OpenSettingsSubPage 现建后整体挂入，返回时整棵移除。 -->
+                                <StackPanel x:Name="SettingsSubHost"
+                                            MaxWidth="1064"
+                                            HorizontalAlignment="Stretch"
+                                            AutomationProperties.AutomationId="SettingsSubHost"
+                                            AutomationProperties.Name="设置二级页"
+                                            Spacing="12"
+                                            Visibility="Collapsed">
+                                    <StackPanel.ChildrenTransitions>
+                                        <RepositionThemeTransition />
+                                    </StackPanel.ChildrenTransitions>
+                                </StackPanel>
+                            </Grid>
+                        </ScrollViewer>
+                    </Grid>
+                        <!-- ===== 使用统计（设置页内的一个分区） =====
+                             Footer 的独立「使用统计」入口已移除，不再有 Tag="stats" 路由。
+                             这里只保留一个**不可见的构造容器**：StatsBody（KPI/热力图/趋势/
+                             模型用量占比条/范围切换/脚注）在 RenderUsageSectionAsync 里整体
+                             搬进 SettingsHost，元素实例与 x:Name 绑定不变。取数来自内核
+                             journal（session/list + session/page）；图表全部自绘（热力图/折线
+                             Canvas + ProgressBar 占比条），不引入任何第三方图表库。
+                             手动「刷新」已移除：内核事件（assistant/message、turn/end）到达时
+                             防抖重算，页面常显最新值。 ===== -->
+                        <Grid x:Name="StatsPage" Visibility="Collapsed">
+
+                            <ScrollViewer Padding="36,12,36,36"
+                                          VerticalScrollBarVisibility="Auto"
+                                          VerticalScrollMode="Auto">
+                                <StackPanel x:Name="StatsBody" MaxWidth="1064" HorizontalAlignment="Center" Spacing="{ThemeResource Space16}">
+
+                                    <!-- 数据来源说明：口径与不可用项都写在这里，不靠猜测 -->
+                                    <InfoBar x:Name="StatsInfoBar"
+                                             IsOpen="False" IsClosable="False"
+                                             AutomationProperties.AutomationId="StatsInfoBar" />
+
+                                    <!-- ===== 顶部 5 个 KPI：对标 Windows「系统 > 关于」的卡片行
+                                             每卡三段：图标+标签（顶）/ 大数值（中）/ 小注（底），
+                                             五卡等宽横排，不再用细竖线切同一张卡。 ===== -->
+                                    <Grid AutomationProperties.AutomationId="StatsKpiRow"
+                                          AutomationProperties.Name="使用统计概览"
+                                          ColumnSpacing="{ThemeResource Space12}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <!-- 累计 Token 数 -->
+                                        <Border Grid.Column="0" Style="{StaticResource CardBorderStyle}"
+                                                Padding="{ThemeResource CardPaddingWide}">
+                                            <Grid MinHeight="104">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="*" />
+                                                </Grid.RowDefinitions>
+                                                <StackPanel Orientation="Horizontal" Spacing="{ThemeResource Space6}">
+                                                    <FontIcon Glyph="&#xE9D2;" FontSize="{ThemeResource GlyphSizeBody}"
+                                                              VerticalAlignment="Center"
+                                                              AutomationProperties.AccessibilityView="Raw" />
+                                                    <TextBlock Text="累计 Token 数" Style="{StaticResource HintTextStyle}"
+                                                               VerticalAlignment="Center" />
+                                                </StackPanel>
+                                                <TextBlock x:Name="StatsKpiTotalTokens" Grid.Row="1" Text="—"
+                                                           Style="{ThemeResource SubtitleTextBlockStyle}"
+                                                           Margin="0,10,0,0"
+                                                           AutomationProperties.AutomationId="StatsKpiTotalTokens" />
+                                                <TextBlock x:Name="StatsKpiTotalTokensHint" Grid.Row="2" Text="—"
+                                                           Style="{StaticResource HintTextStyle}"
+                                                           VerticalAlignment="Bottom" TextWrapping="NoWrap"
+                                                           TextTrimming="CharacterEllipsis" />
+                                            </Grid>
+                                        </Border>
+
+                                        <!-- 峰值 Token 数 -->
+                                        <Border Grid.Column="1" Style="{StaticResource CardBorderStyle}"
+                                                Padding="{ThemeResource CardPaddingWide}">
+                                            <Grid MinHeight="104">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="*" />
+                                                </Grid.RowDefinitions>
+                                                <StackPanel Orientation="Horizontal" Spacing="{ThemeResource Space6}">
+                                                    <FontIcon Glyph="&#xE9D9;" FontSize="{ThemeResource GlyphSizeBody}"
+                                                              VerticalAlignment="Center"
+                                                              AutomationProperties.AccessibilityView="Raw" />
+                                                    <TextBlock Text="峰值 Token 数" Style="{StaticResource HintTextStyle}"
+                                                               VerticalAlignment="Center" />
+                                                </StackPanel>
+                                                <TextBlock x:Name="StatsKpiPeakTokens" Grid.Row="1" Text="—"
+                                                           Style="{ThemeResource SubtitleTextBlockStyle}"
+                                                           Margin="0,10,0,0"
+                                                           AutomationProperties.AutomationId="StatsKpiPeakTokens" />
+                                                <TextBlock x:Name="StatsKpiPeakTokensHint" Grid.Row="2" Text="—"
+                                                           Style="{StaticResource HintTextStyle}"
+                                                           VerticalAlignment="Bottom" TextWrapping="NoWrap"
+                                                           TextTrimming="CharacterEllipsis" />
+                                            </Grid>
+                                        </Border>
+
+                                        <!-- 最长聊天时长 -->
+                                        <Border Grid.Column="2" Style="{StaticResource CardBorderStyle}"
+                                                Padding="{ThemeResource CardPaddingWide}">
+                                            <Grid MinHeight="104">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="*" />
+                                                </Grid.RowDefinitions>
+                                                <StackPanel Orientation="Horizontal" Spacing="{ThemeResource Space6}">
+                                                    <FontIcon Glyph="&#xE823;" FontSize="{ThemeResource GlyphSizeBody}"
+                                                              VerticalAlignment="Center"
+                                                              AutomationProperties.AccessibilityView="Raw" />
+                                                    <TextBlock Text="最长聊天时长" Style="{StaticResource HintTextStyle}"
+                                                               VerticalAlignment="Center" />
+                                                </StackPanel>
+                                                <TextBlock x:Name="StatsKpiLongestChat" Grid.Row="1" Text="—"
+                                                           Style="{ThemeResource SubtitleTextBlockStyle}"
+                                                           Margin="0,10,0,0"
+                                                           AutomationProperties.AutomationId="StatsKpiLongestChat" />
+                                                <TextBlock x:Name="StatsKpiLongestChatHint" Grid.Row="2" Text="—"
+                                                           Style="{StaticResource HintTextStyle}"
+                                                           VerticalAlignment="Bottom" TextWrapping="NoWrap"
+                                                           TextTrimming="CharacterEllipsis" />
+                                            </Grid>
+                                        </Border>
+
+                                        <!-- 当前连续天数 -->
+                                        <Border Grid.Column="3" Style="{StaticResource CardBorderStyle}"
+                                                Padding="{ThemeResource CardPaddingWide}">
+                                            <Grid MinHeight="104">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="*" />
+                                                </Grid.RowDefinitions>
+                                                <StackPanel Orientation="Horizontal" Spacing="{ThemeResource Space6}">
+                                                    <FontIcon Glyph="&#xE787;" FontSize="{ThemeResource GlyphSizeBody}"
+                                                              VerticalAlignment="Center"
+                                                              AutomationProperties.AccessibilityView="Raw" />
+                                                    <TextBlock Text="当前连续天数" Style="{StaticResource HintTextStyle}"
+                                                               VerticalAlignment="Center" />
+                                                </StackPanel>
+                                                <TextBlock x:Name="StatsKpiCurrentStreak" Grid.Row="1" Text="—"
+                                                           Style="{ThemeResource SubtitleTextBlockStyle}"
+                                                           Margin="0,10,0,0"
+                                                           AutomationProperties.AutomationId="StatsKpiCurrentStreak" />
+                                                <TextBlock x:Name="StatsKpiCurrentStreakHint" Grid.Row="2" Text="—"
+                                                           Style="{StaticResource HintTextStyle}"
+                                                           VerticalAlignment="Bottom" TextWrapping="NoWrap"
+                                                           TextTrimming="CharacterEllipsis" />
+                                            </Grid>
+                                        </Border>
+
+                                        <!-- 最长连续天数 -->
+                                        <Border Grid.Column="4" Style="{StaticResource CardBorderStyle}"
+                                                Padding="{ThemeResource CardPaddingWide}">
+                                            <Grid MinHeight="104">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="*" />
+                                                </Grid.RowDefinitions>
+                                                <StackPanel Orientation="Horizontal" Spacing="{ThemeResource Space6}">
+                                                    <FontIcon Glyph="&#xE734;" FontSize="{ThemeResource GlyphSizeBody}"
+                                                              VerticalAlignment="Center"
+                                                              AutomationProperties.AccessibilityView="Raw" />
+                                                    <TextBlock Text="最长连续天数" Style="{StaticResource HintTextStyle}"
+                                                               VerticalAlignment="Center" />
+                                                </StackPanel>
+                                                <TextBlock x:Name="StatsKpiLongestStreak" Grid.Row="1" Text="—"
+                                                           Style="{ThemeResource SubtitleTextBlockStyle}"
+                                                           Margin="0,10,0,0"
+                                                           AutomationProperties.AutomationId="StatsKpiLongestStreak" />
+                                                <TextBlock x:Name="StatsKpiLongestStreakHint" Grid.Row="2" Text="—"
+                                                           Style="{StaticResource HintTextStyle}"
+                                                           VerticalAlignment="Bottom" TextWrapping="NoWrap"
+                                                           TextTrimming="CharacterEllipsis" />
+                                            </Grid>
+                                        </Border>
+                                    </Grid>
+
+                                    <!-- ===== Token 活动（热力图） ===== -->
+                                    <Border Style="{StaticResource CardBorderStyle}"
+                                            Padding="{ThemeResource CardPaddingWide}"
+                                            AutomationProperties.AutomationId="StatsHeatCard">
+                                        <StackPanel Spacing="{ThemeResource Space12}">
+                                            <Grid ColumnSpacing="{ThemeResource Space12}">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="Token 活动" Style="{StaticResource BodyStrongTextStyle}"
+                                                           VerticalAlignment="Center" />
+                                                <SelectorBar x:Name="StatsHeatMetricBar" Grid.Column="1"
+                                                             SelectionChanged="OnStatsHeatMetricChanged"
+                                                             AutomationProperties.AutomationId="StatsHeatMetricBar"
+                                                             AutomationProperties.Name="Token 活动统计口径">
+                                                    <SelectorBarItem Text="每日" Tag="day" IsSelected="True" />
+                                                    <SelectorBarItem Text="每周" Tag="week" />
+                                                    <SelectorBarItem Text="累计" Tag="total" />
+                                                </SelectorBar>
+                                            </Grid>
+                                            <!-- 热力图：Canvas 自绘（列 = 周，行 = 周一…周日），随滚动容器宽度重排 -->
+                                            <ScrollViewer x:Name="StatsHeatScroller" HorizontalScrollBarVisibility="Auto"
+                                                          HorizontalScrollMode="Auto" VerticalScrollBarVisibility="Disabled">
+                                                <StackPanel>
+                                                    <Canvas x:Name="StatsHeatCanvas" Height="130" />
+                                                    <Canvas x:Name="StatsHeatMonthCanvas" Height="18" />
+                                                </StackPanel>
+                                            </ScrollViewer>
+                                            <!-- 热力档位图例 -->
+                                            <StackPanel Orientation="Horizontal" Spacing="{ThemeResource Space6}"
+                                                        HorizontalAlignment="Right">
+                                                <TextBlock Text="少" Style="{StaticResource HintTextStyle}" VerticalAlignment="Center" />
+                                                <Rectangle x:Name="StatsHeatLegend0" Width="12" Height="12" RadiusX="3" RadiusY="3" />
+                                                <Rectangle x:Name="StatsHeatLegend1" Width="12" Height="12" RadiusX="3" RadiusY="3" />
+                                                <Rectangle x:Name="StatsHeatLegend2" Width="12" Height="12" RadiusX="3" RadiusY="3" />
+                                                <Rectangle x:Name="StatsHeatLegend3" Width="12" Height="12" RadiusX="3" RadiusY="3" />
+                                                <Rectangle x:Name="StatsHeatLegend4" Width="12" Height="12" RadiusX="3" RadiusY="3" />
+                                                <TextBlock Text="多" Style="{StaticResource HintTextStyle}" VerticalAlignment="Center" />
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- ===== 时间范围（作用于趋势图与模型用量） ===== -->
+                                    <Grid ColumnSpacing="{ThemeResource Space12}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="时间范围" Style="{StaticResource BodyStrongTextStyle}"
+                                                   VerticalAlignment="Center" />
+                                        <SelectorBar x:Name="StatsRangeBar" Grid.Column="1"
+                                                     SelectionChanged="OnStatsRangeChanged"
+                                                     AutomationProperties.AutomationId="StatsRangeBar"
+                                                     AutomationProperties.Name="统计时间范围">
+                                            <SelectorBarItem Text="近 7 天" Tag="7" IsSelected="True" />
+                                            <SelectorBarItem Text="近 30 天" Tag="30" />
+                                        </SelectorBar>
+                                    </Grid>
+
+                                    <!-- ===== 每日 Token 趋势图（多模型折线） ===== -->
+                                    <Border Style="{StaticResource CardBorderStyle}"
+                                            Padding="{ThemeResource CardPaddingWide}"
+                                            AutomationProperties.AutomationId="StatsTrendCard">
+                                        <StackPanel Spacing="{ThemeResource Space10}">
+                                            <TextBlock Text="每日 Token 趋势图" Style="{StaticResource BodyStrongTextStyle}" />
+                                            <!-- 图例：模型名（按用量降序），色块与折线同源 -->
+                                            <ItemsControl x:Name="StatsTrendLegend" AutomationProperties.AutomationId="StatsTrendLegend">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <StackPanel Orientation="Horizontal" Spacing="{ThemeResource Space12}" />
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate x:DataType="local:StatsLegendVm">
+                                                        <StackPanel Orientation="Horizontal" Spacing="{ThemeResource Space6}">
+                                                            <Rectangle Width="10" Height="10" RadiusX="2" RadiusY="2"
+                                                                       VerticalAlignment="Center" Fill="{Binding Swatch}" />
+                                                            <TextBlock Text="{Binding Name}" Style="{StaticResource HintTextStyle}"
+                                                                       TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+                                                        </StackPanel>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                            <Canvas x:Name="StatsTrendCanvas" Height="{ThemeResource StatsChartHeight}" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- ===== 模型用量（横向占比条列表，Windows 存储设置页同构：
+                                         模型名 + 右侧 tokens / 占比条 / 占比说明；色板与趋势图同源） ===== -->
+                                    <Border Style="{StaticResource CardBorderStyle}"
+                                            Padding="{ThemeResource CardPaddingWide}"
+                                            AutomationProperties.AutomationId="StatsModelCard">
+                                        <StackPanel Spacing="{ThemeResource Space12}">
+                                            <Grid ColumnSpacing="{ThemeResource Space12}">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="模型用量" Style="{StaticResource BodyStrongTextStyle}"
+                                                           VerticalAlignment="Center" />
+                                                <TextBlock x:Name="StatsModelTotal" Grid.Column="1"
+                                                           Style="{StaticResource HintTextStyle}"
+                                                           VerticalAlignment="Center"
+                                                           AutomationProperties.AutomationId="StatsModelTotal" />
+                                            </Grid>
+                                            <ItemsControl x:Name="StatsModelLegend"
+                                                          AutomationProperties.AutomationId="StatsModelLegend">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate x:DataType="local:StatsModelVm">
+                                                        <StackPanel Spacing="{ThemeResource Space6}" Margin="0,0,0,4">
+                                                            <Grid ColumnSpacing="{ThemeResource Space12}">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="*" />
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <TextBlock Text="{Binding Name}" Style="{StaticResource BodyTextStyle}"
+                                                                           TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+                                                                <TextBlock Grid.Column="1" Text="{Binding TokensText}"
+                                                                           Style="{StaticResource BodyTextStyle}" />
+                                                            </Grid>
+                                                            <!-- 占比条：WinUI 默认 ProgressBar 形态，仅前景色绑定模型系列色 -->
+                                                            <ProgressBar Value="{Binding BarValue}"
+                                                                         Foreground="{Binding Swatch}"
+                                                                         AutomationProperties.Name="{Binding Name}" />
+                                                            <TextBlock Text="{Binding ShareText}" Style="{StaticResource HintTextStyle}" />
+                                                        </StackPanel>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                            <TextBlock x:Name="StatsModelEmptyHint" Text="所选时间范围内暂无用量记录"
+                                                       Style="{StaticResource HintTextStyle}"
+                                                       HorizontalAlignment="Center"
+                                                       Visibility="Collapsed" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- 数据来源与口径：写死在界面上，读者不必去翻代码（刷新在顶部工具栏行） -->
+                                    <TextBlock x:Name="StatsSourceNote"
+                                               Style="{StaticResource HintTextStyle}"
+                                               TextWrapping="Wrap"
+                                               HorizontalAlignment="Left"
+                                               AutomationProperties.AutomationId="StatsSourceNote" />
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Grid>
+
+                        <!-- 桌面宠物不在这里画：它有自己独立于主窗口的置顶窗口
+                             （Dsh\PetWindow.xaml），因此主窗口里不留宠物层。插件把宠物定义为
+                             host-global 的（/api/pet/* 没有 session 维度），主窗口一被盖住或
+                             最小化就跟着消失的那不是桌面宠物。 -->
+                    </Grid>
+                </Border>
+            </NavigationView>
+
+        <!-- 图片放大浮层：发送前（输入区待发送缩略图）与发送后（user-image 气泡）点击后打开，
+             看全图；Esc / 点背板空白处 / 右上关闭钮退出。声明在最后 = 盖住加载层与所有浮层。
+             图片上限按浮层实际尺寸现算（ApplyLightboxSizeLimits）：MaxWidth/MaxHeight 把
+             Image 元素收到位图缩放后的尺寸，背板空白才点得到（Stretch=Uniform 铺满元素时
+             整个元素区域都命中 Image，点哪都像点在图上）。 -->
+        <Grid x:Name="ImageLightboxLayer" Grid.RowSpan="2" Visibility="Collapsed"
+              Background="#D9000000" Tapped="OnImageLightboxBackdropTapped"
+              SizeChanged="OnImageLightboxSizeChanged">
+            <Grid Margin="32,52,32,60">
+                <Image x:Name="LightboxImage" Stretch="Uniform"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Grid>
+            <Button x:Name="LightboxCloseButton"
+                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="10"
+                    Style="{StaticResource IconButtonStyle}"
+                    Background="Transparent" BorderThickness="0"
+                    Click="OnImageLightboxCloseClick"
+                    AutomationProperties.AutomationId="LightboxCloseButton"
+                    AutomationProperties.Name="关闭图片预览"
+                    ToolTipService.ToolTip="关闭">
+                <FontIcon Glyph="&#xE711;" FontSize="{ThemeResource GlyphSizeBody}" Foreground="#E6FFFFFF" />
+            </Button>
+            <TextBlock x:Name="LightboxCaption"
+                       HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,18"
+                       MaxWidth="640" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                       Foreground="#E6FFFFFF" Style="{StaticResource CaptionTextStyle}" />
+        </Grid>
+    </Grid>
+</Window>

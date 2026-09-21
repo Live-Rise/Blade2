@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  工作区文件面板（右侧栏）：文件树 + 文件内容预览。
+  RPC 契约（以内核 @deepseek-ai/dsh-api-workspace-files/lib/typert.remote-client.js 为准）：
+    workspaceFiles/list  args { workspaceFileScopeId, path }            - value { path, entries[{name,type,size?}], truncated }
+    workspaceFiles/stat  args { workspaceFileScopeId, path }            - value { absolutePath, version, bytes? }
+    workspaceFiles/read  args { workspaceFileScopeId, path, range{offset?,limit?} } - value { offset, text, lines, eof, absolutePath, version, bytes? }
+    workspaceFiles/changes args { workspaceFileScopeId }                - 流：{kind:"ready"} | {kind:"change", change}
+  workspaceFileScopeId = 会话 id（内核 lookup "workspaceFileScope"：由会话 header.cwd 解出工作区根；
+  dsh-api-gateway/lib/index.js resolveParameter 取 args[parameter.wire]）。
+  path 用工作区根的**绝对路径**（与 dsh 原版 sidebar-files 一致：childPath = 父绝对路径 + "/" + name），
+  相对路径会按 header.cwd 解析，但绝对路径不受解析歧义影响。
+  内核错误码 → InfoBar：workspace-file/not-text（二进制/含 NUL）、workspace-file/too-large、
+  workspace-file/not-found、workspace-file/not-directory、workspace-file/not-regular-file、
+  workspace-file/outside-workspace、gateway/lookup-not-found（会话无 header.cwd）等。
+-->
+<UserControl
+    x:Class="Blade2.FilesPanel"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:local="using:Blade2"
+    mc:Ignorable="d">
+
+    <!-- 右栏固定宽度：内容面（聊天列 MaxWidth 760）在 1280 默认窗口下仍留有可用行宽 -->
+    <Border x:Name="PanelRoot"
+            Width="340"
+            Background="{ThemeResource SurfaceBrush}"
+            BorderBrush="{ThemeResource StrokeSubtleBrush}"
+            BorderThickness="1,0,0,0">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- ============ 页头：树模式 = 工作区名 + 工具；预览模式 = 返回 + 文件名 ============ -->
+            <Grid Grid.Row="0" Padding="12,10,8,10" ColumnSpacing="{ThemeResource Space8}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Button x:Name="BackButton"
+                        Grid.Column="0"
+                        Style="{StaticResource IconButtonStyle}"
+                        Visibility="Collapsed"
+                        AutomationProperties.AutomationId="FilesPanelBackButton"
+                        AutomationProperties.Name="返回文件树"
+                        ToolTipService.ToolTip="返回文件树"
+                        Click="OnBackClick">
+                    <FontIcon Glyph="&#xE72B;" FontSize="14" />
+                </Button>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
+                    <TextBlock x:Name="HeaderTitle"
+                               Text="工作区文件"
+                               Style="{StaticResource BodyStrongTextStyle}"
+                               TextTrimming="CharacterEllipsis"
+                               AutomationProperties.AutomationId="FilesPanelHeaderTitle" />
+                    <TextBlock x:Name="HeaderPath"
+                               Style="{StaticResource HintTextStyle}"
+                               TextTrimming="CharacterEllipsis"
+                               TextWrapping="NoWrap"
+                               AutomationProperties.AutomationId="FilesPanelHeaderPath" />
+                </StackPanel>
+                <Button x:Name="RefreshButton"
+                        Grid.Column="2"
+                        Style="{StaticResource IconButtonStyle}"
+                        AutomationProperties.AutomationId="FilesPanelRefreshButton"
+                        AutomationProperties.Name="刷新文件树"
+                        ToolTipService.ToolTip="刷新"
+                        Click="OnRefreshClick">
+                    <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                </Button>
+                <Button x:Name="CloseButton"
+                        Grid.Column="3"
+                        Style="{StaticResource IconButtonStyle}"
+                        AutomationProperties.AutomationId="FilesPanelCloseButton"
+                        AutomationProperties.Name="关闭文件面板"
+                        ToolTipService.ToolTip="关闭"
+                        Click="OnCloseClick">
+                    <FontIcon Glyph="&#xE711;" FontSize="14" />
+                </Button>
+            </Grid>
+
+            <!-- ============ 提示区（错误 / 截断 / 空态） ============ -->
+            <InfoBar x:Name="StatusBar"
+                     Grid.Row="1"
+                     Margin="{ThemeResource OverlayMargin}"
+                     IsOpen="False"
+                     IsClosable="True"
+                     AutomationProperties.AutomationId="FilesPanelStatusBar" />
+
+            <!-- ============ 主体 ============ -->
+            <Grid Grid.Row="2">
+                <!-- 文件树（非绑定模式 TreeViewNode：目录懒加载，Expanding 事件触发一行 list） -->
+                <ScrollViewer x:Name="TreeScroll"
+                              Padding="8,0,8,12"
+                              VerticalScrollBarVisibility="Auto"
+                              VerticalScrollMode="Auto">
+                    <TreeView x:Name="FileTree"
+                              SelectionMode="Single"
+                              CanDragItems="False"
+                              CanReorderItems="False"
+                              AllowDrop="False"
+                              Expanding="OnNodeExpanding"
+                              ItemInvoked="OnTreeItemInvoked"
+                              KeyDown="OnTreeKeyDown"
+                              AutomationProperties.AutomationId="FilesPanelTree">
+                        <TreeView.ItemTemplate>
+                            <!-- 非绑定模式（自管 TreeViewNode）下 ItemTemplate 的 DataContext 是
+                                 TreeViewNode 本身，数据项在 Content 里（见 Microsoft Learn "Tree view"
+                                 的 Pictures/Music 示例：x:DataType="TreeViewNode" + ((T)Content).X）。 -->
+                            <DataTemplate>
+                                <Grid ColumnSpacing="{ThemeResource Space8}" Padding="0,3" Opacity="{Binding Content.RowOpacity}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <FontIcon Grid.Column="0"
+                                              Glyph="{Binding Content.Glyph}"
+                                              FontSize="14"
+                                              Opacity="0.8"
+                                              Foreground="{ThemeResource TextSecondaryBrush}"
+                                              VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding Content.Name}"
+                                               Style="{StaticResource BodyTextStyle}"
+                                               TextWrapping="NoWrap"
+                                               TextTrimming="CharacterEllipsis"
+                                               VerticalAlignment="Center" />
+                                </Grid>
+                            </DataTemplate>
+                        </TreeView.ItemTemplate>
+                    </TreeView>
+                </ScrollViewer>
+
+                <!-- 预览（文本）：等宽 + 保留换行（NoWrap 不吞行，长行走横向滚动） -->
+                <Grid x:Name="PreviewHost" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Margin="{ThemeResource OverlayMargin}" Spacing="{ThemeResource Space2}">
+                        <TextBlock x:Name="PreviewMeta"
+                                   Style="{StaticResource HintTextStyle}"
+                                   TextWrapping="Wrap"
+                                   AutomationProperties.AutomationId="FilesPanelPreviewMeta" />
+                    </StackPanel>
+                    <ScrollViewer Grid.Row="1"
+                                  Padding="12,0,12,12"
+                                  HorizontalScrollBarVisibility="Auto"
+                                  HorizontalScrollMode="Auto"
+                                  VerticalScrollBarVisibility="Auto"
+                                  VerticalScrollMode="Auto">
+                        <TextBlock x:Name="PreviewText"
+                                   Style="{StaticResource CodeTextStyle}"
+                                   TextWrapping="NoWrap"
+                                   IsTextSelectionEnabled="True"
+                                   AutomationProperties.AutomationId="FilesPanelPreviewText" />
+                    </ScrollViewer>
+                </Grid>
+
+                <!-- 占位（二进制/不可预览/空目录/未选会话） -->
+                <StackPanel x:Name="PlaceholderHost"
+                            Margin="16,12,16,12"
+                            Spacing="{ThemeResource Space6}"
+                            Visibility="Collapsed">
+                    <FontIcon x:Name="PlaceholderIcon" Glyph="&#xE7C3;" FontSize="24" Opacity="0.7" />
+                    <TextBlock x:Name="PlaceholderTitle" Style="{StaticResource BodyStrongTextStyle}" />
+                    <TextBlock x:Name="PlaceholderDetail" Style="{StaticResource HintTextStyle}" />
+                </StackPanel>
+            </Grid>
+        </Grid>
+    </Border>
+</UserControl>

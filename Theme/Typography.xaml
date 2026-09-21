@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Blade² 排版令牌（WinUI 官方字阶）
+  ==================================================================
+  键名刻意与 WinUI 内建样式（CaptionTextBlockStyle / BodyTextBlockStyle…）区分：
+  这里是"应用字阶"层，页面按语义挑层级（标题用 TitleTextStyle，正文用 BodyTextStyle），
+  不覆盖框架样式，避免连带影响未改造的既有页面。
+
+  字阶（字号取自 WinUI 官方 ramp 资源键，行高按 ramp 行高表给出）：
+    Caption      12 / 16 / Regular    = CaptionTextBlockFontSize
+    Body         14 / 20 / Regular    = BodyTextBlockFontSize
+    BodyStrong   14 / 20 / SemiBold   = BodyStrongTextBlockFontSize
+    Subtitle     20 / 28 / SemiBold   = SubtitleTextBlockFontSize
+    Title        28 / 36 / SemiBold   = TitleTextBlockFontSize
+    TitleLarge   40 / 52 / SemiBold   = TitleLargeTextBlockFontSize
+    Display      68 / 92 / SemiBold   = DisplayTextBlockFontSize
+  字号引用官方键（不写数字）：ramp 调整时应用自动跟随。行高 WinUI 未暴露资源键，在此集中给出。
+  统一字体族 = {ThemeResource ContentControlThemeFontFamily}（WinUI 的 Segoe UI Variable Text），
+  代码/标识用等宽族（Consolas → Cascadia Mono → Courier New 回退）。
+
+  注意：XML 注释内不得出现连续两个短横线（XML 规范），本文件分隔线统一用 "="。
+-->
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <FontFamily x:Key="CodeFontFamily">Consolas, Cascadia Mono, Courier New</FontFamily>
+
+    <Style x:Key="CaptionTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{ThemeResource ContentControlThemeFontFamily}" />
+        <Setter Property="FontSize" Value="{ThemeResource CaptionTextBlockFontSize}" />
+        <Setter Property="LineHeight" Value="16" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style x:Key="BodyTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{ThemeResource ContentControlThemeFontFamily}" />
+        <Setter Property="FontSize" Value="{ThemeResource BodyTextBlockFontSize}" />
+        <Setter Property="LineHeight" Value="20" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style x:Key="BodyStrongTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{ThemeResource ContentControlThemeFontFamily}" />
+        <Setter Property="FontSize" Value="{ThemeResource BodyTextBlockFontSize}" />
+        <Setter Property="LineHeight" Value="20" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style x:Key="SubtitleTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{ThemeResource ContentControlThemeFontFamily}" />
+        <Setter Property="FontSize" Value="{ThemeResource SubtitleTextBlockFontSize}" />
+        <Setter Property="LineHeight" Value="28" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style x:Key="TitleTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{ThemeResource ContentControlThemeFontFamily}" />
+        <Setter Property="FontSize" Value="{ThemeResource TitleTextBlockFontSize}" />
+        <Setter Property="LineHeight" Value="36" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style x:Key="TitleLargeTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{ThemeResource ContentControlThemeFontFamily}" />
+        <Setter Property="FontSize" Value="{ThemeResource TitleLargeTextBlockFontSize}" />
+        <Setter Property="LineHeight" Value="52" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style x:Key="DisplayTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{ThemeResource ContentControlThemeFontFamily}" />
+        <Setter Property="FontSize" Value="{ThemeResource DisplayTextBlockFontSize}" />
+        <Setter Property="LineHeight" Value="92" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <!-- 等宽：会话 id / 工具名 / 目标 id 等标识（技术标识保留英文与等宽形态） -->
+    <Style x:Key="CodeTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource CodeFontFamily}" />
+        <Setter Property="FontSize" Value="{ThemeResource CaptionTextBlockFontSize}" />
+        <Setter Property="LineHeight" Value="16" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <!-- 应用字阶：只从上面的 WinUI Type Ramp 取档，不新增档位。
+           AppBrand   = 品牌字标（Title 档下取 18/24 SemiBold，压得住侧栏行高 40）
+           EmptyState = 空态标题（直接 BasedOn TitleTextStyle，28/36 SemiBold） -->
+    <Style x:Key="AppBrandTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{ThemeResource ContentControlThemeFontFamily}" />
+        <Setter Property="FontSize" Value="{ThemeResource SubtitleTextBlockFontSize}" />
+        <Setter Property="LineHeight" Value="24" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="TextWrapping" Value="NoWrap" />
+    </Style>
+
+    <Style x:Key="EmptyStateTitleTextStyle" TargetType="TextBlock" BasedOn="{StaticResource TitleTextStyle}" />
+</ResourceDictionary>

@@ -1,0 +1,345 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Blade² 设计令牌（语义层）
+  ==================================================================
+  定位：壳内唯一的"颜色 / 间距 / 圆角 / 动效"取值来源。页面只引用这里的语义键
+  （如 {ThemeResource CardBrush}），不再直接写死色值或数字。
+
+  取值原则：每个令牌都派生自 WinUI 既有语义资源（CardBackgroundFillColor*、
+  TextFillColor*、AccentFillColor*、SystemFillColor* 等），不引入与系统主题冲突的
+  品牌色。写法为 SolidColorBrush + Color="{ThemeResource <WinUI 颜色键>}"：
+  颜色键由 WinUI 主题字典按当前主题提供，因此换肤（窗口 RequestedTheme 变更）时
+  令牌自动重估，壳不需要重新构造画刷。
+
+  三套主题各自完整定义：Light / Dark / HighContrast。高对比度落到 SystemColor*
+  （系统高对比度配色），保证 HC 用户可读性。三套的键集合完全一致，仅取值来源不同。
+
+  注意：XML 注释内不得出现连续两个短横线（XML 规范），本文件分隔线统一用 "="。
+-->
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ============ 间距栅格（8px 基准，x:Double 供 Spacing/Width 等单值消费） ============ -->
+    <x:Double x:Key="Space2">2</x:Double>
+    <x:Double x:Key="Space4">4</x:Double>
+    <x:Double x:Key="Space8">8</x:Double>
+    <x:Double x:Key="Space12">12</x:Double>
+    <x:Double x:Key="Space16">16</x:Double>
+    <x:Double x:Key="Space24">24</x:Double>
+    <x:Double x:Key="Space32">32</x:Double>
+    <x:Double x:Key="Space48">48</x:Double>
+    <!-- 非 8 倍数的既有档位：界面里已经在用（图标-文字间距、条状元素间距等），
+         取值原样保留，只是从字面量提升为具名令牌，不改变任何视觉。 -->
+    <x:Double x:Key="Space6">6</x:Double>
+    <x:Double x:Key="Space10">10</x:Double>
+    <x:Double x:Key="Space14">14</x:Double>
+
+    <!-- ============ 复合间距（Thickness：同一版式在多处重复，语义化后不再各写各的） ============ -->
+    <!-- 页头：左右 36 对齐内容列，上 24 留白，下 4 与内容轻微分离（设置页/工具页统一） -->
+    <Thickness x:Key="PageHeaderMargin">36,24,36,4</Thickness>
+    <!-- 页脚提示行：左 1 微调与卡片描边对齐，上 10 与卡片分离，下 24 收尾 -->
+    <Thickness x:Key="PageHintMargin">1,10,0,24</Thickness>
+    <!-- 卡片内边距：宽松（表单/详情卡）与紧凑（面板/日志卡） -->
+    <Thickness x:Key="CardPaddingWide">16,12,16,12</Thickness>
+    <Thickness x:Key="CardPaddingCompact">12,8,12,8</Thickness>
+    <!-- 大卡片内边距（审批卡等需要更强呼吸感的浮出卡片） -->
+    <Thickness x:Key="CardPaddingLarge">18</Thickness>
+    <!-- 状态徽标（chip）：竖向 3 让胶囊贴合文字行高 -->
+    <Thickness x:Key="ChipPaddingCompact">10,3</Thickness>
+    <!-- 补全浮层：外边距 / 标题行 / 列表内边距 -->
+    <Thickness x:Key="OverlayMargin">12,0,12,8</Thickness>
+    <Thickness x:Key="OverlayHeaderMargin">12,8,12,4</Thickness>
+    <Thickness x:Key="OverlayListPadding">4,0,4,6</Thickness>
+    <!-- 条状区域（队列条/作业条/附件条/提问卡）的外边距 -->
+    <Thickness x:Key="StripMargin">12,2,12,2</Thickness>
+    <!-- 输入条内相邻动作按钮的右间距 -->
+    <Thickness x:Key="InlineButtonGap">0,0,8,0</Thickness>
+    <!-- 按钮内边距：行内紧凑按钮（设置卡/队列行的小动作）统一取值 -->
+    <Thickness x:Key="InlineButtonPadding">10,4,10,4</Thickness>
+    <!-- 徽标（chip）紧凑内边距：队列行放置位徽标 -->
+    <Thickness x:Key="ChipPaddingTight">6,1,6,1</Thickness>
+    <!-- 输入区：外层留白 / 输入卡内边距 / 底部动作行内边距 / 输入框内边距 / 上方选择器行内边距 -->
+    <Thickness x:Key="ComposerBarMargin">16,4,16,12</Thickness>
+    <Thickness x:Key="ComposerCardPadding">0,8,4,0</Thickness>
+    <Thickness x:Key="ComposerRowPadding">8,2,8,6</Thickness>
+    <Thickness x:Key="ComposerInputPadding">14,4,8,0</Thickness>
+    <Thickness x:Key="ComposerSelectorsMargin">20,0,16,2</Thickness>
+    <!-- 侧栏品牌行：字标在品牌行内的左外边距 -->
+    <Thickness x:Key="BrandRowMargin">8,0,0,0</Thickness>
+
+    <!-- ============ 控件尺寸 ============ -->
+    <x:Double x:Key="ComposerAddButtonSize">28</x:Double>    <!-- 输入区次级圆钮 28×28（+ 号 / 反馈钮） -->
+    <!-- 输入区自适应上限：窄窗下这些上限把「Auto 列不可收缩」变成「可控收缩 + 文本省略」，
+         宽窗下取值远大于自然宽度，胶囊仍按内容贴合，视觉与改动前一致。 -->
+    <x:Double x:Key="ComposerPillMaxWidth">220</x:Double>        <!-- 权限胶囊（宽窗） -->
+    <x:Double x:Key="ComposerModelPillMaxWidth">280</x:Double>   <!-- 模型胶囊（宽窗） -->
+    <x:Double x:Key="ComposerPillMaxWidthNarrow">104</x:Double>  <!-- 权限胶囊（窄窗） -->
+    <x:Double x:Key="ComposerModelPillMaxWidthNarrow">132</x:Double> <!-- 模型胶囊（窄窗） -->
+    <x:Double x:Key="ComposerSelectorMaxWidth">220</x:Double>       <!-- 工作区/预设选择器（宽窗） -->
+    <x:Double x:Key="ComposerSelectorMaxWidthNarrow">116</x:Double> <!-- 工作区/预设选择器（窄窗） -->
+    <!-- 窄窗自动收起侧栏的宽度阈值（dip）：侧栏 264 + 内容列可用下限。
+         侧栏展开时窗口窄于此值，内容列会被压到不可用（实测 450dip 宽时输入卡被裁切）。 -->
+    <x:Double x:Key="CompactPaneBreakpoint">720</x:Double>
+    <!-- 顶栏返回钮（窗口左上角）：与非聊天页的页面标题同高 -->
+    <x:Double x:Key="ShellBackButtonSize">32</x:Double>
+    <!-- 统计面板：热力图与图表的几何常量（绘图尺寸，非主题取值，故不放主题字典） -->
+    <x:Double x:Key="StatsHeatCellSize">14</x:Double>       <!-- 热力图单元边长 -->
+    <x:Double x:Key="StatsHeatCellGap">4</x:Double>         <!-- 热力图单元间距 -->
+    <x:Double x:Key="StatsHeatCellRadius">3</x:Double>      <!-- 热力图单元圆角 -->
+    <x:Double x:Key="StatsChartHeight">220</x:Double>       <!-- 折线图绘图区高度 -->
+    <x:Double x:Key="ComposerSendButtonSize">34</x:Double>   <!-- 输入区主按钮 34×34 圆形 -->
+    <x:Double x:Key="ComposerInputMinHeight">36</x:Double>   <!-- 输入框最小高度 -->
+    <x:Double x:Key="ComposerInputMaxHeight">160</x:Double>  <!-- 输入框最大高度（超出后内部滚动） -->
+    <x:Double x:Key="EmptyStateMarkSize">34</x:Double>       <!-- 空态应用标尺寸 -->
+    <x:Double x:Key="BrandMarkSize">24</x:Double>            <!-- 侧栏品牌标尺寸 -->
+    <x:Double x:Key="BrandRowHeight">40</x:Double>           <!-- 品牌行高度 -->
+    <x:Double x:Key="StatusDotSize">7</x:Double>             <!-- 会话/作业状态点直径 -->
+    <x:Double x:Key="TouchTargetSize">32</x:Double>          <!-- 触控目标下限（WinUI 控件默认最小高度） -->
+    <x:Double x:Key="GlyphSizeCaption">12</x:Double>         <!-- 图标字号 = caption 档 -->
+    <x:Double x:Key="GlyphSizeBody">14</x:Double>            <!-- 图标字号 = body 档 -->
+    <x:Double x:Key="FieldMinWidth">200</x:Double>           <!-- 设置行内单行输入框宽度下限 -->
+    <x:Double x:Key="DialogMinWidthCompact">360</x:Double>   <!-- 单字段输入对话框最小宽度 -->
+    <x:Double x:Key="DialogMinWidth">420</x:Double>          <!-- 多字段输入对话框最小宽度 -->
+    <!-- 窗口尺寸下限（dip）。默认无下限时窗口可被拉到 OS 允许的极限（本机 131dip），
+         设置页内容列被侧栏导轨与页边距吃光：实测 220dip 窗口下内容列只剩 ~52dip，
+         InfoBar/KPI 文字被压成「一字一行」并与相邻行重叠、被卡片裁掉
+         （artifacts/screenshots/usage-narrow-min220dip.png）。
+         560 = 内容列可读下限 420 + 侧栏紧凑导轨 65 + 设置页左右内边距 36×2。 -->
+    <x:Double x:Key="WindowMinWidth">560</x:Double>
+    <x:Double x:Key="WindowMinHeight">420</x:Double>
+    <!-- 1px 描边（BorderThickness / 分隔线高度）：边框宽度是控件结构值，语义化后不再散落 -->
+    <Thickness x:Key="StrokeThickness">1</Thickness>
+    <!-- 气泡内边距：用户胶囊（更扁，右下尖角）与助手卡片（上下更松） -->
+    <Thickness x:Key="BubblePaddingUser">14,9</Thickness>
+    <Thickness x:Key="BubblePaddingAssistant">14,10</Thickness>
+
+    <!-- ============ 圆角（x:Double 数值令牌 + CornerRadius* 可直接赋值的实例） ============ -->
+    <x:Double x:Key="RadiusSmall">4</x:Double>
+    <x:Double x:Key="RadiusMedium">8</x:Double>
+    <x:Double x:Key="RadiusLarge">12</x:Double>
+    <x:Double x:Key="RadiusXLarge">16</x:Double>
+    <x:Double x:Key="RadiusPill">24</x:Double>
+
+    <CornerRadius x:Key="CornerSmall">4</CornerRadius>
+    <CornerRadius x:Key="CornerMedium">8</CornerRadius>
+    <CornerRadius x:Key="CornerLarge">12</CornerRadius>
+    <CornerRadius x:Key="CornerXLarge">16</CornerRadius>
+    <CornerRadius x:Key="CornerPill">24</CornerRadius>
+    <!-- 复合圆角（沿用壳既有形态，语义化命名后不再散落字面量） -->
+    <CornerRadius x:Key="CornerBubbleUser">16,16,4,16</CornerRadius>
+    <CornerRadius x:Key="CornerContentSurface">8,0,0,0</CornerRadius>
+
+    <!-- ============ 动效 ============ -->
+    <Duration x:Key="DurationFast">0:0:0.12</Duration>
+    <Duration x:Key="DurationNormal">0:0:0.2</Duration>
+    <Duration x:Key="DurationSlow">0:0:0.3</Duration>
+    <CubicEase x:Key="EaseOut" EasingMode="EaseOut" />
+    <CubicEase x:Key="EaseInOut" EasingMode="EaseInOut" />
+    <!-- 页面转场时长：与 WinUI 内建 ControlNormalAnimationDuration 同值（250ms）。
+         设置页翻分区/钻取用它 —— 比 DurationNormal 稍长、比 DurationSlow 短，
+         节奏与 Win11 设置面板的翻页一致。 -->
+    <Duration x:Key="DurationPageTransition">0:0:0.25</Duration>
+    <!-- 转场缓动曲线（cubic-bezier 控制点，非线性）。CubicEase 只有三次幂一档曲线，
+         给不出系统转场的控制点，所以转场走 KeySpline（WinUI 自己的 generic.xaml 也是这套：
+         ControlFastOutSlowInKeySpline + SplineDoubleKeyFrame）。
+         进场 = 内建 ControlFastOutSlowInKeySpline 同值 0,0,0,1（快出慢进）；
+         退场 = 它的时间镜像 1,0,1,0（慢出快进）。进场与退场必须成对定义，
+         否则返回时的速度感与进入时割裂。 -->
+    <KeySpline x:Key="SplineFastOutSlowIn">0,0,0,1</KeySpline>
+    <KeySpline x:Key="SplineSlowOutFastIn">1,0,1,0</KeySpline>
+    <!-- 设置内容列进场位移：Win11 设置「Page refresh」内容自下方滑入的距离（dip） -->
+    <x:Double x:Key="SettingsContentSlideOffset">40</x:Double>
+    <!-- 设置二级页钻取位移：WinUI「Drill」新页自右向左推入的距离（dip） -->
+    <x:Double x:Key="SettingsDrillSlideOffset">120</x:Double>
+
+    <ResourceDictionary.ThemeDictionaries>
+        <!-- ===================== Light ===================== -->
+        <ResourceDictionary x:Key="Light">
+            <!-- 表面层级：窗口底 / 面板 / 卡片 / 卡片悬停 -->
+            <SolidColorBrush x:Key="SurfaceBrush" Color="{ThemeResource SolidBackgroundFillColorBase}" />
+            <SolidColorBrush x:Key="SurfaceAltBrush" Color="{ThemeResource LayerFillColorDefault}" />
+            <SolidColorBrush x:Key="CardBrush" Color="{ThemeResource CardBackgroundFillColorDefault}" />
+            <SolidColorBrush x:Key="CardSecondaryBrush" Color="{ThemeResource CardBackgroundFillColorSecondary}" />
+            <SolidColorBrush x:Key="CardHoverBrush" Color="{ThemeResource SubtleFillColorSecondary}" />
+            <!-- 文本层级 -->
+            <SolidColorBrush x:Key="TextPrimaryBrush" Color="{ThemeResource TextFillColorPrimary}" />
+            <SolidColorBrush x:Key="TextSecondaryBrush" Color="{ThemeResource TextFillColorSecondary}" />
+            <SolidColorBrush x:Key="TextTertiaryBrush" Color="{ThemeResource TextFillColorTertiary}" />
+            <SolidColorBrush x:Key="TextDisabledBrush" Color="{ThemeResource TextFillColorDisabled}" />
+            <!-- 描边 -->
+            <SolidColorBrush x:Key="StrokeBrush" Color="{ThemeResource CardStrokeColorDefaultSolid}" />
+            <SolidColorBrush x:Key="StrokeSubtleBrush" Color="{ThemeResource DividerStrokeColorDefault}" />
+            <!-- 强调 -->
+            <StaticResource x:Key="AccentBrush" ResourceKey="AccentFillColorDefaultBrush" />
+            <StaticResource x:Key="AccentHoverBrush" ResourceKey="AccentFillColorSecondaryBrush" />
+            <StaticResource x:Key="AccentPressedBrush" ResourceKey="AccentFillColorTertiaryBrush" />
+            <SolidColorBrush x:Key="OnAccentBrush" Color="{ThemeResource TextOnAccentFillColorPrimary}" />
+            <!-- 气泡半透明面：默认档（半透明实色）。基线 alpha 即默认不透明度 60% 浅 / 70% 深，
+                 与跨端 rust/src/theme.rs 的 bubble 近似（#99F3F3F3 / #B3202020）同源。
+                 生效值由 ApplyBubbleMaterial 按「设置→气泡材质 + 气泡不透明度 + 当前深浅主题」
+                 算好后写进窗口根网格的同名本地资源（覆盖本支），聊天列表所有气泡共用同一实例，
+                 改设置因此即时全量生效。气泡材质选「亚克力（系统材质）」或「跟随窗口材质」时，
+                 本地资源换成系统 AcrylicBrush 实例，参数同样由 ApplyBubbleMaterial 下发。 -->
+            <SolidColorBrush x:Key="BubbleMicaBrush" Color="#99F3F3F3" />
+            <!-- 状态 -->
+            <SolidColorBrush x:Key="SuccessBrush" Color="{ThemeResource SystemFillColorSuccess}" />
+            <SolidColorBrush x:Key="SuccessBgBrush" Color="{ThemeResource SystemFillColorSuccessBackground}" />
+            <SolidColorBrush x:Key="WarningBrush" Color="{ThemeResource SystemFillColorCaution}" />
+            <SolidColorBrush x:Key="WarningBgBrush" Color="{ThemeResource SystemFillColorCautionBackground}" />
+            <SolidColorBrush x:Key="ErrorBrush" Color="{ThemeResource SystemFillColorCritical}" />
+            <SolidColorBrush x:Key="ErrorBgBrush" Color="{ThemeResource SystemFillColorCriticalBackground}" />
+            <StaticResource x:Key="InfoBrush" ResourceKey="SystemFillColorAttentionBrush" />
+            <SolidColorBrush x:Key="InfoBgBrush" Color="{ThemeResource SystemFillColorAttentionBackground}" />
+            <!-- 聚焦环 -->
+            <SolidColorBrush x:Key="FocusRingBrush" Color="{ThemeResource FocusStrokeColorOuter}" />
+            <!-- 控件填充（次级按钮/条目底）：默认 / 悬停 / 按下 —— 代码侧（标题栏 caption 钮等）
+                 需要色值时也从这三个令牌取，不写死色值 -->
+            <SolidColorBrush x:Key="ControlFillBrush" Color="{ThemeResource ControlFillColorDefault}" />
+            <SolidColorBrush x:Key="ControlHoverBrush" Color="{ThemeResource ControlFillColorSecondary}" />
+            <SolidColorBrush x:Key="ControlPressedBrush" Color="{ThemeResource ControlFillColorTertiary}" />
+            <!-- 数据可视化色板（统计面板的曲线/环形扇区/热力图）。WinUI 语义资源里没有
+                 「6 个可区分的分类色」，因此这是本文件唯一的字面色值组；它按主题给出、
+                 随主题一起切换，页面侧仍只引用语义键（ChartSeries1Brush…）。
+                 顺序 = 参考图的数据强调顺序：蓝(主) / 绿 / 紫 / 红 / 橙 / 青。 -->
+            <SolidColorBrush x:Key="ChartSeries1Brush" Color="#2563EB" />
+            <SolidColorBrush x:Key="ChartSeries2Brush" Color="#15803D" />
+            <SolidColorBrush x:Key="ChartSeries3Brush" Color="#7C3AED" />
+            <SolidColorBrush x:Key="ChartSeries4Brush" Color="#DC2626" />
+            <SolidColorBrush x:Key="ChartSeries5Brush" Color="#EA580C" />
+            <SolidColorBrush x:Key="ChartSeries6Brush" Color="#0891B2" />
+            <!-- 热力图空档底（非活跃日）与图表网格线 -->
+            <SolidColorBrush x:Key="ChartHeatEmptyBrush" Color="#E4E6EB" />
+            <SolidColorBrush x:Key="ChartGridBrush" Color="#22000000" />
+
+            <!-- ===== 文本输入控件：聚焦/悬停零颜色反应（需求⑤「去掉输入框点击后的颜色反应」）=====
+                 WinUI 的 TextBox/PasswordBox/NumberBox 模板会在 Focused / PointerOver 视觉态里
+                 换掉底色、描边与「浮起线」（TextControl* 系列主题资源）——点进去就变色：
+                 实测底色由 ControlFillColorDefault 变成 ControlFillColorInputActive（整块变深约 30 个色阶），
+                 底边描边由静止色变成强调色并加粗。这里把**状态键别名到静止键**（StaticResource 别名 =
+                 同一个画刷实例），于是四态外观逐像素一致，而静止态一个像素都不动（只加键、不改键）。
+                 别名写在主题字典内：换肤时该主题字典重新解析，别名随当前主题一起重估。
+                 未纳入：*DisabledKey（禁用控件不可被点击/聚焦，不属⑤范围，且必须保留禁用观感）。
+                 控件级已自带覆盖的（输入区 InputBox / 顶栏 SearchBox）不受影响：控件级资源优先。 -->
+            <StaticResource x:Key="TextControlBackgroundFocused" ResourceKey="TextControlBackground" />
+            <StaticResource x:Key="TextControlBackgroundPointerOver" ResourceKey="TextControlBackground" />
+            <StaticResource x:Key="TextControlBorderBrushFocused" ResourceKey="TextControlBorderBrush" />
+            <StaticResource x:Key="TextControlBorderBrushPointerOver" ResourceKey="TextControlBorderBrush" />
+            <StaticResource x:Key="TextControlElevationBorderFocusedBrush" ResourceKey="TextControlElevationBorderBrush" />
+            <!-- 厚度也必须钉住：框架的 Focused 视觉态还会把 BorderThickness 从 TextControlBorderThemeThickness(1)
+                 换成 TextControlBorderThemeThicknessFocused(1,1,1,2) —— 底边加粗一倍，
+                 只改画刷挡不住（实测残留 394px/行 的底边差异）。 -->
+            <StaticResource x:Key="TextControlBorderThemeThicknessFocused" ResourceKey="TextControlBorderThemeThickness" />
+        </ResourceDictionary>
+
+        <!-- ===================== Dark ===================== -->
+        <ResourceDictionary x:Key="Dark">
+            <SolidColorBrush x:Key="SurfaceBrush" Color="{ThemeResource SolidBackgroundFillColorBase}" />
+            <SolidColorBrush x:Key="SurfaceAltBrush" Color="{ThemeResource LayerFillColorDefault}" />
+            <SolidColorBrush x:Key="CardBrush" Color="{ThemeResource CardBackgroundFillColorDefault}" />
+            <SolidColorBrush x:Key="CardSecondaryBrush" Color="{ThemeResource CardBackgroundFillColorSecondary}" />
+            <SolidColorBrush x:Key="CardHoverBrush" Color="{ThemeResource SubtleFillColorSecondary}" />
+            <SolidColorBrush x:Key="TextPrimaryBrush" Color="{ThemeResource TextFillColorPrimary}" />
+            <SolidColorBrush x:Key="TextSecondaryBrush" Color="{ThemeResource TextFillColorSecondary}" />
+            <SolidColorBrush x:Key="TextTertiaryBrush" Color="{ThemeResource TextFillColorTertiary}" />
+            <SolidColorBrush x:Key="TextDisabledBrush" Color="{ThemeResource TextFillColorDisabled}" />
+            <SolidColorBrush x:Key="StrokeBrush" Color="{ThemeResource CardStrokeColorDefaultSolid}" />
+            <SolidColorBrush x:Key="StrokeSubtleBrush" Color="{ThemeResource DividerStrokeColorDefault}" />
+            <StaticResource x:Key="AccentBrush" ResourceKey="AccentFillColorDefaultBrush" />
+            <StaticResource x:Key="AccentHoverBrush" ResourceKey="AccentFillColorSecondaryBrush" />
+            <StaticResource x:Key="AccentPressedBrush" ResourceKey="AccentFillColorTertiaryBrush" />
+            <SolidColorBrush x:Key="OnAccentBrush" Color="{ThemeResource TextOnAccentFillColorPrimary}" />
+            <!-- 气泡半透明面（深色）：同 Light 结构，70% 不透明（跨端 rust 侧同值 #B3202020） -->
+            <SolidColorBrush x:Key="BubbleMicaBrush" Color="#B3202020" />
+            <SolidColorBrush x:Key="SuccessBrush" Color="{ThemeResource SystemFillColorSuccess}" />
+            <SolidColorBrush x:Key="SuccessBgBrush" Color="{ThemeResource SystemFillColorSuccessBackground}" />
+            <SolidColorBrush x:Key="WarningBrush" Color="{ThemeResource SystemFillColorCaution}" />
+            <SolidColorBrush x:Key="WarningBgBrush" Color="{ThemeResource SystemFillColorCautionBackground}" />
+            <SolidColorBrush x:Key="ErrorBrush" Color="{ThemeResource SystemFillColorCritical}" />
+            <SolidColorBrush x:Key="ErrorBgBrush" Color="{ThemeResource SystemFillColorCriticalBackground}" />
+            <StaticResource x:Key="InfoBrush" ResourceKey="SystemFillColorAttentionBrush" />
+            <SolidColorBrush x:Key="InfoBgBrush" Color="{ThemeResource SystemFillColorAttentionBackground}" />
+            <SolidColorBrush x:Key="FocusRingBrush" Color="{ThemeResource FocusStrokeColorOuter}" />
+            <SolidColorBrush x:Key="ControlFillBrush" Color="{ThemeResource ControlFillColorDefault}" />
+            <SolidColorBrush x:Key="ControlHoverBrush" Color="{ThemeResource ControlFillColorSecondary}" />
+            <SolidColorBrush x:Key="ControlPressedBrush" Color="{ThemeResource ControlFillColorTertiary}" />
+            <!-- 数据可视化色板（深色主题：提高明度以贴合深色卡底上的可读性） -->
+            <SolidColorBrush x:Key="ChartSeries1Brush" Color="#4C8DFF" />
+            <SolidColorBrush x:Key="ChartSeries2Brush" Color="#3FB950" />
+            <SolidColorBrush x:Key="ChartSeries3Brush" Color="#A371F7" />
+            <SolidColorBrush x:Key="ChartSeries4Brush" Color="#F85149" />
+            <SolidColorBrush x:Key="ChartSeries5Brush" Color="#F0883E" />
+            <SolidColorBrush x:Key="ChartSeries6Brush" Color="#39C5CF" />
+            <SolidColorBrush x:Key="ChartHeatEmptyBrush" Color="#2B2B2B" />
+            <SolidColorBrush x:Key="ChartGridBrush" Color="#26FFFFFF" />
+
+            <!-- 文本输入控件：聚焦/悬停零颜色反应（别名到静止键；说明见 Light 字典同一段） -->
+            <StaticResource x:Key="TextControlBackgroundFocused" ResourceKey="TextControlBackground" />
+            <StaticResource x:Key="TextControlBackgroundPointerOver" ResourceKey="TextControlBackground" />
+            <StaticResource x:Key="TextControlBorderBrushFocused" ResourceKey="TextControlBorderBrush" />
+            <StaticResource x:Key="TextControlBorderBrushPointerOver" ResourceKey="TextControlBorderBrush" />
+            <StaticResource x:Key="TextControlElevationBorderFocusedBrush" ResourceKey="TextControlElevationBorderBrush" />
+            <!-- 厚度也必须钉住：框架的 Focused 视觉态还会把 BorderThickness 从 TextControlBorderThemeThickness(1)
+                 换成 TextControlBorderThemeThicknessFocused(1,1,1,2) —— 底边加粗一倍，
+                 只改画刷挡不住（实测残留 394px/行 的底边差异）。 -->
+            <StaticResource x:Key="TextControlBorderThemeThicknessFocused" ResourceKey="TextControlBorderThemeThickness" />
+        </ResourceDictionary>
+
+        <!-- ===================== HighContrast（系统高对比度配色） ===================== -->
+        <ResourceDictionary x:Key="HighContrast">
+            <SolidColorBrush x:Key="SurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="SurfaceAltBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="CardBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="CardSecondaryBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="CardHoverBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="TextPrimaryBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="TextSecondaryBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="TextTertiaryBrush" Color="{ThemeResource SystemColorGrayTextColor}" />
+            <SolidColorBrush x:Key="TextDisabledBrush" Color="{ThemeResource SystemColorGrayTextColor}" />
+            <SolidColorBrush x:Key="StrokeBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="StrokeSubtleBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="AccentBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="AccentHoverBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="AccentPressedBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="OnAccentBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <!-- 高对比度：材质半透明会吃掉对比，气泡落回系统窗口底 + 描边区分 -->
+            <SolidColorBrush x:Key="BubbleMicaBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="SuccessBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="SuccessBgBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="WarningBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="WarningBgBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="ErrorBrush" Color="{ThemeResource SystemColorHotlightColor}" />
+            <SolidColorBrush x:Key="ErrorBgBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="InfoBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="InfoBgBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="FocusRingBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <!-- 高对比度：遮罩不做半透明（系统高对比度配色里半透明会吃掉对比），直接用窗口底色 -->
+            <!-- 高对比度：控件填充落到系统窗口底/高亮，不用任何品牌色 -->
+            <SolidColorBrush x:Key="ControlFillBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="ControlHoverBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="ControlPressedBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <!-- 高对比度：数据色板全部落到系统窗口文本/高亮，不做任何品牌色。
+                 多序列靠线型（实线/虚线）与图例文字区分，见统计面板的绘制代码。 -->
+            <SolidColorBrush x:Key="ChartSeries1Brush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="ChartSeries2Brush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="ChartSeries3Brush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="ChartSeries4Brush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="ChartSeries5Brush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="ChartSeries6Brush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="ChartHeatEmptyBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="ChartGridBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+
+            <!-- 文本输入控件：聚焦/悬停零颜色反应（别名到静止键；说明见 Light 字典同一段）。
+                 高对比度下同样成立：静止键本身即系统窗口底/文字色，别名后四态一致、可读性不降。 -->
+            <StaticResource x:Key="TextControlBackgroundFocused" ResourceKey="TextControlBackground" />
+            <StaticResource x:Key="TextControlBackgroundPointerOver" ResourceKey="TextControlBackground" />
+            <StaticResource x:Key="TextControlBorderBrushFocused" ResourceKey="TextControlBorderBrush" />
+            <StaticResource x:Key="TextControlBorderBrushPointerOver" ResourceKey="TextControlBorderBrush" />
+            <StaticResource x:Key="TextControlElevationBorderFocusedBrush" ResourceKey="TextControlElevationBorderBrush" />
+            <!-- 厚度也必须钉住：框架的 Focused 视觉态还会把 BorderThickness 从 TextControlBorderThemeThickness(1)
+                 换成 TextControlBorderThemeThicknessFocused(1,1,1,2) —— 底边加粗一倍，
+                 只改画刷挡不住（实测残留 394px/行 的底边差异）。 -->
+            <StaticResource x:Key="TextControlBorderThemeThicknessFocused" ResourceKey="TextControlBorderThemeThickness" />
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+</ResourceDictionary>
