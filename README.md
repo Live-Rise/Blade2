@@ -1,12 +1,12 @@
 <div align="center">
 
-<img src="Assets/Square150x150Logo.png" width="72" alt="Blade² logo">
+<img src="Assets/Square150x150Logo.png" width="72" alt="Blade² — WinUI 3 desktop client for dsh">
 
 # Blade²
 
 </div>
 
-A native WinUI 3 desktop shell for the dsh agent kernel. No Electron, no WebView — just XAML talking straight to the kernel RPC. One self-contained MSIX, ready out of the box.
+**WinUI dsh desktop** — a native WinUI 3 desktop client for the dsh (DeepSeek Harness) agent kernel. No Electron, no WebView — just XAML talking straight to the kernel RPC. One self-contained MSIX, ready out of the box.
 
 ```
   ● open Blade²
@@ -23,7 +23,7 @@ A native WinUI 3 desktop shell for the dsh agent kernel. No Electron, no WebView
 
 > **Status** · Rust rewrite of the Windows shell in progress · macOS version in development
 
-<img src="docs/app-topbar.png" width="720" alt="Blade² — native top bar">
+<img src="docs/app-topbar.png" width="720" alt="Blade² — WinUI 3 native top bar">
 
 ---
 
@@ -35,11 +35,11 @@ A native WinUI 3 desktop shell for the dsh agent kernel. No Electron, no WebView
 - **System integration** — system tray, live system light/dark tracking, Mica / acrylic material skins, system notifications
 - **Desktop pet** — Codex-compatible pet packs; auto-imports your existing Codex pets, one-click install for new ones
 - **Wallpaper skins** — custom images and videos as background skins, automatically compatible with Wallpaper Engine live wallpapers
-- **Refined interactions** — turn rail, image lightbox, context ring, undo this turn, snippet search
+- **Refined interactions** — turn rail, image lightbox, undo this turn, snippet search
 - **Usage stats** — activity heatmap, current/longest streaks, daily token trend, per-model breakdown, with a selectable time range
 - **Ready out of the box** — auto-approval, browser-use, computer-use, and memory MCP built in
 
-<img src="docs/ScreenShot.png" width="720" alt="Blade² — main window">
+<img src="docs/ScreenShot.png" width="720" alt="Blade² — dsh chat in the WinUI 3 main window">
 
 ## How it works
 
@@ -54,7 +54,7 @@ Key sources: [`Dsh/DshKernelHost.cs`](Dsh/DshKernelHost.cs) · [`Dsh/DshRpcClien
 
 Grab `Blade2_<version>_x64.msix` from [Releases](../../releases) (~140 MB, self-contained).
 
-1. Trust the self-signed cert once (import into *Trusted People*), or `Add-AppxPackage` fails with `0x800B0109`.
+1. Trust the self-signed publisher cert once: `certutil -addstore Root Blade2.cer` in an admin prompt (the `.cer` is attached to the release). Without it Windows refuses the install with `0x800B010A`.
 2. Double-click the MSIX, or run `Add-AppxPackage <msix>`. Windows 10 19041+ x64.
 
 Already using the dsh CLI? Copy `~/.dsh/.credentials.yaml` into `%LOCALAPPDATA%\Blade2\` — nothing is migrated automatically.

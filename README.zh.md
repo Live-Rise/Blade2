@@ -1,12 +1,12 @@
 <div align="center">
 
-![Blade² logo](Assets/Square150x150Logo.png)
+![Blade² logo · WinUI 3 dsh 桌面客户端](Assets/Square150x150Logo.png)
 
 # Blade²
 
 </div>
 
-dsh 智能体内核的原生 WinUI 3 桌面壳。无 Electron，无 WebView——纯 XAML 界面，直连内核 RPC。一个自包含 MSIX，开箱即用。
+**WinUI dsh desktop** —— dsh（DeepSeek Harness）智能体内核的原生 WinUI 3 桌面客户端。无 Electron、无 WebView，纯 XAML 界面，直连内核 RPC。一个自包含 MSIX，开箱即用。
 
 ```
   ● 打开 Blade²
@@ -23,7 +23,7 @@ dsh 智能体内核的原生 WinUI 3 桌面壳。无 Electron，无 WebView—�
 
 > **状态** · Windows 壳 Rust 重构中 · macOS 版开发中
 
-![Blade² 原生顶栏](docs/app-topbar.png)
+![Blade² 原生顶栏 · WinUI 3](docs/app-topbar.png)
 
 ---
 
@@ -35,11 +35,11 @@ dsh 智能体内核的原生 WinUI 3 桌面壳。无 Electron，无 WebView—�
 - **系统融合** — 支持系统托盘、系统深浅色实时跟随、Mica / 亚克力材质皮肤、系统通知
 - **桌面宠物** — 兼容 Codex 宠物包；自动导入 Codex 已有的宠物，支持一键安装新宠
 - **壁纸皮肤** — 支持自定义图片和视频作为背景皮肤，自动兼容 Wallpaper Engine 动态桌面壁纸
-- **细腻交互** — 轮次刻度栏、图片灯箱、上下文环、撤回本轮、片段搜索
+- **细腻交互** — 轮次刻度栏、图片灯箱、撤回本轮、片段搜索
 - **使用统计** — 活跃热力图、当前/最长连续天数、每日 Token 趋势、按模型用量占比，时间范围可切换
 - **开箱即用** — 自带自动审批、browser-use、电脑控制、记忆 MCP
 
-![Blade² 主界面](docs/ScreenShot.png)
+![Blade² 主界面 · dsh 聊天窗口](docs/ScreenShot.png)
 
 ## 工作原理
 
@@ -54,7 +54,7 @@ dsh 智能体内核的原生 WinUI 3 桌面壳。无 Electron，无 WebView—�
 
 从 [Releases](../../releases) 下载 `Blade2_<版本>_x64.msix`（约 140 MB，自包含）。
 
-1. 先信任自签证书一次（导入 *Trusted People*），否则 `Add-AppxPackage` 报 `0x800B0109`。
+1. 先信任一次自签发布者证书：管理员 PowerShell 里执行 `certutil -addstore Root Blade2.cer`（`.cer` 文件附在 release 里）。不信任的话 Windows 会报 `0x800B010A` 拒绝安装。
 2. 双击 MSIX，或执行 `Add-AppxPackage <msix>`。需要 Windows 10 19041+ x64。
 
 已在用 dsh CLI？把 `~/.dsh/.credentials.yaml` 复制到 `%LOCALAPPDATA%\Blade2\`——不会自动迁移任何凭据。

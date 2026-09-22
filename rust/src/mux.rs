@@ -202,6 +202,21 @@ impl Mux {
         )
     }
 
+    /// 打开主干那条长驻「会话控制面」流（`MainWindow.xaml.cs:15201` 的
+    /// `OpenRemoteStreamAsync("session/control", new { }, OnControlFrame)`）。
+    ///
+    /// `args` 必须是**字面量空对象** `{}`：该端点的内核描述符是 `mode="stream"` 且零参数，
+    /// gateway 的 `assertExactArguments` 对多出来的键一律拒（与 `$events`、`workspace/follow`
+    /// 同一条约束，也即项目记忆里「follow 帧 `args` 为 `{}` 有约束」那条）。
+    ///
+    /// 发起时机照主干：mux 连上、`workspace/follow` 与 `$events` 之后一次
+    /// （`MainWindow.xaml.cs:2622`），切会话时幂等补开一次（`MainWindow.xaml.cs:4121`），
+    /// mux 重连后重开（`MainWindow.xaml.cs:5375`、`MainWindow.ReconnectProbe.cs:35`）。
+    /// 帧的落地解析在 `crate::kernel::ControlState::apply`。
+    pub fn open_session_control(&mut self) -> Result<String, String> {
+        self.open("session/control", json!({}))
+    }
+
     /// 非阻塞取事件：先把可读数进缓冲，再切出所有完整帧。
     pub fn poll(&mut self) -> Result<Vec<MuxEvent>, String> {
         let mut chunk = [0u8; 4096];
@@ -263,6 +278,7 @@ impl Mux {
     }
 }
 
+#[derive(Debug)]
 struct Frame {
     is_last: bool,
     opcode: u8,
@@ -328,8 +344,7 @@ fn parse_message(payload: &[u8]) -> Result<Option<MuxEvent>, String> {
             // void 结果的 `value` 键会整个缺席。
             stream,
             value: value.get("value").cloned(),
-        },
-        "end" => MuxEvent::End { stream },
+        },        "end" => MuxEvent::End { stream },
         "error" => MuxEvent::Failure {
             message: value
                 .get("error")
@@ -343,4 +358,95 @@ fn parse_message(payload: &[u8]) -> Result<Option<MuxEvent>, String> {
         _ => return Ok(None),
     };
     Ok(Some(event))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn message(text: &str) -> Option<MuxEvent> {
+        parse_message(text.as_bytes()).expect("帧应能解析")
+    }
+
+    /// 流元素的四种落地：`item`（带值 / void 值键整个缺席）、`end`、`error`、`cancel`。
+    /// void 那一支在 ipc 侧原本挂在 `session/control` 的一次性桩上；该桩照主干改成
+    /// 长驻流之后，这条形状改由这里守住（假内核仍按线上形状发 `{type:"item",streamId}`）。
+    #[test]
+    fn stream_frames_map_onto_events_and_void_omits_the_value_key() {
+        assert_eq!(
+            message(r#"{"type":"item","streamId":"rs1","value":{"type":"baseline"}}"#),
+            Some(MuxEvent::Item {
+                stream: "rs1".into(),
+                value: Some(json!({"type": "baseline"})),
+            })
+        );
+        assert_eq!(
+            message(r#"{"type":"item","streamId":"rs1"}"#),
+            Some(MuxEvent::Item {
+                stream: "rs1".into(),
+                value: None,
+            })
+        );
+        assert_eq!(
+            message(r#"{"type":"end","streamId":"rs1"}"#),
+            Some(MuxEvent::End { stream: "rs1".into() })
+        );
+        assert_eq!(
+            message(r#"{"type":"cancel","streamId":"rs2"}"#),
+            Some(MuxEvent::Cancelled { stream: "rs2".into() })
+        );
+        assert_eq!(
+            message(r#"{"type":"error","streamId":"rs3","error":{"message":"未知端点"}}"#),
+            Some(MuxEvent::Failure {
+                stream: "rs3".into(),
+                message: "未知端点".into(),
+            })
+        );
+    }
+
+    /// 没有 `type`、`type` 不是这四型的一律静默忽略（心跳、网关的 ready/pong 这类），
+    /// 绝不能把它们当成某个流的元素塞给上层。
+    #[test]
+    fn frames_without_a_known_type_are_dropped() {
+        assert_eq!(message(r#"{"streamId":"rs1"}"#), None);
+        assert_eq!(message(r#"{"type":"pong","streamId":"rs1"}"#), None);
+        assert!(parse_message(b"not json").is_err());
+    }
+
+    /// 长帧（>125 字节走 126 那一档）的分帧：`take_frame` 只在整帧齐了才吐，
+    /// 半截帧留在缓冲里等下一批字节。
+    #[test]
+    fn split_frames_are_buffered_until_complete() {
+        let mut body = json!({
+            "type": "item",
+            "streamId": "rs1",
+            "value": { "text": "x".repeat(200) },
+        })
+        .to_string()
+        .into_bytes();
+        assert!(body.len() > 125, "这一档要落到 126 的扩展长度上");
+        let mut wire = vec![0x81, 126];
+        wire.extend_from_slice(&(body.len() as u16).to_be_bytes());
+        wire.append(&mut body);
+
+        let mut buffer = wire[..10].to_vec();
+        assert!(
+            take_frame(&mut buffer).unwrap().is_none(),
+            "连长度字段都没齐，不该吐帧"
+        );
+        buffer.extend_from_slice(&wire[10..wire.len() - 5]);
+        assert!(
+            take_frame(&mut buffer).unwrap().is_none(),
+            "正文还差一截，不该吐帧"
+        );
+        buffer.extend_from_slice(&wire[wire.len() - 5..]);
+        let frame = take_frame(&mut buffer).unwrap().expect("整帧齐了就该吐");
+        assert_eq!(frame.opcode, 1);
+        assert!(frame.is_last);
+        assert!(buffer.is_empty(), "吐完帧要把缓冲清空");
+        assert!(matches!(
+            parse_message(&frame.payload).unwrap(),
+            Some(MuxEvent::Item { .. })
+        ));
+    }
 }

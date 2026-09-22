@@ -1,7 +1,13 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use blade2_rs::kernel::{Kernel, Launch, session_status_event};
+use blade2_rs::i18n::Catalog;
+use blade2_rs::kernel::{
+    CONTROL_FRAME_TYPES, CommandReply, ControlDelta, ControlState, Kernel, Launch,
+    PermissionsProjection, PlanProjection, Projections, SessionStats, SubmittedAttachment,
+    WorkspaceTree, control_frame_type, permission_preset_zh, session_status_event,
+};
 use blade2_rs::mux::{Mux, MuxEvent};
 use serde_json::{Value, json};
 
@@ -427,6 +433,67 @@ fn handshake_auth_and_rpc_against_fake_kernel() {
     kernel.shutdown();
 }
 
+/// 加载卡第 1 段的真刻度（缺口 #1 的数据源）：`plugin/installProgress` 回 `{ready,total}`，
+/// ready 随墙钟推进、且**永不越过 total**。分叉的 `report_plugin_ledger` 就是按 250ms 抽这一发。
+/// 默认（`--pace=0`，没给 `--plugins=`）必须是 `0/0` = 主线 KC:100 的「本轮无包要装」，
+/// 否则任何一条既有 ipc 用例都会被莫名多出来的刻度带偏。
+#[test]
+fn plugin_install_ledger_reports_ready_over_total_and_advances() {
+    // 1) 关着的样子：total 为 0 ⇒ 分叉解析成 None ⇒ 第 1 段匀速爬满（历史行为）。
+    let mut quiet = Kernel::start(&fake_launch()).expect("假内核应完成 dsh web: 握手");
+    let value = quiet
+        .call("plugin/installProgress", json!({}))
+        .expect("plugin/installProgress 应成功");
+    assert_eq!(value["total"], 0, "没给 --plugins= 就没有包要装：{value}");
+    assert_eq!(value["ready"], 0);
+    // 参数给空对象也认（分叉走的就是 `json!({})`）；非对象一律 bad_args。
+    let error = quiet
+        .call("plugin/installProgress", json!([]))
+        .expect_err("args 给数组必须被拒");
+    assert!(error.contains("bad_args"), "{error}");
+    quiet.shutdown();
+
+    // 2) 开出台账：3 个包、每个 300ms ⇒ 起手 0/3，等过一格之后 ready 严格变大且 ready<=total。
+    let launch = Launch {
+        args: vec![
+            "--pace=0".to_string(),
+            "--plugins=3".to_string(),
+            "--plugin-step=300".to_string(),
+        ],
+        ..fake_launch()
+    };
+    let mut kernel = Kernel::start(&launch).expect("带台账的假内核应完成握手");
+    let first = kernel
+        .call("plugin/installProgress", json!({}))
+        .expect("第一发抽样");
+    assert_eq!(first["total"], 3);
+    let first_ready = first["ready"].as_i64().expect("ready 得是整数");
+    assert!(
+        first_ready <= 1,
+        "刚握手完最多落一个包（握手本身不该吃掉一格）：{first}"
+    );
+    std::thread::sleep(Duration::from_millis(700));
+    let later = kernel
+        .call("plugin/installProgress", json!({}))
+        .expect("第二发抽样");
+    let ready = later["ready"].as_i64().expect("ready 得是整数");
+    assert!(ready >= 2, "700ms / 每包 300ms 之后至少该有 2 个就绪：{later}");
+    assert!(ready <= 3, "ready 永不越界（越界会把第 1 段的目标值推出 30 之外）：{later}");
+    // 预算内一定装得齐：装齐之后分叉的抽样循环就该收手（ready >= total）。
+    let deadline = Instant::now() + Duration::from_secs(4);
+    loop {
+        let value = kernel
+            .call("plugin/installProgress", json!({}))
+            .expect("补齐那一发");
+        if value["ready"] == value["total"] {
+            break;
+        }
+        assert!(Instant::now() < deadline, "台账该在预算内爬到 3/3：{value}");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    kernel.shutdown();
+}
+
 #[test]
 fn mainline_rpc_payload_shapes_are_required() {
     let mut kernel = Kernel::start(&fake_launch()).expect("握手");
@@ -495,20 +562,1041 @@ fn mux_events_stream_sends_ready_then_emit() {
     assert_eq!(emit["args"], json!(["s-1", true]));
 }
 
+/// `session/control` 的起手式：走 `Mux::open_session_control()` 那个零参发起口，
+/// 也就是主干 `OpenRemoteStreamAsync("session/control", new { }, …)`
+/// （`MainWindow.xaml.cs:15201`）在分叉侧的等价物 ——  args 逐字是 `{}`。
+fn open_control_stream() -> (Kernel, Mux, String) {
+    let kernel = Kernel::start(&fake_launch()).expect("假内核应完成 dsh web: 握手");
+    let mut mux = Mux::connect(kernel.endpoint(), kernel.cookie()).expect("mux 握手失败");
+    let stream = mux
+        .open_session_control()
+        .expect("open session/control 失败");
+    (kernel, mux, stream)
+}
+
+/// 一条会话的投影块（`session/list` 与 `session/control` 共用形状），供多处断言复用。
+fn projection_of<'a>(state: &'a ControlState, id: &str) -> &'a Projections {
+    state
+        .projections(id)
+        .unwrap_or_else(|| panic!("baseline 里该有 {id} 的投影"))
+}
+
 #[test]
-fn mux_session_control_is_void_then_end() {
-    let (_kernel, mut mux, stream) = open_stream("session/control");
-    let events = collect(&mut mux, &stream, 2);
-    assert_eq!(events.len(), 2, "void 结果也要出一个 item: {events:?}");
+fn mux_session_control_leads_with_baseline_then_stays_open() {
+    let (_kernel, mut mux, stream) = open_control_stream();
+    let events = collect(&mut mux, &stream, 4);
     assert_eq!(
-        expect_item(events.first(), &stream),
-        None,
-        "void 流没有 value 键"
+        events.len(),
+        4,
+        "{stream} 应有 baseline + queue + jobs + projection 四帧: {events:?}"
     );
-    match events.get(1) {
-        Some(MuxEvent::End { stream: id }) => assert_eq!(id, &stream, "end 要认得回同一个流"),
-        other => panic!("session/control 应终止于 end，实际 {other:?}"),
+    let frames = item_values(&events, &stream);
+    assert_eq!(
+        frames.iter().map(tag).collect::<Vec<_>>(),
+        vec!["baseline", "queue", "jobs", "projection"],
+        "新流的帧序：全量 baseline 在前，增量在后（内核就是 this order）"
+    );
+
+    // ---- baseline：三张表全量灌进模型（主干 15227「先清表再灌」）----
+    let mut state = ControlState::default();
+    assert_eq!(
+        state.apply(&frames[0]),
+        ControlDelta {
+            queues: true,
+            jobs: true,
+            projections: true,
+        },
+        "baseline 三张表都齐"
+    );
+    assert_eq!(state.queue_items("s-1001").len(), 1);
+    assert_eq!(
+        state.queue_items("s-1001")[0].text(),
+        "等这轮跑完再说",
+        "排队项正文取 text 块"
+    );
+    assert_eq!(state.queue_items("s-1002").len(), 0, "没有队列的会话不必出现在表里");
+    assert_eq!(state.jobs_of("s-1001").len(), 1);
+    assert!(state.jobs_of("s-1001")[0].is_live(), "running 算存活");
+    assert_eq!(projection_of(&state, "s-1001").title, "重构登录流程");
+    assert_eq!(projection_of(&state, "s-1001").turn_outline.len(), 3);
+    assert_eq!(
+        projection_of(&state, "s-1002").title,
+        "新会话",
+        "空白会话也在 baseline 里（只有 title）"
+    );
+
+    // ---- queue：整表替换一个会话（不是追加）----
+    assert_eq!(
+        state.apply(&frames[1]),
+        ControlDelta {
+            queues: true,
+            ..ControlDelta::default()
+        }
+    );
+    let queued = state.queue_items("s-1001");
+    assert_eq!(queued.len(), 2, "queue 帧整表替换：baseline 那条不再作数");
+    assert_eq!(queued[0].item_id, "q-2");
+    assert_eq!(queued[0].placement, "steering");
+    assert_eq!(queued[1].placement, "context");
+    assert_eq!(
+        queued[1].text(),
+        "带上这份日志",
+        "text 拼接只认 text 块，图片块留给 UI 侧占位"
+    );
+    assert_eq!(
+        queued[1].content
+            .as_array()
+            .expect("content 是原始块数组")
+            .len(),
+        2,
+        "图片块必须原样留着（主干「编辑只换文本块」）"
+    );
+
+    // ---- jobs：同上，且顺序就是内核给的顺序 ----
+    assert!(state.apply(&frames[2]).jobs);
+    let jobs = state.jobs_of("s-1001");
+    assert_eq!(jobs.len(), 2);
+    assert_eq!(jobs[0].job_id, "j-2");
+    assert!(!jobs[0].is_live(), "completed 不算存活");
+    assert_eq!(jobs[1].kind, "bash-1");
+    assert_eq!(jobs[1].label, "cargo check");
+    assert!(jobs[1].is_live());
+
+    // ---- projection：单键全量 ----
+    assert!(state.apply(&frames[3]).projections);
+    assert_eq!(state.turn_outline("s-1001").len(), 3);
+    assert_eq!(state.turn_outline("s-1001")[2].seq, 88);
+    assert_eq!(
+        state
+            .turn_outline("s-1001")
+            .iter()
+            .map(|item| item.turn)
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3],
+        "轮次严格递增"
+    );
+
+    // 长驻流不收尾：主干那条流跟到关窗，桩不许自己发 end。
+    assert!(
+        collect_within(&mut mux, &stream, 1, QUIET_BUDGET).is_empty(),
+        "session/control 是长驻流，不该发 end"
+    );
+
+    // 无参端点的把关：args 多一个键就撞上网关的 `assertExactArguments`。
+    let noisy = mux
+        .open("session/control", json!({ "_request": {} }))
+        .expect("open 只把帧写出去，回错走流上");
+    match collect(&mut mux, &noisy, 1).first() {
+        Some(MuxEvent::Failure { stream: id, .. }) => assert_eq!(id, &noisy),
+        other => panic!("非空 args 的 session/control 应被判失败，实际 {other:?}"),
     }
+}
+
+/// `Shell::open_mux` 那三发一起开（`workspace/follow` → `$events` → `session/control`），
+/// 一根 socket 上混着到的帧按 streamId 分流。#60 接通的就是这一段，而 spec6 R1 说的
+/// 「只开流不分流 = 静默丢帧」只有拿真线上帧才验得出来：两条流的 `baseline` **同名不同形**。
+#[test]
+fn mux_three_streams_demix_by_stream_id() {
+    let kernel = Kernel::start(&fake_launch()).expect("假内核应完成 dsh web: 握手");
+    let mut mux = Mux::connect(kernel.endpoint(), kernel.cookie()).expect("mux 握手失败");
+    let workspace = mux
+        .open("workspace/follow", json!({}))
+        .expect("开工作区流失败");
+    let events = mux.open("$events", json!({})).expect("开 $events 流失败");
+    let control = mux.open_session_control().expect("开 session/control 失败");
+    assert_ne!(workspace, control, "同一根 mux 上每条流的 id 必须互不相同");
+    assert_ne!(workspace, events);
+    assert_ne!(events, control);
+
+    let mut tree = WorkspaceTree::default();
+    let mut state = ControlState::default();
+    let mut kinds: BTreeMap<&'static str, usize> = BTreeMap::new();
+    let mut unknown = 0usize;
+    let mut workspace_frames = 0usize;
+    let mut workspace_accepted = 0usize;
+    let mut status_frames = 0usize;
+    let mut stolen_by_tree: Vec<Value> = Vec::new();
+    let deadline = Instant::now() + WAIT_BUDGET;
+    while workspace_frames < 2
+        || kinds.values().sum::<usize>() < CONTROL_FRAME_TYPES.len()
+        || status_frames < 1
+    {
+        if Instant::now() >= deadline {
+            panic!(
+                "三条流的帧没收齐: 工作区 {workspace_frames} 帧 / 控制面 {kinds:?}（未识别 {unknown}）\
+                 / 运行态 {status_frames} 帧"
+            );
+        }
+        for event in mux
+            .collect(Duration::from_millis(200))
+            .expect("读帧不应失败")
+        {
+            let MuxEvent::Item {
+                value: Some(frame),
+                stream,
+            } = event
+            else {
+                panic!("三条长驻流都只该发带值的 item: {event:?}");
+            };
+            if stream == control {
+                // 分流臂的第一判据是 streamId，不是帧型：`baseline` 这个名字两边都在用。
+                match control_frame_type(&frame) {
+                    Some(kind) => *kinds.entry(kind).or_default() += 1,
+                    None => unknown += 1,
+                }
+                // R1 的反证：这一路的帧要是漏进了兜底，`WorkspaceTree::apply` 一律判「不认」
+                // 并返回 false —— 三张表永不落地，且一条错误都不报。
+                if tree.apply(&frame) {
+                    stolen_by_tree.push(frame.clone());
+                }
+                state.apply(&frame);
+            } else if stream == workspace {
+                workspace_frames += 1;
+                workspace_accepted += usize::from(tree.apply(&frame));
+            } else {
+                assert_eq!(stream, events, "只剩 $events 这一条流没认出来: {stream}");
+                match session_status_event(&frame) {
+                    Some((id, running)) => {
+                        status_frames += 1;
+                        assert_eq!((id.as_str(), running), ("s-1", true));
+                    }
+                    None => assert_eq!(frame["type"], json!("ready"), "$events 只该有 ready + emit"),
+                }
+            }
+        }
+    }
+    assert!(
+        stolen_by_tree.is_empty(),
+        "控制面的帧被 WorkspaceTree 认下了，分流判据失效: {stolen_by_tree:?}"
+    );
+    assert_eq!(unknown, 0, "桩发的控制帧每一帧都该在 CONTROL_FRAME_TYPES 里");
+    for kind in CONTROL_FRAME_TYPES {
+        assert_eq!(
+            kinds.get(kind).copied().unwrap_or_default(),
+            1,
+            "开流即推的那一串里每型各一帧，实际 {kinds:?}"
+        );
+    }
+    assert_eq!(
+        (workspace_frames, workspace_accepted),
+        (2, 2),
+        "工作区流的 baseline + upsert 都得被树认下"
+    );
+    assert_eq!(tree.workspaces.len(), 3, "树只吃自己那条流的东西");
+    assert!(tree.is_archived("s-9"));
+    assert_eq!(status_frames, 1, "$events 的 emit 走运行态那一支");
+
+    // 三张表真落了东西（不是空 delta 蒙过去的）。
+    assert_eq!(state.queue_items("s-1001").len(), 2, "queue 帧整表替换 baseline 那一份");
+    assert_eq!(state.jobs_of("s-1001").len(), 2);
+    assert!(state.jobs_of("s-1001")[1].is_live());
+    assert_eq!(projection_of(&state, "s-1001").title, "重构登录流程");
+    assert_eq!(state.turn_outline("s-1001").len(), 3, "projection 帧落的 turnOutline");
+    assert!(state.projections("s-1002").is_some(), "baseline 的投影是按会话分桶的");
+
+    // 兜底那条路上今天会发生什么：四型全被树判 false ⇒ 光开流不分流就是零报错丢帧。
+    for frame in [
+        json!({ "type": "queue", "sessionId": "s-1001", "items": [] }),
+        json!({ "type": "jobs", "sessionId": "s-1001", "jobs": [] }),
+        json!({ "type": "projection", "sessionId": "s-1001", "key": "title", "value": "乙", "seq": 1 }),
+    ] {
+        assert!(!tree.apply(&frame), "{frame} 本就不该进树");
+        assert!(control_frame_type(&frame).is_some());
+    }
+}
+
+#[test]
+fn session_control_projection_frames_are_full_tables_not_patches() {
+    let (mut kernel, mut mux, stream) = open_control_stream();
+    let mut state = ControlState::default();
+    for frame in &item_values(&collect(&mut mux, &stream, 4), &stream) {
+        state.apply(frame);
+    }
+    // 种子会话只跑过一轮（主干的 rail 门槛是「>= 2 条刻度」）。
+    assert_eq!(state.turn_outline("s-1003").len(), 1);
+
+    kernel
+        .call("session/prompt", prompt_args("s-1003", "再补一轮", "queue"))
+        .expect("prompt 应被接受");
+    let events = collect(&mut mux, &stream, 1);
+    let frame = expect_item(events.first(), &stream).expect("projection 带 value");
+    assert_eq!(frame["type"], json!("projection"));
+    assert_eq!(frame["sessionId"], json!("s-1003"));
+    assert_eq!(frame["key"], json!("turnOutline"));
+    assert_eq!(
+        frame["value"]
+            .as_array()
+            .expect("projection 的 value 是整表")
+            .len(),
+        2,
+        "wire.view 是全量：旧条目必须跟着一起来，主干整键替换"
+    );
+    assert!(state.apply(&frame).projections);
+    assert_eq!(
+        state
+            .turn_outline("s-1003")
+            .iter()
+            .map(|item| item.turn)
+            .collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    assert_eq!(state.turn_outline("s-1003")[1].prompt, "再补一轮");
+
+    // 同一张内核投影表的两个读数口必须一致（主干两处读的是同一个值）。
+    let row = kernel
+        .list_session_rows()
+        .expect("session/list 应成功")
+        .into_iter()
+        .find(|row| row.info.id == "s-1003")
+        .expect("台账里有 s-1003");
+    assert_eq!(row.projections.turn_outline, state.turn_outline("s-1003").to_vec());
+    // F9：typed 读数就是内核 strict 表那 8 个键的全量（桩按 `turns` 派生 `steps`/`ttftSteps`）。
+    assert_eq!(
+        row.projections.stats,
+        Some(SessionStats {
+            turns: 2,
+            steps: 4,
+            llm_ms: 4200.0,
+            tool_ms: 900.0,
+            ttft_ms: 310.0,
+            decode_ms: 3300.0,
+            decode_tokens: 1580.0,
+            ttft_steps: 2,
+        })
+    );
+}
+
+#[test]
+fn commands_list_round_trips_the_kernel_catalog() {
+    let mut kernel = Kernel::start(&fake_launch()).expect("假内核应完成 dsh web: 握手");
+    let commands = kernel.list_commands("s-1001").expect("commands/list 应成功");
+    assert_eq!(commands.len(), 9, "目录里九条命令");
+    assert_eq!(commands[0].name, "compact");
+    assert_eq!(commands[0].slash_name(), "/compact");
+    assert_eq!(
+        commands[0].description,
+        "Compact older conversation history",
+        "内置项的描述逐字照内核词典（主干据此才做本地化替换）"
+    );
+    assert!(!commands[0].has_input, "没有 input 键 = 无参命令");
+    let feedback = commands
+        .iter()
+        .find(|command| command.name == "feedback")
+        .expect("有 feedback");
+    assert!(feedback.has_input);
+    assert_eq!(feedback.hint, "<text>");
+    let usage = commands
+        .iter()
+        .find(|command| command.name == "usage")
+        .expect("有 usage");
+    // F1：`input` 一旦出现，内核的 `normalizeDefinition` 就要求 `hint` 是非空字符串
+    // （缺了或空白直接 TypeError）⇒ 真内核**产不出** `input:{}`，旧桩那条 `usage` 是假状态。
+    // 无参数命令的正确表达是整个键缺席（主干 17341 的 `TryGetProperty("hint")` 兜底在真机不走）。
+    assert!(
+        !usage.has_input && usage.hint.is_empty(),
+        "无参数命令 = 没有 input 键，而不是有 input 没 hint"
+    );
+    // 未建模键 `input.attachments`：主干 17341 只读 hint，分叉解析必须容忍它多出来。
+    let goal = commands
+        .iter()
+        .find(|command| command.name == "goal")
+        .expect("有 goal");
+    assert!(goal.has_input);
+    assert_eq!(goal.hint, "[<objective>|clear|edit <objective>|pause|resume]");
+    assert_eq!(
+        commands
+            .iter()
+            .filter(|command| command.has_input)
+            .count(),
+        5,
+        "五条带 input 的命令，hint 全非空"
+    );
+    assert!(
+        commands
+            .iter()
+            .all(|command| !command.has_input || !command.hint.is_empty()),
+        "F1：内核侧不可能出现「有 input 却空 hint」的条目"
+    );
+
+    // params 平铺就一个 `agentId`（主干 17326）：少它、多键都被 wire 把关。
+    let error = kernel
+        .call("commands/list", json!({}))
+        .expect_err("缺 agentId 必须被拒");
+    assert!(error.contains("bad_args"), "{error}");
+    let error = kernel
+        .call("commands/list", json!({ "agentId": "s-1001", "cwd": "x" }))
+        .expect_err("多未知键必须被拒");
+    assert!(error.contains("bad_args"), "{error}");
+    // agent 查不到是内核的 lookup 失败，主干据此走 3s 负缓存（17304-17306）。
+    let error = kernel
+        .list_commands("s-4004")
+        .expect_err("没有这个 agent");
+    assert!(error.contains("gateway/lookup-not-found"), "{error}");
+}
+
+#[test]
+fn commands_execute_reports_every_reply_state() {
+    let mut kernel = Kernel::start(&fake_launch()).expect("假内核应完成 dsh web: 握手");
+    // 1) `result.kind = success`：正文就是 `result.text`。
+    let reply = kernel
+        .execute_command("s-1001", "/compact", &[])
+        .expect("envelope 应 ok");
+    assert!(reply.is_success());
+    assert_eq!(reply.text(), Some("Compacted older conversation history."));
+    // 2) `result.kind = error`。
+    let reply = kernel
+        .execute_command("s-1001", "/feedback", &[])
+        .expect("参数不足也是正常回执");
+    assert!(!reply.is_success());
+    assert_eq!(reply.kind_of(), "error");
+    assert_eq!(reply.text(), Some("Usage: /feedback <text>"));
+    // 3) success 但 text 缺席（F4：`result.text` 在 success 支是 optional）——
+    //    主干 17911 的「{0} 执行完成」那一支今天终于有样本了。
+    let reply = kernel
+        .execute_command("s-1001", "/deploy prod", &[])
+        .expect("deploy 回执");
+    assert_eq!(
+        reply,
+        CommandReply::Result {
+            kind: "success".to_string(),
+            text: None,
+        }
+    );
+    assert!(reply.is_success(), "kind=success 且无 text 仍是成功支");
+    assert_eq!(reply.text(), None, "text 缺席不得被填成空串");
+    // 4) 线上没有 value 这个键（未识别/不是命令的行）。
+    assert_eq!(
+        kernel
+            .execute_command("s-1001", "/nosuchcmd", &[])
+            .expect("内核 ok、没有 value"),
+        CommandReply::Unknown
+    );
+    assert_eq!(
+        kernel
+            .execute_command("s-1001", "普通聊天文本", &[])
+            .expect("内核 ok、没有 value"),
+        CommandReply::Unknown
+    );
+    // F5：内核的 value 是 `undefined | {commandId, result}` 二选一 ⇒「有 value 没 result」
+    // 那一态线上产不出，桩不再演它（`CommandReply::NoImmediateReply` 只剩防御支，
+    // 由 kernel.rs 的合成帧单测覆盖）。这里反向钉住：桩给的每一发 value 都带 result。
+    let value = kernel
+        .call(
+            "commands/execute",
+            json!({
+                "agentId": "s-1001",
+                "line": "/usage",
+                "submittedAttachments": [],
+            }),
+        )
+        .expect("usage 的 value");
+    assert_eq!(
+        value["result"]["kind"],
+        json!("success"),
+        "旧桩那条「有 value 无 result」是假状态"
+    );
+    assert!(
+        value["commandId"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty()),
+        "F2：`commandId` 是必填键（`cmd-<实例 token>-<递增号>`），主干不读它但形状必须合法"
+    );
+    assert_eq!(value.as_object().expect("value 是对象").len(), 2);
+    // 附件把关（内核 `dsh-commands/lib/index.js:349-356`）：compact 没声明
+    // `input.attachments` ⇒ 带附件直接 settle 成 error，handler 根本不跑。
+    // 这条同时也是「submittedAttachments 真到了内核」的证据。
+    let reply = kernel
+        .execute_command(
+            "s-1001",
+            "/compact",
+            &[SubmittedAttachment::File {
+                receipt_id: "r-1".to_string(),
+            }],
+        )
+        .expect("带附件的 /compact 是正常回执，不是 RPC 失败");
+    assert_eq!(reply.kind_of(), "error");
+    assert_eq!(reply.text(), Some("/compact does not accept attachments"));
+    // 声明了 attachments 的命令带附件照常跑（两型都过网关把关）。
+    let reply = kernel
+        .execute_command(
+            "s-1001",
+            "/goal 把测试补完",
+            &[
+                SubmittedAttachment::Image {
+                    media_type: "image/png".to_string(),
+                    data: "AA==".to_string(),
+                    name: "shot.png".to_string(),
+                },
+                SubmittedAttachment::File {
+                    receipt_id: "r-1".to_string(),
+                },
+            ],
+        )
+        .expect("goal 收附件");
+    assert_eq!(reply.text(), Some("Goal set: 把测试补完"));
+    // F11 + F7：`/permission` 的三条分支逐字照 `dsh-permission-presets/lib/index.js:161-181`。
+    // 空参数是 **success**（旧桩回 error，行为与文案双不一致）。
+    let reply = kernel
+        .execute_command("s-1001", "/permission", &[])
+        .expect("无参数的 /permission 是 success");
+    assert!(reply.is_success(), "{reply:?}");
+    assert_eq!(
+        reply.text(),
+        Some("current preset workspace-write (available: workspace-write, danger-full-access)")
+    );
+    // 表外名字（旧桩那套 `default`/`accept-edits`/`read-only` 都不在真预设表里）⇒ error。
+    let reply = kernel
+        .execute_command("s-1001", "/permission read-only", &[])
+        .expect("表外预设是正常回执");
+    assert_eq!(reply.kind_of(), "error");
+    assert_eq!(
+        reply.text(),
+        Some("unknown preset \"read-only\" (available: workspace-write, danger-full-access)")
+    );
+    let reply = kernel
+        .execute_command("s-1001", "/permission default", &[])
+        .expect("旧桩的假 id 同样被真表拒");
+    assert_eq!(reply.kind_of(), "error");
+    // 真预设名切换成功 ⇒ success + `preset <name>`，并且立刻反映到投影里。
+    let reply = kernel
+        .execute_command("s-1001", "/permission danger-full-access", &[])
+        .expect("切到真预设应成功");
+    assert_eq!(reply.text(), Some("preset danger-full-access"));
+    let rows = kernel.list_session_rows().expect("session/list 应成功");
+    let switched = rows
+        .iter()
+        .find(|row| row.info.id == "s-1001")
+        .expect("台账里有 s-1001");
+    assert_eq!(
+        switched
+            .projections
+            .permissions
+            .as_ref()
+            .expect("权限投影在")
+            .current_value
+            .as_deref(),
+        Some("danger-full-access"),
+        "F7：currentValue 是英文预设 id，中文只属于视图层那张 PermissionPresetZh"
+    );
+
+    // F6：`mediaType` 是**闭 union**（png/jpeg/webp/gif）。旧桩只查非空字符串，
+    // 于是 `image/svg+xml` 这种真内核必拒的形状桩会收下来，分叉把拒因误当「内核 bug」。
+    let error = kernel
+        .call(
+            "commands/execute",
+            json!({
+                "agentId": "s-1001",
+                "line": "/goal x",
+                "submittedAttachments": [{
+                    "type": "image",
+                    "mediaType": "image/svg+xml",
+                    "data": "AA==",
+                }],
+            }),
+        )
+        .expect_err("表外 mediaType 必须被网关拒");
+    assert!(error.contains("bad_args"), "{error}");
+
+    // 平铺三键缺一不可（主干 17883-17888）。
+    let error = kernel
+        .call(
+            "commands/execute",
+            json!({ "agentId": "s-1001", "line": "/compact" }),
+        )
+        .expect_err("少了 submittedAttachments 必须被拒");
+    assert!(error.contains("bad_args"), "{error}");
+    let error = kernel
+        .call(
+            "commands/execute",
+            json!({
+                "agentId": "s-1001",
+                "line": "/compact",
+                "submittedAttachments": [{ "type": "zip" }],
+            }),
+        )
+        .expect_err("附件元素只认 image/file 两型");
+    assert!(error.contains("bad_args"), "{error}");
+    let error = kernel
+        .execute_command("s-4004", "/compact", &[])
+        .expect_err("agent 不存在");
+    assert!(error.contains("gateway/lookup-not-found"), "{error}");
+}
+
+#[test]
+fn session_list_rows_carry_every_projection_key_the_trunk_reads() {
+    let mut kernel = Kernel::start(&fake_launch()).expect("假内核应完成 dsh web: 握手");
+    let rows = kernel.list_session_rows().expect("session/list 应成功");
+    assert_eq!(rows.len(), 3);
+    let first = &rows[0];
+    assert_eq!(first.info.id, "s-1001");
+    // 向后兼容：整块解析没动过 title 那条读法。
+    assert_eq!(first.info.title, "重构登录流程");
+    assert_eq!(first.projections.title, first.info.title);
+    assert_eq!(
+        kernel.list_sessions().expect("旧读法仍在")[0].title,
+        first.info.title
+    );
+    assert_eq!(first.projections.as_of_seq, Some(88), "游标取大纲末条的 seq");
+    assert_eq!(
+        first
+            .projections
+            .turn_outline
+            .iter()
+            .map(|item| item.turn)
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3]
+    );
+    assert_eq!(
+        first.projections.stats,
+        Some(SessionStats {
+            turns: 3,
+            steps: 6,
+            llm_ms: 4200.0,
+            tool_ms: 900.0,
+            ttft_ms: 310.0,
+            decode_ms: 3300.0,
+            decode_tokens: 1580.0,
+            ttft_steps: 3,
+        })
+    );
+    assert_eq!(first.projections.plan, Some(PlanProjection::default()));
+    let permissions = first
+        .projections
+        .permissions
+        .clone()
+        .expect("权限投影在");
+    // F7 + F8：`options` 的形状就是真内核 `selectFor()`（`lib/index.js:230-236`）那一句
+    // 「表项按声明顺序 + `...currentValue === "custom" ? [optionOf("custom")] : []`」——
+    // **默认态（当前档命中表）只有两项**，`custom` 是派生态、只有派生出来才追加（桩此前恒发
+    // 三项，那是桩的形状不是内核的形状；完整两头见
+    // `permission_custom_option_only_arrives_when_the_knobs_leave_the_table`）。
+    // `optionOf()` 出的 `value` 与 `name` 同源且都是**英文**，`description` 两项都在
+    // （selectSchema 里 value/name 是 min(1) 必填，「没有 value 的坏选项」线上产不出
+    // ⇒ 主干 15377 那条丢弃逻辑是纯防御，桩不演它）。
+    assert_eq!(
+        permissions
+            .options
+            .iter()
+            .map(|option| option.value.as_str())
+            .collect::<Vec<_>>()
+            .join(","),
+        "workspace-write,danger-full-access",
+        "默认表两项，命中表的那一档不许追加派生态"
+    );
+    assert!(
+        permissions
+            .options
+            .iter()
+            .all(|option| option.value != "custom"),
+        "`custom` 是派生态，不许恒在选项里: {:?}",
+        permissions.options
+    );
+    assert!(
+        permissions
+            .options
+            .iter()
+            .all(|option| !option.name.is_empty()
+                && option.name.chars().all(|c| c.is_ascii())
+                && !option.description.is_empty()
+                && option.name == option.value),
+        "桩发的 name 必须是英文预设 id（中文是视图层 PermissionPresetZh 的活）: {:?}",
+        permissions.options
+    );
+    assert_eq!(permissions.current_value.as_deref(), Some("workspace-write"));
+    assert_eq!(
+        first.projections.value_of("todos"),
+        Some(&json!({ "open": 0, "done": 3 })),
+        "未建模的投影键必须原样留在 values 里"
+    );
+
+    // 空白会话：内核投影还没长起来 ⇒ values 只有 title，其余 typed 字段全 None。
+    let blank = &rows[1];
+    assert_eq!(blank.projections.title, "新会话");
+    assert!(blank.projections.turn_outline.is_empty());
+    assert!(blank.projections.plan.is_none());
+    assert!(blank.projections.permissions.is_none());
+    assert!(blank.projections.stats.is_none());
+    assert!(!blank.projections.is_empty());
+
+    // 命令改的就是这张投影表：下一发 `session/list` 立刻是新值。
+    // F7：能切换的只有真预设表里的名字，`read-only`/`default` 那些是旧桩的假 id（真内核对
+    // 它们回 error，见 `commands_execute_reports_every_reply_state`）。
+    let child_projections = |kernel: &mut Kernel| -> Projections {
+        kernel
+            .list_session_rows()
+            .expect("session/list 应成功")
+            .into_iter()
+            .find(|row| row.info.id == "s-1003")
+            .expect("台账里有 s-1003")
+            .projections
+    };
+    // 换档之前先各读一次：s-1001 走合成默认旋钮 ⇒ 命中默认表第一项（本用例开头那次
+    // `session/list` 钉过），s-1003 的种子 journal 记的却是一条**表外** `sandbox/mode` 覆盖
+    // ⇒ `derive()`（`lib/index.js:213-223`）落到派生态 `custom`。两条会话读的是各自的旋钮、
+    // 各自 fold 出来的 state，不是全局一张嘴；`custom` 那一项的进出见
+    // `permission_custom_option_only_arrives_when_the_knobs_leave_the_table`。
+    assert_eq!(
+        child_projections(&mut kernel)
+            .permissions
+            .expect("权限投影在")
+            .current_value
+            .as_deref(),
+        Some("custom"),
+        "旋钮撞不到表的 seeded 会话派生成 custom，而同一次 list 里的 s-1001 仍在表内"
+    );
+    kernel
+        .execute_command("s-1003", "/plan on", &[])
+        .expect("/plan 应成功");
+    kernel
+        .execute_command("s-1003", "/permission danger-full-access", &[])
+        .expect("/permission 应成功");
+    let child = child_projections(&mut kernel);
+    assert_eq!(
+        child.plan,
+        Some(PlanProjection {
+            active: true,
+            pending: false,
+        })
+    );
+    // `/permission <preset>` 是唯一写入口（内核没有 permission RPC，主干 15906 的注释）：
+    // handler 记完预设就推整块 select 视图，而视图的 `currentValue` 取的正是刚选的那一档
+    // （`dsh-permission-presets/lib/index.js:161-176` 的 handler ⇒ `apply()` 280-286 ⇒
+    // `derive()`/`selectFor()` 213-236：命中的表项原样回名字）。旧桩那套 `read-only` 是
+    // 表外假 id，真内核直接回 error（见上面 `commands_execute_reports_every_reply_state`），
+    // 所以切完档的当前档绝不可能是 `read-only`。
+    assert_eq!(
+        child
+            .permissions
+            .expect("权限投影在")
+            .current_value
+            .as_deref(),
+        Some("danger-full-access")
+    );
+
+    // 整块缺席的旧会话（主干 2827 的容错）：投影是空表，不凭空造数据。
+    let gone = Projections::from_block(&json!({ "sessionId": "s-9" }));
+    assert!(gone.is_empty());
+    assert!(gone.title.is_empty());
+}
+
+/// F9：内核的 `sessionStatsSchema` 是 **`.strict()`** 的八键表
+/// （`dsh-session-stats/lib/types/projection.js:27-35`）—— 多一个键整块被拒，
+/// 少一个键就是 #57/#58 拿不到数据。旧桩发的 `{turns, totalTokens}` 两头都踩：
+/// `totalTokens` 真内核产不出，`steps`/`decodeMs` 又没有。这里钉线上那一发。
+#[test]
+fn stub_session_stats_are_the_strict_eight_keys_with_no_invented_total_tokens() {
+    let mut kernel = Kernel::start(&fake_launch()).expect("假内核应完成 dsh web: 握手");
+    let value = kernel
+        .call("session/list", json!({ "_request": {} }))
+        .expect("session/list 应成功");
+    let stats = &value["items"][0]["projections"]["values"]["sessionStats"];
+    let mut keys: Vec<&str> = stats
+        .as_object()
+        .expect("sessionStats 是对象")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        vec![
+            "decodeMs",
+            "decodeTokens",
+            "llmMs",
+            "steps",
+            "toolMs",
+            "ttftMs",
+            "ttftSteps",
+            "turns"
+        ],
+        "strict 表的键集一个不多一个不少"
+    );
+    assert_eq!(stats.get("totalTokens"), None, "旧桩那条 invented 键必须彻底消失");
+    // 少的那两半今天齐了：#57/#58 要的步数与解码时长在 typed 读数里，而不是靠 UI 猜。
+    let rows = kernel.list_session_rows().expect("session/list 应成功");
+    let stats = rows[0].projections.stats.expect("typed 读数在");
+    assert_eq!((stats.turns, stats.steps, stats.ttft_steps), (3, 6, 3));
+    assert!(stats.decode_ms > 0.0 && stats.decode_tokens > 0.0, "{stats:?}");
+    assert!(stats.llm_ms > 0.0 && stats.tool_ms > 0.0 && stats.ttft_ms > 0.0);
+    // 显示源仍是 journal（审计 §2 的口径），但线上那 8 个键必须能在 values 里交叉核对。
+    assert_eq!(
+        rows[0].projections.value_of("sessionStats"),
+        Some(&stats_raw()),
+        "values 里保留的就是原样的八键块"
+    );
+}
+
+/// 桩给的 `sessionStats` 常量（与 `fake_dsh.rs::session_stats(3)` 同值）：
+/// 用它来证明 typed 读数和线上块是同一份数据，而不是各算一遍。
+fn stats_raw() -> Value {
+    json!({
+        "turns": 3,
+        "steps": 6,
+        "llmMs": 4200,
+        "toolMs": 900,
+        "ttftMs": 310,
+        "ttftSteps": 3,
+        "decodeMs": 3300,
+        "decodeTokens": 1580,
+    })
+}
+
+/// F7：桩发的权限条目是**英文预设 id**，中文只属于视图层那张 `PermissionPresetZh`
+/// （主干 15957 的硬约束）。分叉要是照「wire 上就是中文」实现，上真机立刻漏英文。
+#[test]
+fn stub_permission_options_arrive_as_english_ids_the_view_has_to_translate() {
+    let mut kernel = Kernel::start(&fake_launch()).expect("假内核应完成 dsh web: 握手");
+    let rows = kernel.list_session_rows().expect("session/list 应成功");
+    let permissions = rows[0]
+        .projections
+        .permissions
+        .clone()
+        .expect("权限投影在");
+    let catalog = Catalog::load("zh", None);
+    assert!(
+        permissions
+            .options
+            .iter()
+            .all(|option| option.name.is_ascii() && option.value.is_ascii()),
+        "wire 上不许出现中文 name: {:?}",
+        permissions.options
+    );
+    // 视图侧过表才变中文；表里认不得的 id 原样回显（主干的 `_ => value`）。
+    let labels: Vec<String> = permissions
+        .options
+        .iter()
+        .map(|option| permission_preset_zh(&catalog, &option.value))
+        .collect();
+    assert_eq!(labels, vec!["工作区内修改", "完全权限"]);
+    assert!(
+        labels
+            .iter()
+            .zip(permissions.options.iter())
+            .all(|(label, option)| label != &option.name),
+        "直显 name 就是漏翻译：翻译后的串必须与 wire 串不同"
+    );
+    assert_eq!(
+        permission_preset_zh(&catalog, "read-only"),
+        "仅可查看",
+        "表是照主干整表抄的，含 deployment 才有的 read-only/auto-approve"
+    );
+    assert_eq!(
+        permission_preset_zh(&catalog, "some-future-preset"),
+        "some-future-preset"
+    );
+}
+
+/// 那第三项 `custom` 到底什么时候上线：真内核 `selectFor()`
+/// （`Kernel/dsh/node_modules/@deepseek-ai/dsh-permission-presets/lib/index.js:230-236`）
+/// 是「表项按声明顺序 + `...currentValue === "custom" ? [optionOf(CUSTOM_PRESET)] : []`」，
+/// 也就是**只有 `derive()`（同文件 213-223）撞不到表项、派生出 `custom` 时才追加**。
+/// 桩此前恒发三项（分叉照桩写就会以为选项是定长三档），这里两头都钉：
+/// 默认态不许出现 `custom`；切到自定义上下文（会话自己的旋钮在表外）才出现；一切回表内立刻消失。
+#[test]
+fn permission_custom_option_only_arrives_when_the_knobs_leave_the_table() {
+    let mut kernel = Kernel::start(&fake_launch()).expect("假内核应完成 dsh web: 握手");
+    let permissions_of = |kernel: &mut Kernel, id: &str| -> PermissionsProjection {
+        kernel
+            .list_session_rows()
+            .expect("session/list 应成功")
+            .into_iter()
+            .find(|row| row.info.id == id)
+            .expect("台账里有这条会话")
+            .projections
+            .permissions
+            .clone()
+            .expect("权限投影在")
+    };
+    // 嵌套 fn（而不是闭包）：只为省掉那个 `&'_ str` 的生命周期标注。
+    fn values(permissions: &PermissionsProjection) -> Vec<&str> {
+        permissions
+            .options
+            .iter()
+            .map(|option| option.value.as_str())
+            .collect()
+    }
+    let catalog = Catalog::load("zh", None);
+
+    // ① 默认态：s-1001 的旋钮就是合成默认那一束，命中表 ⇒ 两项，没有派生态。
+    let on_table = permissions_of(&mut kernel, "s-1001");
+    assert_eq!(
+        values(&on_table),
+        ["workspace-write", "danger-full-access"],
+        "命中默认表时不许追加 `custom`"
+    );
+    assert_eq!(on_table.current_value.as_deref(), Some("workspace-write"));
+
+    // ② 切到自定义上下文：s-1003 的 journal 里那条 `sandbox/mode` 是 `read-only` ——
+    // `SANDBOX_MODES` 的合法值（`dsh-sandbox-policy/lib/index.js:31-35`）、
+    // `permissionStateSchema` 那个 union 的一支（`index.js:27-31`），却不在任何预设束里，
+    // 于是 `derive()` 回 `custom`（桩侧 `seed_knobs()` 演这条 seeded 覆盖：`pinInitialPermission()`
+    // 对 seeded 会话是「preserve their effective knob values」，派生是 custom 时**不**补预设，
+    // `index.js:287-311`）。第三项这才追加进来，位置在表项之后、名字是 `optionOf("custom")`
+    // 的 "Custom"（`index.js:255-267`）。
+    let custom = permissions_of(&mut kernel, "s-1003");
+    assert_eq!(
+        values(&custom),
+        ["workspace-write", "danger-full-access", "custom"]
+    );
+    assert_eq!(custom.current_value.as_deref(), Some("custom"));
+    assert_eq!(
+        custom.options[2].name, "Custom",
+        "唯一一处 name 与 value 不同源的项"
+    );
+    assert_eq!(
+        permission_preset_zh(&catalog, custom.options[2].value.as_str()),
+        "自定义",
+        "视图层过表才是中文"
+    );
+    // 报现状可以报 `custom`，切过去却不行：它不是 `names`（= 表键，`index.js:167,186-188`）里的一项，
+    // 内核构造函数甚至禁止表项占用这个名字（`index.js:108`）。
+    let reply = kernel
+        .execute_command("s-1003", "/permission", &[])
+        .expect("空参数是 success");
+    assert!(reply.is_success(), "{reply:?}");
+    assert_eq!(
+        reply.text(),
+        Some("current preset custom (available: workspace-write, danger-full-access)")
+    );
+    let reply = kernel
+        .execute_command("s-1003", "/permission custom", &[])
+        .expect("`custom` 走的是普通 error 回执");
+    assert_eq!(reply.kind_of(), "error");
+    assert_eq!(
+        reply.text(),
+        Some("unknown preset \"custom\" (available: workspace-write, danger-full-access)")
+    );
+    assert_eq!(
+        values(&permissions_of(&mut kernel, "s-1003")),
+        values(&custom),
+        "error 分支不落账，投影不许动"
+    );
+
+    // ③ 一切回表内：`apply()`（`index.js:280-286`）把选择与整束旋钮一起落账，
+    // 派生重新命中 ⇒ 第三项随派生态一起消失，`currentValue` 换成刚选的那一档。
+    kernel
+        .execute_command("s-1003", "/permission workspace-write", &[])
+        .expect("切回真预设应成功");
+    let back = permissions_of(&mut kernel, "s-1003");
+    assert_eq!(back.current_value.as_deref(), Some("workspace-write"));
+    assert_eq!(
+        values(&back),
+        ["workspace-write", "danger-full-access"],
+        "回到表内 ⇒ 派生态消失"
+    );
+    // 另一条会话没被带跑：旋钮与派生都是按会话来的。
+    assert_eq!(
+        values(&permissions_of(&mut kernel, "s-1001")),
+        ["workspace-write", "danger-full-access"]
+    );
+    assert_eq!(
+        permissions_of(&mut kernel, "s-1001")
+            .current_value
+            .as_deref(),
+        Some("workspace-write")
+    );
+}
+
+/// 数据层缺陷（审计 §4 末）：`parse_queue_items` 过去写 `item.get("message")?.get("content")?`，
+/// 两级缺任一层就**整条丢**；主干 15435 用 `TryGetProperty` 兜底后条目仍然保留
+/// （`Content = default`、`Text = ""`）。后果是内核给一条没有 message 的排队项时，
+/// 分叉的「排队中 · N 条」比主干小。真内核的 schema 里 message 是必填 ⇒ 桩不演这一态，
+/// 这里拿合成帧喂解析器。
+#[test]
+fn queue_entries_missing_message_or_content_survive_instead_of_being_dropped() {
+    let mut state = ControlState::default();
+    let frame = json!({
+        "type": "queue",
+        "sessionId": "s-1001",
+        "items": [
+            { "id": "q-ok", "placement": "queued",
+              "message": { "id": "m-1", "content": [{ "type": "text", "text": "正常一条" }] } },
+            { "id": "q-no-message", "placement": "steering" },
+            { "id": "q-message-without-content", "placement": "context", "message": { "id": "m-3" } },
+            { "id": "q-empty-content", "message": { "id": "m-4", "content": [] } },
+            { "id": "q-non-object-message", "message": "not-an-object" },
+            { "placement": "queued", "message": { "id": "m-6", "content": [] } },
+        ],
+    });
+    assert!(state.apply(&frame).queues);
+    let items = state.queue_items("s-1001");
+    assert_eq!(
+        items.iter().map(|item| item.item_id.as_str()).collect::<Vec<_>>(),
+        vec![
+            "q-ok",
+            "q-no-message",
+            "q-message-without-content",
+            "q-empty-content",
+            "q-non-object-message"
+        ],
+        "只有主干 15430 那条「没有 id」才整条丢；缺 message/content 的必须留着"
+    );
+    assert_eq!(items[0].text(), "正常一条");
+    assert_eq!(items[1].content, Value::Null, "缺 message 的条目 content 落成 Null");
+    assert_eq!(items[1].text(), "", "文本拼接对缺块就是空串，不 panic");
+    assert_eq!(items[2].content, Value::Null);
+    assert_eq!(items[3].content, json!([]), "空数组是真的空数组，不是缺席");
+    assert_eq!(items[4].content, Value::Null, "message 不是对象也当缺席");
+    // placement 缺席回落 queued（主干 15434：`TryGetProperty` 取不到、或取到但不是字符串，
+    // 都落到 `"queued"` 那一支），留下的 5 条里三条没给 placement ⇒ 计数是 3 不是 2。
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| item.placement.as_str())
+            .collect::<Vec<_>>(),
+        vec!["queued", "steering", "context", "queued", "queued"],
+        "q-ok 显式 queued，q-empty-content 与 q-non-object-message 没带 placement ⇒ 回落 queued"
+    );
+    assert_eq!(
+        items.iter().filter(|item| item.placement == "queued").count(),
+        3,
+        "与主干同口径：回落算进「排队中 · N 条」"
+    );
+    assert_eq!(items[1].placement, "steering");
+    assert_eq!(items[2].placement, "context");
+}
+
+/// F10：`plan.pending` 是真的会亮的布尔（轮次开着时 `/plan` 只登记意图，
+/// 下一个 in-turn pre-step 才落账），主干 15950 据此显「计划模式（切换中…）」。
+/// 桩侧那条可达路径（pacer 队列里真有没推完的轮）由 `fake_dsh.rs` 的进程内用例钉死；
+/// 这里钉解析侧：一帧 plan 增量必须把两个布尔都收进 typed 投影，不许把 pending 演丢。
+#[test]
+fn plan_projection_keeps_the_switching_state_readable() {
+    fn apply_plan(state: &mut ControlState, value: Value) -> bool {
+        state
+            .apply(&json!({
+                "type": "projection", "sessionId": "s-1003", "key": "plan", "value": value,
+            }))
+            .projections
+    }
+
+    let mut state = ControlState::default();
+    assert!(apply_plan(&mut state, json!({ "active": false, "pending": true })));
+    assert_eq!(
+        state.projections("s-1003").expect("投影在").plan,
+        Some(PlanProjection {
+            active: false,
+            pending: true,
+        }),
+        "#55/#56 的「切换中…」全靠这一位"
+    );
+    apply_plan(&mut state, json!({ "active": true, "pending": false }));
+    assert_eq!(
+        state.projections("s-1003").expect("投影在").plan,
+        Some(PlanProjection {
+            active: true,
+            pending: false,
+        })
+    );
+    apply_plan(&mut state, json!({ "active": true }));
+    assert_eq!(
+        state.projections("s-1003").expect("投影在").plan,
+        Some(PlanProjection {
+            active: true,
+            pending: false
+        }),
+        "pending 缺席按 false：内核 `get()` 在无意图时就把 pending 裁成 false"
+    );
 }
 
 #[test]

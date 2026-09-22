@@ -390,7 +390,7 @@ public sealed partial class MainWindow
         {
             rows.Children.Add(new TextBlock
             {
-                Text = L("一只宠物都没有。装一个：把 Codex 宠物 zip 拖到下面的安装区，或粘贴 petdex install <宠物标识>。"),
+                Text = L("一只宠物都没有。装一个：把 Codex 宠物 zip 拖到下面的安装区，或粘贴 petdex install / codex-pets add <宠物标识>。"),
                 Style = AppStyle("CardDescriptionTextStyle"),
                 TextWrapping = TextWrapping.Wrap,
             });
@@ -592,7 +592,7 @@ public sealed partial class MainWindow
 
         var commandBox = Aut(new TextBox
         {
-            PlaceholderText = L("petdex install <宠物标识>"),
+            PlaceholderText = L("petdex install 或 codex-pets add <宠物标识>"),
             HorizontalAlignment = HorizontalAlignment.Stretch,
         }, "PetCommandBox", L("宠物安装命令行"));
         var install = Aut(new Button

@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
@@ -5,11 +7,15 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use blade2_rs::i18n::Catalog;
 use blade2_rs::i18n::relative_time;
+use blade2_rs::keys::{self, KeyAction, KeyOwner};
 use blade2_rs::kernel::{
-    Kernel, Launch, SessionInfo, WorkspaceTree, escape_query, session_status_event,
+    CONTROL_FRAME_TYPES, CommandEntry, CommandReply, ControlState, Kernel, Launch, SessionInfo,
+    WorkspaceTree, control_frame_type, escape_query, session_status_event,
 };
 use blade2_rs::mux::{Mux, MuxEvent};
-use blade2_rs::theme::{Palette, Scheme};
+use blade2_rs::theme::{
+    self, BubbleMaterial, Palette, Scheme, WindowMaterial,
+};
 use blade2_rs::tokens::{
     DEFAULT_SETTINGS_SECTION, DESC_ABOUT, DESC_AGENT_PRESETS, DESC_BROWSER_CONTROL,
     DESC_COMPUTER_CONTROL, DESC_MEMORY, DESC_MODELS, DESC_PERSONALIZATION, DESC_PET, DESC_SKILLS,
@@ -100,12 +106,45 @@ enum Msg {
     FeedbackApplied(FeedbackPatch),
     Send,
     Cancel,
+    /// 主干 `Ctrl+Enter`（`TryHandleEnterSend` 的 ctrl 分支，MW:6856-6860）：空闲时等价于默认发送，
+    /// 繁忙时取 `busyEnter` 的**反向档**。按键侧只产出「这是反向档那一发」（`keys::KeyAction`），
+    /// 到底取哪个 mode 由 `ctrl_enter_mode()` 在模型里判（复用既有的 `running` 表与 `busy` 下拉，
+    /// 不新造状态机）。
+    SendAlternate,
+    /// `commands/list` 的回填（主干 `EnsureCommandsAsync` 里那条 await，MW:17326）。
+    /// `generation` = 发起那一发按键时的 `_paletteGeneration`：主干在 await 之后先比代次、
+    /// 不符就整段丢弃（MW:17701「已有更新的按键」），但**缓存照写**（写缓存在代次判定之前）。
+    CommandsLoaded {
+        generation: u64,
+        session: String,
+        outcome: Result<Vec<CommandEntry>, String>,
+    },
+    /// `commands/execute` 的回填（主干 17889-17914 的四态 + `catch`）。
+    /// `draft` = 主干那句 `submittedText`（只有 composer 那一发带得回来：命令成功且用户期间
+    /// 没改过草稿时，输入框才被清空；从浮层采纳的无参命令不带草稿，见 `execute_command`）。
+    CommandExecuted {
+        line: String,
+        session: String,
+        outcome: Result<CommandReply, String>,
+        draft: Option<String>,
+    },
+    /// 浮层 ↑/↓（主干 `HandlePaletteKey` 的 Up/Down → `MoveCommandSelection(±1)`）。
+    PaletteMove(i32),
+    /// 浮层采纳（Enter 与 Tab 同一发，主干 `AcceptCommandSelection`）。
+    PaletteAccept,
+    /// 浮层 Esc（主干 `HideCommandPalette`）。
+    PaletteClose,
+    /// 鼠标点浮层某一行（主干 `OnCommandItemClick`：先把 `_commandIndex` 对齐到点的那行再采纳）。
+    PalettePick(usize),
     /// `session/prompt` 的 wire ack；Ok 带实际落到的会话 id 和这一路 follow 的 streamId
     /// （开流失败时 streamId 为空串，由 UI 侧补开）。
     Prompted(Result<(String, String), String>),
     /// `session/follow` 开流结果：Ok(sessionId, streamId)。
     FollowOpened(Result<(String, String), String>),
-    MuxReady(Result<Arc<Mutex<Mux>>, String>),
+    /// `Mux` 连上并把三条长驻流开完的结果：`Ok((实例, session/control 的 streamId))`。
+    /// 两句必须在同一条消息里落地 ⇒ 不存在「control 帧先到、streamId 还没记下」的窗口
+    /// （那条窗口就是 spec6 R1 的「帧被 `WorkspaceTree::apply` 吃掉且不报错」）。
+    MuxReady(Result<(Arc<Mutex<Mux>>, String), String>),
     MuxEvents(Vec<MuxEvent>),
     MuxFailed(String),
     /// 主线 `_kernelBootTick`（`DispatcherQueueTimer` 100ms，KC:186-196）在分叉的替身：
@@ -117,6 +156,36 @@ enum Msg {
     BootDone(u64),
     /// 主线 `OnKernelBootRetryClick` → `RestartKernelBootAsync`（KC:270-305）。
     BootRetry,
+    /// 「刚才那一下按下，键盘是谁吃的」——焦点归属的**推断**值，喂给 `Shell::key_owner`。
+    /// 为什么要有这条：reactor 0.100.0 没有任何键盘回调也没有焦点查询 ⇒ Enter 只能靠
+    /// user32 线程钩子拿（见 `blade2_rs::keys`），而钩子拿不到焦点，只能由「最近一次
+    /// text-changed / 最近一次按下的那颗 `Border`」推。取 `Composer` 才把 Enter 判成发送。
+    KeyFocus(KeyOwner),
+}
+
+impl Msg {
+    /// 钩子算出的动作 → 消息。`Pass` 不投任何东西（键留给 TextBox / 系统）。
+    /// 提交走既有的 `Msg::Send`（= `submit_input`，空文本与内核未起来都自带早退守卫），
+    /// 返回上一级走既有的 `Msg::CloseSub`（`self.sub = None`）—— 不新造第二条通路。
+    ///
+    /// `ReturnToChat` 不同：它是主干 `OnRootPreviewKeyDown`（MW:9245-9276）里
+    /// 「设置页可见且没有二级页 ⇒ `ShowChatPage()`」那一发，走的正是返回钮挂的同一条
+    /// `Msg::Nav(Page::Chat)`（见 `drag_region` 里那颗 automation_name=「返回」）。
+    ///
+    /// `Palette*` 三档 = 浮层那几发（主干 `OnInputPreviewKeyDown` 的 `HandlePaletteKey` 优先，
+    /// MW:6824），所以这一发**绝不**映射成 `Msg::Send`：浮层开着时 Enter 是采纳，不是发送。
+    fn from_key_action(action: KeyAction) -> Option<Msg> {
+        match action {
+            KeyAction::Submit => Some(Msg::Send),
+            KeyAction::SubmitAlternate => Some(Msg::SendAlternate),
+            KeyAction::CloseSub => Some(Msg::CloseSub),
+            KeyAction::ReturnToChat => Some(Msg::Nav(Page::Chat)),
+            KeyAction::PaletteClose => Some(Msg::PaletteClose),
+            KeyAction::PaletteMove(delta) => Some(Msg::PaletteMove(delta)),
+            KeyAction::PaletteAccept => Some(Msg::PaletteAccept),
+            KeyAction::Pass => None,
+        }
+    }
 }
 
 /// 引导线程 → 模型的一条阶段上报（主线 `ReportKernelBootStage` / `ReportKernelBootPlugins`）。
@@ -130,10 +199,11 @@ enum BootEvent {
     Stage(i32),
     /// 第 1 步的插件安装子进度 (ready, total)；`total == 0` 视为无刻度（KC:100）。
     ///
-    /// 分叉目前没有对等物（主线那条来自 `DshPluginBootstrap.EnsureAsync`，MW:2460-2470；
-    /// `kernel.rs` 里没有插件引导器）⇒ 这一发永远没人投，第 1 步只能匀速爬 5→30。
-    /// 分支按规格 §7.2 保留，**不为了「看起来全」去造假进度**。
-    #[allow(dead_code)]
+    /// 生产者 = `report_plugin_ledger`（引导线程在第 1 段窗口里按 `PLUGIN_POLL_MS` 抽样内核的
+    /// `plugin/installProgress`）。主线那一条来自壳自己的 `DshPluginBootstrap.EnsureAsync`
+    /// （MW:2460-2470，扫 node_modules），分叉不装包 ⇒ 台账只能由内核报，**真内核没有这一发
+    /// RPC 就一次报错收手**，第 1 段退回匀速爬满。已备案偏差见 `start_kernel` 的注释与
+    /// `boot_plugin_ledger_producer_is_wired` 那条用例。
     Plugins(i32, i32),
 }
 
@@ -361,6 +431,50 @@ impl BootState {
     /// 撤卡/失败后 `ticking()` 为假 ⇒ 迟到那发被丢，也不再重新上臂。
     fn accepts_tick(&self, seq: u64) -> bool {
         seq == self.tick && self.ticking()
+    }
+}
+
+/// 内核那一发插件台账 `{ready,total}` 的解析（纯函数，单测与 `tests/ipc.rs` 同口径）。
+///
+/// `total <= 0` ⇒ `None` = 主线 KC:100 的「本轮无包要装」：没有刻度就别拿 0/0 去插值。
+/// 键缺/类型不对也回 `None`（真内核若哪天自己长出这一发但形状不同，宁可退回匀速爬满）。
+fn plugin_ledger(value: &Value) -> Option<(i32, i32)> {
+    let ready = value.get("ready")?.as_i64()?;
+    let total = value.get("total")?.as_i64()?;
+    (total > 0).then_some((ready as i32, total as i32))
+}
+
+/// `BootEvent::Plugins` 的**生产者**：主线 `ReportKernelBootPlugins(ready, total)`（KC:97-102）
+/// 在分叉的等价物 —— 引导线程在第 1 段窗口里按 `PLUGIN_POLL_MS`(250ms) 抽内核的装载台账，
+/// 抽到 `ready >= total`（或预算耗尽 / 问不出来）就收手。
+///
+/// 主线不需要问：它的 ready/total 是壳自己扫 `node_modules` 数出来的
+/// （`DshPluginBootstrap.WatchInstall`/`ReportInstall`，DshPluginBootstrap.cs:168-198，同一个
+/// 250ms 周期），因为**装包的活就是壳在引导线程里干的**。分叉不装包、内核是黑盒 ⇒ 台账只有
+/// 内核知道，只能走 RPC：
+/// · 假内核（`src/bin/fake_dsh.rs` 的 `plugin/installProgress`，`--plugins=N` 启用）给出真会
+///   推进的刻度 ⇒ 第 1 段按 ready/total 插值爬，`正在安装插件 x/y` 那行上屏；
+/// · 真内核没有这一发 ⇒ `call` 一次报错就 return ⇒ 与接上生产者之前**逐字一致**（第 1 段
+///   匀速爬到 30、没有插件行），也就是主线「本轮无包要装」时同一形态。
+fn report_plugin_ledger(tx: &mpsc::Sender<BootEvent>, kernel: &mut Kernel) {
+    let started = Instant::now();
+    loop {
+        let Ok(value) = kernel.call(kernel_boot::PLUGIN_RPC, json!({})) else {
+            return;
+        };
+        let Some((ready, total)) = plugin_ledger(&value) else {
+            return;
+        };
+        // 通道那一端是 UI 线程的 tick 排水口（`drain_boot_events`）：投递失败 = 这一轮已经被
+        // 重试/撤卡换掉，不必也不能在这里报错。
+        if tx.send(BootEvent::Plugins(ready, total)).is_err() {
+            return;
+        }
+        if ready >= total || started.elapsed() > Duration::from_millis(kernel_boot::PLUGIN_BUDGET_MS)
+        {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(kernel_boot::PLUGIN_POLL_MS));
     }
 }
 
@@ -1186,6 +1300,26 @@ enum HoverSlot {
 /// （用户实跑看到的 composer「-」就是这么来的）。主干那边写的是 `Padding="0"`。
 const TEMPLATE_INSET: [f64; 4] = [-12.0, -6.0, -12.0, -7.0];
 
+/// 设置·个性化「消息气泡」卡的两份事实的 state 键。材质档走 `picks`（下拉框下标）、
+/// 不透明度走 `numbers`（滑杆值），所以两条通道都天然是活的：`Msg::Pick` / `Msg::Number`
+/// 改的就是它们，气泡底每轮在 `view` 里按这两个值现算。
+/// 键名沿用相邻「窗口材质」卡的 `shell_*` 前缀（主干这两项也在壳本地 shell.json，分叉不落盘）。
+const BUBBLE_MATERIAL_KEY: &str = "shell_bubbleMaterial";
+const BUBBLE_OPACITY_KEY: &str = "shell_bubbleOpacity";
+
+/// 主干 `BubbleMaterialChoices`（`MainWindow.Personalization.cs:115-120`）的三档标签，
+/// 序 = `BubbleMaterial::from_index` 的下标；第三档主干写的是全称「跟随窗口材质」。
+const BUBBLE_MATERIALS: &[&str] = &["半透明", "亚克力", "跟随窗口材质"];
+
+/// 主干 `Personalization.cs:159-166` 的滑杆量纲：域 0.2–1.0 按 100 满刻度铺成 20–100、
+/// `StepFrequency=5`、`Width=220`，读数 `{0}%`（`MinWidth=48` + 横向 `Space12` 由
+/// `settings_slider` 统一给）。
+const BUBBLE_OPACITY_MIN: f64 = theme::BUBBLE_OPACITY_MIN * 100.0;
+const BUBBLE_OPACITY_MAX: f64 = theme::BUBBLE_OPACITY_MAX * 100.0;
+const BUBBLE_OPACITY_STEP: f64 = 5.0;
+const BUBBLE_OPACITY_DEFAULT: f64 = theme::BUBBLE_OPACITY_DEFAULT * 100.0;
+const BUBBLE_SLIDER_WIDTH: f64 = 220.0;
+
 /// D1 取证：`BLADE2_PILLDBG=1` 时把每次重绘选到的档位与收到的状态消息打到 stderr。
 fn pill_trace(text: String) {
     if env::var("BLADE2_PILLDBG").is_ok() {
@@ -1273,16 +1407,24 @@ fn pill_button(
         )
 }
 
-fn brand_mark(path: Option<&Path>, side: f64) -> View {
+/// 品牌标（`Assets/Square44x44Logo.png`）：主干那两颗 `Image` 的共用体（空态 `HeroMarkImage`
+/// 与加载卡 `KernelBootMark`，MX:687/703）。第三参 = 这枚 `Image` 的 automation_id，
+/// 传空串就没有（主干只有 `HeroMarkImage` 那枚 x:Name，分叉的 UIA 侧不需要它）。
+fn brand_mark(path: Option<&Path>, side: f64, automation_id: &str) -> View {
     let Some(path) = path else { return blank() };
-    match Image::new().source_file(path) {
-        Ok(image) => image
-            .width(side)
-            .height(side)
-            .horizontal_alignment(HorizontalAlignment::Center)
-            .vertical_alignment(VerticalAlignment::Center)
-            .into(),
-        Err(_) => blank(),
+    let image = match Image::new().source_file(path) {
+        Ok(image) => image,
+        Err(_) => return blank(),
+    };
+    let image = image
+        .width(side)
+        .height(side)
+        .horizontal_alignment(HorizontalAlignment::Center)
+        .vertical_alignment(VerticalAlignment::Center);
+    if automation_id.is_empty() {
+        image.into()
+    } else {
+        image.automation_id(automation_id).into()
     }
 }
 
@@ -1319,6 +1461,354 @@ fn emit_line(line: &str) {
         return;
     };
     let _ = writeln!(file, "{line}");
+}
+
+/// 一条 mux 流元素在分叉侧的去向。主干每条流各挂一个回调（会话 follow → 正文、
+/// `session/control` → `OnControlFrame`（MW:15207）、`$events` 的 status → `OnSessionStatusAsync`、
+/// `workspace/follow` → 树），而分叉只有一根 socket、一个事件泵 ⇒ 得自己先把流认出来。
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum MuxSink {
+    /// 某会话的 `session/follow`：正文帧，带这一路登记着的 sessionId。
+    Follow(String),
+    /// `session/control` 长驻流：按帧型灌 `ControlState` 那三张表。
+    Control,
+    /// `$events` 的 `api-session/status`（已解出的载荷：会话 id + 在跑）。
+    Status(String, bool),
+    /// 剩下的一切都算 `workspace/follow` 的表帧。
+    Workspace,
+}
+
+/// 分流判据（纯函数：只吃 streamId 与帧，不碰 `Shell`）。
+///
+/// **先认流、再认帧型**，而且控制流那一支必须排在兜底之前：`baseline` 这个 `type` 在两条流上
+/// 同名不同形（工作区读 `value.items`、控制面读 `value.queues/jobs/projections`），只看帧型
+/// 必然串台；只开流不分流的话四种控制帧全会被 `WorkspaceTree::apply` 判成「不认」并返回
+/// `false` ⇒ 三张表永不落地、一条错误都不报（spec6 R1）。
+fn mux_frame_sink(
+    stream: &str,
+    control_stream: Option<&str>,
+    follows: &[(String, String)],
+    frame: &Value,
+) -> MuxSink {
+    if Some(stream) == control_stream {
+        return MuxSink::Control;
+    }
+    if let Some((session, _)) = follows.iter().find(|(_, id)| id == stream) {
+        return MuxSink::Follow(session.clone());
+    }
+    match session_status_event(frame) {
+        Some((id, running)) => MuxSink::Status(id, running),
+        None => MuxSink::Workspace,
+    }
+}
+
+/// 一批 `session/control` 元素的汇总：攒完一批才出一行 DIAG（`poll_mux` 约每 250ms 一批，
+/// 逐帧一行会把日志刷爆），口径同工作区流那句「工作区数: n」。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ControlTally {
+    /// 内核那四型各到了几帧，键取自 `CONTROL_FRAME_TYPES`。
+    kinds: BTreeMap<&'static str, usize>,
+    /// 不认的 `type`（含 `type` 缺席）帧数。主干 `OnControlFrame` 的 `default: return`
+    /// （MW:15336）是静默丢，分叉这边必须留个计数：否则「内核新增/改名一个帧型」和
+    /// 「这一帧本来就是空的」在界面上同形。
+    unknown: usize,
+}
+
+impl ControlTally {
+    /// 记一帧，`kind` = `control_frame_type` 认出来的型别（`None` = 未识别）。
+    fn record(&mut self, kind: Option<&'static str>) {
+        match kind {
+            Some(kind) => *self.kinds.entry(kind).or_default() += 1,
+            None => self.unknown += 1,
+        }
+    }
+
+    /// 这一批出声的那一行；一帧控制面元素都没见到就返回 `None`（不写空行）。
+    /// `control` 一起报：帧数与三张表的实际规模并排，「帧到了但表是空的」才看得出来了。
+    fn line(&self, control: &ControlState) -> Option<String> {
+        let seen: usize = self.kinds.values().sum::<usize>() + self.unknown;
+        if seen == 0 {
+            return None;
+        }
+        let kinds = CONTROL_FRAME_TYPES
+            .iter()
+            .map(|kind| format!("{kind} {}", self.kinds.get(kind).copied().unwrap_or_default()))
+            .collect::<Vec<_>>()
+            .join(" ");
+        Some(format!(
+            "控制面 {seen} 帧: {kinds} 未识别 {} · 队列 {} 项 / 作业 {} 项 / 投影 {} 会话",
+            self.unknown,
+            control.queues.values().map(Vec::len).sum::<usize>(),
+            control.jobs.values().map(Vec::len).sum::<usize>(),
+            control.projections.len(),
+        ))
+    }
+}
+
+// ==================== 斜杠命令浮层（`CommandPalette`） ====================
+//
+// 主干那几份状态在这里合成一个 `PaletteState`：
+// · `_commands` / `_commandsSession` / `_commandsError` / `_commandsErrorAt`（MW:2164-2170）
+//   = 会话作用域的目录缓存，含那条 3 秒负缓存；
+// · `_commandMatches` / `_commandIndex`（MW:2172-2174）= 浮层里这一批候选与选中行；
+// · `_paletteGeneration`（MW:2175）= 「已有更新的按键」那道丢弃闸；
+// · `CommandPalette.Visibility`（MX:746）= `showing`：reactor 没有 Visibility，浮层整棵由
+//   `chat_page` 的 keyed 槽位增删（缺席即 Destroy）；
+// · `CommandList.Visibility`（MW:17710 / 17729）= `list_visible`：目录取不到时列表收起、只留标题。
+
+/// 主干 `_commandsErrorAt` 那条重试窗口（MW:17320-17323 `TimeSpan.FromSeconds(3)`）。
+const COMMANDS_NEGATIVE_CACHE: Duration = Duration::from_secs(3);
+/// 主干 `Take(20)`（MW:17680）。
+const PALETTE_MATCH_LIMIT: usize = 20;
+/// MX:748-752 的浮层几何：`MaxWidth=640` / `MaxHeight=264`；MX:774 列表 `MaxHeight=216`。
+const PALETTE_MAX_WIDTH: f64 = 640.0;
+const PALETTE_MAX_HEIGHT: f64 = 264.0;
+const PALETTE_LIST_MAX_HEIGHT: f64 = 216.0;
+/// MX:782 `ListViewItem Padding="8,5,8,5"`（同处还有 `MinHeight=0` ⇒ 行不给最小高）。
+const PALETTE_ROW_PADDING: [f64; 4] = [8.0, 5.0, 8.0, 5.0];
+
+/// 主干 `UpdateCommandPalette` 的触发判据（MW:17684-17694）的纯函数版：
+/// 文本非空、首字符是 `/`、**整串**里没有一个空格/制表/回车/换行 ⇒ `Some(过滤词)`（`/` 之后那段）；
+/// 否则 `None` = 收浮层。进入参数段（打了空格）浮层就让位给普通发送。
+fn palette_trigger(text: &str) -> Option<&str> {
+    if !text.starts_with('/') || text.contains([' ', '\t', '\r', '\n']) {
+        return None;
+    }
+    Some(text.get(1..).unwrap_or_default())
+}
+
+/// 主干 `TryLeadingCommandName`（MW:6901-6912）：取前导斜杠命令名（`"/compact now"` → `compact`）。
+/// 与上面那条的区别就是这里**允许**参数段——composer 里回车提交的那一发要能认出带参数的命令。
+fn leading_command_name(text: &str) -> Option<&str> {
+    let trimmed = text.trim_start();
+    if trimmed.len() < 2 || !trimmed.starts_with('/') {
+        return None;
+    }
+    let body = &trimmed[1..];
+    let end = body
+        .find([' ', '\t', '\r', '\n'])
+        .unwrap_or(body.len());
+    let name = body[..end].trim();
+    (!name.is_empty()).then_some(name)
+}
+
+/// `StringComparer.OrdinalIgnoreCase` / `StringComparison.OrdinalIgnoreCase` 的等价物：
+/// .NET 走**简单**大小写折叠（一字对一字，`ß` 仍是 `ß`），Rust 的 `to_lowercase` 是完整折叠
+/// （`ß` → `ss`，长度都会变、序也就跟着变）⇒ 这里逐字折叠，且只在折叠结果仍是单个 char 时采纳。
+/// 命令名几乎都是 ASCII，这段存在的唯一理由是别把 C# 的序判悄悄抄成 Rust 的序判。
+fn fold(ch: char) -> char {
+    let mut lowered = ch.to_lowercase();
+    match lowered.next() {
+        Some(one) if lowered.next().is_none() => one,
+        _ => ch,
+    }
+}
+
+fn eq_ignore_case(text: &str, other: &str) -> bool {
+    text.chars().map(fold).eq(other.chars().map(fold))
+}
+
+fn cmp_ignore_case(text: &str, other: &str) -> Ordering {
+    text.chars().map(fold).cmp(other.chars().map(fold))
+}
+
+fn contains_ignore_case(text: &str, needle: &str) -> bool {
+    let needle: Vec<char> = needle.chars().map(fold).collect();
+    if needle.is_empty() {
+        return true;
+    }
+    let haystack: Vec<char> = text.chars().map(fold).collect();
+    needle.len() <= haystack.len() && haystack.windows(needle.len()).any(|row| row == needle)
+}
+
+fn starts_with_ignore_case(text: &str, prefix: &str) -> bool {
+    let mut chars = text.chars().map(fold);
+    prefix.chars().map(fold).all(|head| chars.next() == Some(head))
+}
+
+/// 主干那段过滤（MW:17716-17722）逐字照抄：大小写无关 `Contains` → 前缀命中的排前面
+/// （`OrderByDescending(StartsWith)`）→ 同档按名字 `OrdinalIgnoreCase` 升序 → `Take(20)`。
+/// `sort_by` 是稳定排序，等价于 LINQ 的 `OrderBy`。零命中主干什么都不显示（无「无匹配」占位）。
+fn filter_commands(entries: &[CommandEntry], query: &str) -> Vec<CommandEntry> {
+    let mut matches: Vec<CommandEntry> = entries
+        .iter()
+        .filter(|entry| contains_ignore_case(&entry.name, query))
+        .cloned()
+        .collect();
+    matches.sort_by(|a, b| {
+        starts_with_ignore_case(&b.name, query)
+            .cmp(&starts_with_ignore_case(&a.name, query))
+            .then_with(|| cmp_ignore_case(&a.name, &b.name))
+    });
+    matches.truncate(PALETTE_MATCH_LIMIT);
+    matches
+}
+
+/// 主干 `AcceptCommandSelection`（MW:17802-17819）的三种落点。
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PaletteAccept {
+    /// 带参数的命令（`input` 是对象）：只把 `/名字` + 一个空格写回输入框，**不执行**
+    /// （主干注释：「原版 leading claim 语义」）。 typed 前缀被整名替换、`/` 仍在。
+    Fill(String),
+    /// 无参命令：清空输入框并直接 `commands/execute`（这一发是自动发出的，不等再按 Enter）。
+    Run(String),
+    /// 选中行不存在（`_commandIndex` 越界，含「目录取不到」那一态的 -1）：只收浮层。
+    Nothing,
+}
+
+/// 命令浮层的全部状态（见本节开头的逐字段主干对应）。
+struct PaletteState {
+    /// `_commands`：目录本体，按会话缓存。
+    entries: Vec<CommandEntry>,
+    /// `_commandsSession`：这份目录属于哪个会话（= 当时那次 `commands/list` 的 `agentId`）。
+    session: String,
+    /// `_commandsError` + `_commandsErrorAt`：负缓存，只活 [`COMMANDS_NEGATIVE_CACHE`]。
+    error: Option<(String, Instant)>,
+    /// 当前过滤词（`/` 之后那段）。
+    query: String,
+    /// `_commandMatches`。
+    matches: Vec<CommandEntry>,
+    /// `_commandIndex`：`-1` = 没有选中项（主干收起时就是这个值）。
+    index: i32,
+    /// `_paletteGeneration`。
+    generation: u64,
+    /// `CommandPalette.Visibility == Visible`。
+    showing: bool,
+    /// `CommandList.Visibility == Visible`（目录取不到时为假，标题那一行还在）。
+    list_visible: bool,
+}
+
+impl PaletteState {
+    /// 初值 = 主干 XAML 那句 `Visibility="Collapsed"`（MX:746）+ `_commandIndex = -1`。
+    fn idle() -> Self {
+        PaletteState {
+            entries: Vec::new(),
+            session: String::new(),
+            error: None,
+            query: String::new(),
+            matches: Vec::new(),
+            index: -1,
+            generation: 0,
+            showing: false,
+            list_visible: true,
+        }
+    }
+
+    /// 主干 `HideCommandPalette`（MW:17743-17751）：代次 +1（在途那一发就此作废）、
+    /// 清候选与选中、收浮层。主干还会顺手收 @ 引用浮层——那棵分叉没有。
+    fn hide(&mut self) {
+        self.generation += 1;
+        self.matches.clear();
+        self.index = -1;
+        self.showing = false;
+        self.list_visible = true;
+    }
+
+    /// 主干 `EnsureCommandsAsync` 开头那三段守卫（MW:17310-17323）里「要不要打 RPC」的那一条。
+    /// 语义逐字照抄，包括两条容易被「顺手改好」的：
+    /// · 正缓存按会话，**没有**过期时间（成功过一次就不再问，直到切会话或出过一次错）；
+    /// · 负缓存那道**不按会话判**（17320 那只比时间），所以切了会话也可能再等一会儿。
+    fn needs_fetch(&self, session: &str, now: Instant) -> bool {
+        if session.is_empty() {
+            return false;
+        }
+        if self.session == session && self.error.is_none() {
+            return false;
+        }
+        if let Some((_, at)) = &self.error {
+            return now.saturating_duration_since(*at) >= COMMANDS_NEGATIVE_CACHE;
+        }
+        true
+    }
+
+    /// 回填（主干 17346-17357）：成功写目录并清错误；失败**清目录**、连会话一起记错误与时间戳。
+    fn record(&mut self, session: &str, outcome: Result<Vec<CommandEntry>, String>, now: Instant) {
+        match outcome {
+            Ok(entries) => {
+                self.entries = entries;
+                self.session = session.to_string();
+                self.error = None;
+            }
+            Err(message) => {
+                self.entries.clear();
+                self.session = session.to_string();
+                self.error = Some((message, now));
+            }
+        }
+    }
+
+    /// 主干 `ShowCommandPaletteAsync` 里 await 之后那一段（MW:17699-17736）。三态逐条照抄：
+    /// · 代次不符 ⇒ 整段丢弃（17701「已有更新的按键」）；
+    /// · 目录取不到 ⇒ 列表收起、原因摊在标题上（17706-17714，**浮层照样上屏**，不静默）；
+    /// · 零命中 ⇒ `HideCommandPalette()`（17722-17726）——主干没有「无匹配」占位，别自己加。
+    ///
+    /// `input` 那道触发复查是结构差异逼出来的：主干只在 `UpdateCommandPalette` 判过触发才调
+    /// `ShowCommandPaletteAsync`，而这里的回填是异步的（composer 那条提交路径也会拉目录，
+    /// 那时输入里已经带参数段、浮层早让位了）。
+    fn apply(&mut self, generation: u64, input: &str) {
+        if generation != self.generation || palette_trigger(input).is_none() {
+            return;
+        }
+        if self.error.is_some() {
+            self.matches.clear();
+            self.index = -1;
+            self.list_visible = false;
+            self.showing = true;
+            return;
+        }
+        let matches = filter_commands(&self.entries, &self.query);
+        if matches.is_empty() {
+            self.hide();
+            return;
+        }
+        self.matches = matches;
+        self.index = 0;
+        self.list_visible = true;
+        self.showing = true;
+    }
+
+    /// 主干 `MoveCommandSelection`（MW:17791-17801）：没有候选直接返回，越界夹到端点（不循环）。
+    fn move_selection(&mut self, delta: i32) {
+        let count = self.matches.len() as i32;
+        if count == 0 {
+            return;
+        }
+        self.index = (self.index + delta).clamp(0, count - 1);
+    }
+
+    /// 主干 `AcceptCommandSelection`（MW:17802-17819）里「读选中项 + 收浮层」那半截；
+    /// 输入框与 `commands/execute` 由调用方落（那两处才是 `Shell` 的状态）。
+    fn take_accept(&mut self) -> PaletteAccept {
+        let picked = usize::try_from(self.index)
+            .ok()
+            .and_then(|index| self.matches.get(index).cloned());
+        let Some(command) = picked else {
+            // 主干 17806-17809：越界只收浮层。
+            self.hide();
+            return PaletteAccept::Nothing;
+        };
+        let accept = if command.has_input {
+            PaletteAccept::Fill(format!("{} ", command.slash_name()))
+        } else {
+            PaletteAccept::Run(command.slash_name())
+        };
+        self.hide();
+        accept
+    }
+
+    /// 标题那一行的三态（主干 `CommandPaletteHeader`：17712 错误态 / 17732-17734 两态）。
+    fn header(&self, catalog: &Catalog) -> String {
+        if let Some((error, _)) = &self.error {
+            return catalog.lf("命令目录不可用：{0}", &[error.clone()]);
+        }
+        if self.query.is_empty() {
+            return catalog.l("命令（↑↓ 选择，Enter 执行，Esc 关闭）");
+        }
+        catalog.lf(
+            "“/{0}” 匹配 {1} 条（↑↓ 选择，Enter 执行，Esc 关闭）",
+            &[self.query.clone(), self.matches.len().to_string()],
+        )
+    }
 }
 
 /// 主干 `MainWindow.xaml` 的壳层：48px 顶条 + 264px 侧栏 + SurfaceAlt 内容面。
@@ -1375,6 +1865,12 @@ struct Shell {
     bubbles: Vec<Bubble>,
     /// 已开过的 `session/follow` 流：sessionId → streamId。
     follows: Vec<(String, String)>,
+    /// `session/control` 长驻流的 streamId（主干 `_controlStreamId`，MW:2022）；
+    /// `None` = 还没开成，或这一路已经被网关判死。
+    control_stream: Option<String>,
+    /// 那条流的累积状态：各会话的排队项 / 作业 / 投影三张表（主干 `_queues`/`_jobs`/
+    /// `_sessionProjections`，MW:2016-2021）。写它的只有 `apply_mux_events` 的 Control 那一支。
+    control: ControlState,
     /// 正在按 token 追加的那次尝试，`assistant/message` 落地后清空。
     live: Option<LiveAttempt>,
     /// 主干 `_pendingUserBubble`：等 wire ack 回来才落进正文的那句话。
@@ -1409,6 +1905,17 @@ struct Shell {
     note_for: Option<String>,
     /// 说明编辑器当前文本（主干直接读 TextBox.Text，分叉得把它镜像进 state 才能声明式取回）。
     note_text: String,
+    /// 「最近一次谁在吃键盘」（`blade2_rs::keys` 的焦点替身，初值 `Other` = 谁都不认）。
+    /// 每次 `update` 收尾连同 `sub` 一起推给钩子的 thread-local（`keys::sync`）：钩子在消息泵里
+    /// 回调，拿不到 `&Shell`，只能读这份副本。失配场景见 `keys` 模块头的说明。
+    key_owner: KeyOwner,
+    /// 命令浮层（主干 `CommandPalette` 那一族字段，见本节开头逐条对应）。
+    palette: PaletteState,
+    /// 主干 `SubmitInputAsync`（MW:6885）里那条 `await EnsureCommandsAsync()`：目录还没取到时
+    /// 这一发提交先挂着，`commands/list` 回来（成或败都算）后补发。`Some(None)` = 普通 Enter 那一发。
+    pending_send: Option<Option<&'static str>>,
+    /// 主干 `_commandSubmitting`（MW:17846）：一次只允许一发 `commands/execute` 在飞。
+    command_submitting: bool,
     brand: Option<PathBuf>,
 }
 
@@ -1584,12 +2091,103 @@ impl Shell {
         self.active.as_deref().is_some_and(|id| self.is_running(id))
     }
 
+    /// 把键盘通道要的那份事实贴出去（钩子只读 thread-local 副本，绝不回碰 UI）。
+    /// 焦点归属 = `key_owner`（模型里推，见 `Msg::KeyFocus` 那条），二级页开关 = `sub`，
+    /// 在不在聊天页 = `page`（决定 Esc 是否等价于主干那颗「返回」）。
+    /// `update` 每次收尾调一发，所以钩子读到的永远是本轮消息落完之后的状态。
+    ///
+    /// `palette_open` 现在写死 `false` —— 那是 #52（命令面板）的接缝：浮层一落地，把这里的
+    /// 字面量换成模型里那个开关即可，`keys::classify` 那几档 `Palette*` 与
+    /// `Msg::from_key_action` 的空臂立刻接上，本模块其余代码一行不用改。
+    fn publish_keys(&self) {
+        keys::sync(self.key_owner, self.sub.is_some());
+        // `palette_open` = 浮层**真的在屏幕上**：它挂在 ChatPage 内容面那一格，切到设置页时整棵
+        // 随页退役（keyed 槽位缺席即 Destroy），而主干那颗 InputBox 也在折叠的页里拿不到焦点。
+        // 不叠这一条就会让「设置页 + 一次迟到的目录回填」把 Enter 判成采纳一个看不见的浮层。
+        let on_chat = self.page == Page::Chat;
+        keys::sync_pages(on_chat, on_chat && self.palette.showing);
+    }
+
+    /// 主干 `OpenSessionAsync` 清屏那串里的会话作用域三项（MW:4085-4088）：
+    /// `_commandsSession = null` + `_commandsError/_commandsErrorAt = null` + `HideCommandPalette()`。
+    /// **`_commands` 本体不清**——主干留着它，靠 `agentId` 对不上去逼下一次重新问；
+    /// 分叉照抄（清了目录会让「切回去」那一下变成白屏 + 一次额外 RPC）。
+    fn forget_commands(&mut self) {
+        self.palette.session = String::new();
+        self.palette.error = None;
+        self.palette.hide();
+    }
+
+    /// 主干 `NsString("ui-conversation", "busyEnter", "queue")` 的分叉等价物：设置页 `busy`
+    /// 那一行就是这条下拉（`["排队发送", "插话发送"]`，默认下标 0 = queue）。
+    fn busy_enter_mode(&self) -> &'static str {
+        if self.pick("ui-conversation_busyEnter", 0) == 1 {
+            "steer"
+        } else {
+            "queue"
+        }
+    }
+
+    /// 设置·个性化「消息气泡」那一支下拉选中的材质档（主干 `_bubbleMaterial`）。
+    /// 默认下标 0 = 半透明，与主干 `BubbleMaterialTranslucent` 同档。
+    fn bubble_material(&self) -> BubbleMaterial {
+        BubbleMaterial::from_index(self.pick(BUBBLE_MATERIAL_KEY, 0))
+    }
+
+    /// 窗口材质档（主干 `_shellMaterial`）：只有「跟随窗口材质」那一档的气泡看它脸色。
+    /// 主干这四项存 shell.json，分叉不落盘，读的就是「窗口材质」卡那颗下拉的当前下标。
+    fn window_material(&self) -> WindowMaterial {
+        WindowMaterial::from_index(self.pick("shell_material", 0))
+    }
+
+    /// 气泡不透明度（主干 `_bubbleOpacity`，0.2–1.0）：滑杆是 20–100 的百分刻度，
+    /// 这里换算回系数并夹进合法域（主干 `SetBubbleOpacity` 的 `Math.Clamp` 同口径）。
+    fn bubble_opacity(&self) -> f64 {
+        let percent = self.number(BUBBLE_OPACITY_KEY, BUBBLE_OPACITY_DEFAULT);
+        theme::clamp_percent_to_opacity(percent)
+    }
+
+    /// 主干 `AlternateBusyEnter()`（MW:6919-6920）：queue↔steer 取反向档；
+    /// 而 `Ctrl+Enter` 在**空闲**时沿用默认发送（MW:6859 的 `forceMode: IsSessionBusy() ? … : null`）
+    /// ⇒ 空闲就交回 `None`，让 `submit_input` 走与点发送钮一模一样的那条路。
+    fn ctrl_enter_mode(&self) -> Option<&'static str> {
+        if !self.active_running() {
+            return None;
+        }
+        Some(if self.busy_enter_mode() == "steer" {
+            "queue"
+        } else {
+            "steer"
+        })
+    }
+
     /// 主干 `SubmitInputAsync`：先清输入框，再走 `session/prompt`（无会话时先 `session/create`）。
     /// 用户气泡要等 wire ack 才落正文 —— 主干也是 await 之后才 AppendBubble。
-    fn submit_input(&mut self, context: &ComponentContext<Shell>) {
+    /// `force_mode` = 主干那个 `forceMode`（`Ctrl+Enter` 的反向档）；`None` 就是发送钮那条路。
+    fn submit_input(&mut self, context: &ComponentContext<Shell>, force_mode: Option<&'static str>) {
         let text = self.input.trim().to_string();
         if text.is_empty() {
             return;
+        }
+        // 主干 `SubmitInputAsync` 开头那六行（MW:6883-6897）：前导 `/` 的命令名**命中会话命令目录**
+        // ⇒ 走 `commands/execute`（整行原文当 `line`，含参数），不发消息、也不清框（清框由命令
+        // 成功后那一发做）；不命中就照旧 `session/prompt`。目录这会儿还没取到 ⇒ 先取、把这发挂着。
+        if leading_command_name(&text).is_some() && !self.catalog_ready() {
+            self.pending_send = Some(force_mode);
+            self.fetch_commands(context);
+            return;
+        }
+        if let Some(name) = leading_command_name(&text) {
+            if self
+                .palette
+                .entries
+                .iter()
+                .any(|entry| eq_ignore_case(&entry.name, name))
+            {
+                self.palette.hide();
+                self.execute_command(text, true, context);
+                return;
+            }
         }
         let Some(shared) = self.kernel.clone() else {
             // 主线 `SendAsync`（MW:7007-7019）：`_rpc is null` = 内核还在后台引导 ⇒ 一次性提示，
@@ -1602,6 +2200,9 @@ impl Shell {
         self.echo = Some(text.clone());
         let session = self.active.clone().unwrap_or_default();
         let mux = self.mux.clone();
+        // 分叉目前**恒**按 queue 发（主干那条「繁忙时读 busyEnter 设置」的分支整条链都还没移植，
+        // 发送钮走的也是这里）。`Ctrl+Enter` 只多一个反向档：见 `ctrl_enter_mode`。
+        let mode = force_mode.unwrap_or("queue").to_string();
         // 主干每次发送前都补一发 session/selectModel；分叉还没有模型选择器，拿不出可信的
         // provider/model，所以整步跳过，而不是瞎报一个把真内核的默认模型改掉。
         context.spawn_background(move |_token| {
@@ -1630,7 +2231,7 @@ impl Shell {
             let args = json!({ "request": {
                 "requestId": request_id(),
                 "sessionId": sid,
-                "mode": "queue",
+                "mode": mode,
                 "content": [{ "type": "text", "text": text }],
             }});
             match kernel.call("session/prompt", args) {
@@ -1638,6 +2239,167 @@ impl Shell {
                 Err(error) => Msg::Prompted(Err(error)),
             }
         });
+    }
+
+    /// 主干 `OnInputTextChanged` → `UpdateCommandPalette`（MW:17386-17392 + 17684-17694）：
+    /// 判据不过就收浮层；过了就把过滤词记下、代次 +1（= 主干那句 `++_paletteGeneration`），
+    /// 然后要目录。每次按键都可能把在途的那一发判成过期。
+    fn refresh_palette(&mut self, context: &ComponentContext<Shell>) {
+        let Some(query) = palette_trigger(&self.input) else {
+            self.palette.hide();
+            return;
+        };
+        self.palette.query = query.to_string();
+        self.palette.generation += 1;
+        self.ensure_commands(self.palette.generation, context);
+    }
+
+    /// 目录此刻能不能直接拿来判「命不命中」——主干 `SubmitInputAsync` 里那条 await 的等价物。
+    /// `false` = 还得先打一发 `commands/list`。没内核 / 没会话算「能」：主干那两处早退之后
+    /// `_commands` 就是空的，判定自然不命中 ⇒ 落回 `session/prompt`。
+    fn catalog_ready(&self) -> bool {
+        let Some(session) = self.active.as_deref() else {
+            return true;
+        };
+        self.kernel.is_none() || !self.palette.needs_fetch(session, Instant::now())
+    }
+
+    /// 主干 `EnsureCommandsAsync`（MW:17309-17358）+ `ShowCommandPaletteAsync` 的那次 await：
+    /// 缓存新鲜就直接刷浮层，否则打 RPC、由 [`Msg::CommandsLoaded`] 回来再刷。
+    /// 拿不到内核 / 没有会话时主干是「什么都不做地 return」，而 return 之后 `ShowCommandPaletteAsync`
+    /// 照样往下走 ⇒ 这里也照样刷一次（拿内存里那份可能过期的目录过滤）。
+    fn ensure_commands(&mut self, generation: u64, context: &ComponentContext<Shell>) {
+        let ready = match self.active.as_deref() {
+            Some(session) if self.kernel.is_some() => {
+                !self.palette.needs_fetch(session, Instant::now())
+            }
+            None => true,
+            _ => false,
+        };
+        if ready {
+            self.apply_palette(generation);
+            return;
+        }
+        self.fetch_commands(context);
+    }
+
+    /// 单发 `commands/list`：params 就一个平铺 `agentId` = 活动会话 id（主干 17326），
+    /// 走的是 [`Kernel::list_commands`]/`parse_commands` 这条既有通路，不另开第二条 RPC。
+    fn fetch_commands(&mut self, context: &ComponentContext<Shell>) {
+        let (Some(shared), Some(session)) = (self.kernel.clone(), self.active.clone()) else {
+            return;
+        };
+        let generation = self.palette.generation;
+        context.spawn_background(move |_| {
+            let outcome = shared
+                .lock()
+                .map_err(|_| "内核状态不可用".to_string())
+                .and_then(|mut kernel| kernel.list_commands(&session));
+            Msg::CommandsLoaded {
+                generation,
+                session,
+                outcome,
+            }
+        });
+    }
+
+    /// 把内存里那份目录摊成浮层内容 = 主干 `ShowCommandPaletteAsync`（MW:17696-17741）里
+    /// await 之后的那一段（判定全在 [`PaletteState::apply`]，那里能不起 GUI 直接测）。
+    fn apply_palette(&mut self, generation: u64) {
+        let input = self.input.clone();
+        self.palette.apply(generation, &input);
+    }
+
+    /// 主干 `MoveCommandSelection`（MW:17791-17801）。`ScrollIntoView` 那一发抄不过来：
+    /// reactor 的 `ScrollViewer` 没有 `ElementRef` 也没有任何滚动入口（`generated.rs:2681-2711`
+    /// 只有两根 scrollbar visibility 属性）⇒ 越界的选中行只能等用户自己滚。
+    fn move_palette(&mut self, delta: i32) {
+        self.palette.move_selection(delta);
+    }
+
+    /// 主干 `AcceptCommandSelection` + `OnCommandItemClick`（MW:17802-17836）：
+    /// 带参数的只补全命令名（不执行），无参的清空输入框并**当场** `commands/execute`。
+    /// 主干采纳后还把焦点还给 InputBox（`InputBox.Focus(Programmatic)`）——分叉的焦点本来就在
+    /// 钩子认定的 composer 上，这里显式补一次同样的判定，鼠标路径才不会把 Enter 让给别人。
+    fn accept_palette(&mut self, context: &ComponentContext<Shell>) {
+        self.key_owner = KeyOwner::Composer;
+        match self.palette.take_accept() {
+            PaletteAccept::Fill(text) => self.input = text,
+            PaletteAccept::Run(line) => {
+                self.input.clear();
+                self.execute_command(line, false, context);
+            }
+            PaletteAccept::Nothing => {}
+        }
+    }
+
+    /// 主干 `ExecuteCommandAsync`（MW:17849-17945）。`submittedAttachments` 恒空数组：
+    /// 分叉没移植附件（spec6 line 78 明确允许），参数形状仍是平铺三键。
+    /// `from_composer` = 主干那个参数：只有 composer 回车那一发成功后才清草稿。
+    fn execute_command(&mut self, line: String, from_composer: bool, context: &ComponentContext<Shell>) {
+        // 主干 17851：`if (_commandSubmitting || _rpc is null) return;`——在途就不叠加。
+        if self.command_submitting || self.kernel.is_none() {
+            return;
+        }
+        let Some(shared) = self.kernel.clone() else {
+            return;
+        };
+        let Some(session) = self.active.clone() else {
+            // 主干 17854-17857：没有会话就摊一句系统消息，命令不发。
+            self.append_system_message(
+                self.catalog
+                    .l("请先选择一个会话：命令在会话（agent）作用域内执行。"),
+            );
+            return;
+        };
+        self.command_submitting = true;
+        // 主干 17860：`submittedText` 只在 composer 那一发带得回来。
+        let draft = from_composer.then(|| self.input.clone());
+        // 主干 17861：命令回显一行 `> /compact now`，走 system 小字行。
+        self.append_system_message(format!("> {line}"));
+        context.spawn_background(move |_| {
+            let command_session = session.clone();
+            let outcome = shared
+                .lock()
+                .map_err(|_| "内核状态不可用".to_string())
+                .and_then(|mut kernel| kernel.execute_command(&session, &line, &[]));
+            Msg::CommandExecuted {
+                line,
+                session: command_session,
+                outcome,
+                draft,
+            }
+        });
+    }
+
+    /// 主干 17889-17914 的四态落文案（`ok:false` 与传输异常都归「命令失败：…」，
+    /// 因为分叉的 `Kernel::call` 把信封错误与线错误都并成 `Err`，与主干 `catch` 那支同口径）。
+    fn report_command(&mut self, line: &str, outcome: Result<CommandReply, String>) {
+        let text = match outcome {
+            Err(failure) => self.catalog.lf("命令失败：{0}", &[failure]),
+            Ok(reply) => match reply {
+                CommandReply::Unknown => {
+                    self.catalog.lf("未知或格式不正确的命令：{0}", &[line.to_string()])
+                }
+                CommandReply::NoImmediateReply => {
+                    self.catalog.lf("{0} 已提交（内核未返回即时应答）", &[line.to_string()])
+                }
+                CommandReply::Result { kind, text } => match kind.as_str() {
+                    // 主干 17911：`string.IsNullOrEmpty(text)` 才用兜底文案（空串也算没给）。
+                    "success" => match text.filter(|text| !text.is_empty()) {
+                        Some(body) => body,
+                        None => self.catalog.lf("{0} 执行完成", &[line.to_string()]),
+                    },
+                    // 主干 17910：失败原文前面加 ⚠，没有原文（含空串）才用兜底文案。
+                    "error" => match text.filter(|text| !text.is_empty()) {
+                        Some(body) => format!("⚠ {body}"),
+                        None => self.catalog.lf("{0} 执行失败", &[line.to_string()]),
+                    },
+                    other => format!("{line} → {other}"),
+                },
+            },
+        };
+        self.append_system_message(text);
     }
 
     /// 主线 MW:7013-7016 的一次性等待提示。`_kernelWaitHintShown` 的复位点**只有**
@@ -2592,13 +3354,16 @@ impl Shell {
                 .lock()
                 .map_err(|_| "mux 状态不可用".to_string())
                 .and_then(|mut guard| {
-                    // 顺序照主干：先 follow 建表，再订 `$events`，反了会让 cwd 自动分组失效。
-                    let follow = guard.open("workspace/follow", json!({}))?;
+                    // 顺序照主干：先 follow 建表，再订 `$events`，反了会让 cwd 自动分组失效
+                    // （MW:2614-2616 那条 0.7.1 时序注释）；第三发才是会话控制面，主干
+                    // `OpenSessionControlStreamAsync` 也排在 RefreshWorkspaces / SubscribeEvents /
+                    // RefreshSessions 之后（MW:2622）。三条流共用一根 socket，帧靠 streamId 分。
+                    guard.open("workspace/follow", json!({}))?;
                     guard.open("$events", json!({}))?;
-                    Ok(follow)
+                    guard.open_session_control().map_err(|e| format!("控制面开流失败: {e}"))
                 });
             match opened {
-                Ok(_) => Msg::MuxReady(Ok(mux)),
+                Ok(control) => Msg::MuxReady(Ok((mux, control))),
                 Err(error) => Msg::MuxReady(Err(error)),
             }
         });
@@ -2622,28 +3387,45 @@ impl Shell {
 
     fn apply_mux_events(&mut self, events: Vec<MuxEvent>, context: &ComponentContext<Shell>) {
         let mut changed = false;
+        let mut control = ControlTally::default();
         for event in events {
             match event {
                 MuxEvent::Item {
                     value: Some(frame),
                     stream,
                 } => {
-                    // 一根 socket 上跑多条流，先按 streamId 分流：
-                    // 会话 follow 走正文，其余仍是 workspace/follow 的表帧和 $events 的 emit。
-                    match self.follows.iter().find(|(_, id)| *id == stream) {
-                        Some((session, _)) => {
-                            let session = session.clone();
-                            self.apply_follow_frame(&session, &frame);
+                    // 一根 socket 上四条流（workspace/follow、$events、session/control、
+                    // session/follow），先按 streamId 认流再按帧型兜底，判据见 `mux_frame_sink`。
+                    let sink = mux_frame_sink(
+                        &stream,
+                        self.control_stream.as_deref(),
+                        &self.follows,
+                        &frame,
+                    );
+                    match sink {
+                        MuxSink::Follow(session) => self.apply_follow_frame(&session, &frame),
+                        MuxSink::Control => {
+                            let kind = control_frame_type(&frame);
+                            control.record(kind);
+                            if kind.is_some() {
+                                self.control.apply(&frame);
+                            }
                         }
-                        None => match session_status_event(&frame) {
-                            Some((id, running)) => self.set_running(&id, running),
-                            None => changed |= self.tree.apply(&frame),
-                        },
+                        MuxSink::Status(id, running) => self.set_running(&id, running),
+                        MuxSink::Workspace => changed |= self.tree.apply(&frame),
                     }
                 }
                 MuxEvent::Item { value: None, .. } => {}
                 MuxEvent::Failure { stream, message } => {
-                    self.push_log(format!("工作区流 {stream} 出错: {message}"));
+                    if Some(&stream) == self.control_stream.as_ref() {
+                        // 控制面这一路被判死：主干 `_controlStreamId = null`（MW:15206）同口径。
+                        // 分叉的重开点在 `open_mux`（丢实例 = 丢流），所以这里只作废标记，
+                        // 留着它下次重连的 streamId 会跟旧的对不上号。
+                        self.control_stream = None;
+                        self.push_log(format!("控制面流 {stream} 出错: {message}"));
+                    } else {
+                        self.push_log(format!("工作区流 {stream} 出错: {message}"));
+                    }
                 }
                 MuxEvent::End { stream } | MuxEvent::Cancelled { stream } => {
                     if let Some(index) = self.follows.iter().position(|(_, id)| *id == stream) {
@@ -2654,7 +3436,11 @@ impl Shell {
                         continue;
                     }
                     // 健康的 follow 流不会发 end；主干遇 end 就永久冻结树，这里选择整条重开。
+                    // 重开前把两张流标记一起清掉：`Mux::next_id` 是每个实例自己的计数，
+                    // 新连接的 streamId 从 rs1 重新编起 ⇒ 留着旧 id 就会把下一批帧串到别的流上。
                     self.mux = None;
+                    self.follows.clear();
+                    self.control_stream = None;
                     self.push_log(format!("工作区流 {stream} 结束，重开"));
                     self.open_mux(context);
                     return;
@@ -2663,6 +3449,9 @@ impl Shell {
         }
         if changed {
             self.push_log(format!("工作区数: {}", self.tree.workspaces.len()));
+        }
+        if let Some(line) = control.line(&self.control) {
+            self.push_log(line);
         }
         self.poll_mux(context);
     }
@@ -2676,6 +3465,15 @@ impl Shell {
     /// RPC（`list_sessions`，分叉的连接与鉴权就发生在它里面）之前；④加载工作区与会话 = UI 侧的
     /// `Connected` 臂在 `open_mux`（workspace/follow + `$events`，= 主线 RefreshWorkspaces/
     /// SubscribeEvents）之前直接调 `report_stage(4)`。①②③ 走 mpsc 由 tick 抽干，④ 本来就在 UI 线程。
+    ///
+    /// **已备案偏差（第 1 段的真刻度）**：主线第 1 段慢在壳自己装插件（`EnsureAsync` 跑 pnpm，
+    /// 台账来自扫 node_modules），分叉不装包 ⇒ 唯一知道台账的是内核，而问内核要走 RPC ⇒ 内核
+    /// 握手因此落在**第 1 段窗口内**（`Kernel::start` 之后才报 ②）。不这么做就只有两个坏选项：
+    /// ① 把台账抽样放到第 2 段窗口 ⇒ 撞上模型那道 `step == 1` 闸门（主线 KC:234 的优先级），
+    /// 第 1 段仍是恒 1.0 插值、`正在安装插件 x/y` 永不上屏；② 放宽模型那道闸门 ⇒ 直接改掉
+    /// 主干的状态机。代价：分叉的「正在启动内核…」这一行只在第 1 段抽干后台账之后亮一下
+    /// （真机 `Launch::from_env` + 握手 + 抽台账 = 第 1 段，与主线同一批活）。
+    /// 锁这条偏差的用例 = `boot_plugin_ledger_producer_is_wired`（④ 那一段就是它）。
     fn start_kernel(&mut self, context: &ComponentContext<Shell>) {
         self.boot.show();
         self.boot_started = Some(Instant::now());
@@ -2687,19 +3485,24 @@ impl Shell {
             let _ = tx.send(BootEvent::Stage(1));
             let launch = match Launch::from_env() {
                 Err(error) => {
-                    // 主线 MW:2483-2486：内置内核拿不出来时失败定性就是这一句（detail 给异常原文）。
+                    // 主线 MW:2483-2486：内置内核拿不出来时走的是 `FailKernelBoot(reasonKey)`
+                    // **单参**重载 ⇒ 加载卡上只有那一句定性，没有「：异常原文」。原文只落 DIAG。
+                    emit_line(&format!("DIAG: 内核组件解析失败: {error}"));
                     return Msg::Failed(
                         "未找到内置内核；请安装 npm 版 dsh 或重新安装 Blade²".to_string(),
-                        error,
+                        String::new(),
                     );
                 }
                 Ok(launch) => launch,
             };
-            let _ = tx.send(BootEvent::Stage(2));
-            let kernel = match Kernel::start(&launch) {
+            let mut kernel = match Kernel::start(&launch) {
                 Err(error) => return Msg::Failed("内核启动失败".to_string(), error),
                 Ok(kernel) => kernel,
             };
+            // 第 1 段的真刻度：抽内核的插件装载台账（`ready < total` 期间条子按 5→30 插值爬，
+            // `正在安装插件 x/y` 那行同时上屏）。问不出来 ⇒ 立刻收手，与没有这一发之前一致。
+            report_plugin_ledger(&tx, &mut kernel);
+            let _ = tx.send(BootEvent::Stage(2));
             let _ = tx.send(BootEvent::Stage(3));
             let shared = Arc::new(Mutex::new(kernel));
             let listed = shared
@@ -2709,7 +3512,8 @@ impl Shell {
             match listed {
                 Ok(rows) => Msg::Connected(shared, rows),
                 Err(error) => {
-                    Msg::Failed("内核启动失败".to_string(), format!("{error}（内核已启动）"))
+                    // 主线 MW:2436：兜住的异常只取 `ex.Message`，分叉不自加「（内核已启动）」。
+                    Msg::Failed("内核启动失败".to_string(), error)
                 }
             }
         }));
@@ -2790,6 +3594,7 @@ impl Shell {
         self.kernel = None;
         self.mux = None;
         self.follows.clear();
+        self.control_stream = None;
         self.boot_events = None;
         // 主线不清会话台账（`_rpc=null` 只让依赖内核的动作早退）；新一轮 `Connected`
         // 会整表覆盖 `rows`，所以留旧数据比抹白一排更贴近主线。
@@ -2838,6 +3643,8 @@ impl Component for Shell {
             running: Vec::new(),
             bubbles: Vec::new(),
             follows: Vec::new(),
+            control_stream: None,
+            control: ControlState::default(),
             live: None,
             echo: None,
             thinking: false,
@@ -2854,6 +3661,12 @@ impl Component for Shell {
             feedback_status: Vec::new(),
             note_for: None,
             note_text: String::new(),
+            // 初值 `Other`：没人在 composer 里打过字、也没按下过它 ⇒ 宁可放行一个 Enter，
+            // 不可误发一条消息（Enter 退回旧分叉的行为：就是个换行/不做事）。
+            key_owner: KeyOwner::Other,
+            palette: PaletteState::idle(),
+            pending_send: None,
+            command_submitting: false,
             brand: brand_mark_path(),
         };
         // 诊断走 stdout + `BLADE2_RS_LOG` 那两份通道（界面上没有自测条）：这一行让「进程活着但内核
@@ -2862,6 +3675,24 @@ impl Component for Shell {
         // 主干在窗口构造末尾 `_ = StartKernelBoot()`（MainWindow.xaml.cs:2381）：内核自己起，
         // 界面上没有任何「连接」入口，启动期只有内容面正中那张加载卡（旧的整窗遮罩已删，见 `kernel_boot_panel`）。
         shell.start_kernel(context);
+        // 键盘钩子 = 分叉唯一的按键通路（`blade2_rs::keys`）：**组件建好之后**装，回投句柄用
+        // `context.sender()`（`Rc<RefCell<…>>`、非 `Send`，与钩子同线程）。
+        // 闭包里的铁律：先 clone 句柄、把借用丢掉，**再** send —— 钩子在消息泵里会重入，
+        // 跨着借用 send 就是 `BorrowMutError` panic = 穿 `extern "system"` 边界 = 进程没了。
+        let sender = context.sender();
+        let hooked = keys::install(move |action| {
+            let Some(message) = Msg::from_key_action(action) else {
+                return;
+            };
+            let sender = sender.clone();
+            let _ = sender.send(message);
+        });
+        keys::sync(shell.key_owner, shell.sub.is_some());
+        // 自测标记行：`DIAG: KBHOOK …`（stdout + `BLADE2_RS_LOG`，界面上不占一个像素）。
+        shell.push_log(format!(
+            "KBHOOK installed={hooked} owner={:?} sub_open=false",
+            keys::owner()
+        ));
         shell
     }
 
@@ -2891,6 +3722,9 @@ impl Component for Shell {
                 self.sub = None;
                 if page == Page::Settings {
                     self.section = DEFAULT_SETTINGS_SECTION.to_string();
+                    // 设置页没有 composer ⇒ 焦点归属直接判给 `Other`，Enter 不可能被误判成发送
+                    // （从聊天页切过来时那份「刚在输入框里打过字」的证据已经过期了）。
+                    self.key_owner = KeyOwner::Other;
                 }
                 self.page = page;
             }
@@ -2906,7 +3740,53 @@ impl Component for Shell {
             }
             Msg::Toggle(key, on) => self.set_on(&key, on),
             Msg::Note(text) => self.push_log(text),
-            Msg::Send => self.submit_input(context),
+            // 发送钮与 Enter 汇到同一条路上（`keys::classify` 给的是 `KeyAction::Send` ⇒
+            // `Msg::Send`，与那颗钮 `on_click` 挂的字面同一个变体）。
+            Msg::Send => self.submit_input(context, None),
+            Msg::SendAlternate => {
+                let mode = self.ctrl_enter_mode();
+                self.submit_input(context, mode);
+            }
+            Msg::CommandsLoaded {
+                generation,
+                session,
+                outcome,
+            } => {
+                // 主干先写缓存（`EnsureCommandsAsync` 体内，MW:17346-17357），再按代次决定
+                // 刷不刷浮层（17701）——顺序反了就等于让过期那一发盖掉新按键。
+                self.palette.record(&session, outcome, Instant::now());
+                self.apply_palette(generation);
+                // 挂着等目录的那一发提交（主干那是条 `await`，分叉把落点挪到这条回填上）。
+                if let Some(mode) = self.pending_send.take() {
+                    self.submit_input(context, mode);
+                }
+            }
+            Msg::CommandExecuted {
+                line,
+                session,
+                outcome,
+                draft,
+            } => {
+                self.command_submitting = false;
+                let success = matches!(&outcome, Ok(reply) if reply.is_success());
+                self.report_command(&line, outcome);
+                // 主干 17915-17922（`fromComposer` 那一支）：成功 + 还在原来那个会话 + 草稿
+                // 一字未改 ⇒ 才清输入框。分叉没移植附件，所以主干紧跟的「摘掉已提交附件」无对应物。
+                if let Some(draft) = draft.filter(|_| success) {
+                    if self.active.as_deref() == Some(session.as_str()) && self.input == draft {
+                        self.input.clear();
+                    }
+                }
+            }
+            Msg::PaletteMove(delta) => self.move_palette(delta),
+            Msg::PaletteAccept => self.accept_palette(context),
+            Msg::PaletteClose => self.palette.hide(),
+            Msg::PalettePick(index) => {
+                // 主干 `OnCommandItemClick`（MW:17821-17836）：先把 `_commandIndex` 对齐到
+                // 点的那一行（`IndexOf` 找不到给 -1），再走同一条采纳通路。
+                self.palette.index = i32::try_from(index).unwrap_or(-1);
+                self.accept_palette(context);
+            }
             Msg::Cancel => self.cancel_run(context),
             Msg::Prompted(result) => match result {
                 Ok((session, stream)) => self.on_prompted(&session, &stream, context),
@@ -2971,10 +3851,15 @@ impl Component for Shell {
                 self.copied = None;
                 self.reasoning_open.clear();
                 self.pill_hover = None;
+                self.forget_commands();
                 self.ensure_follow(&id, context);
                 self.load_feedback(&id, context);
             }
-            Msg::Search(text) => self.search = text,
+            Msg::Search(text) => {
+                self.search = text;
+                // 会话搜索框在吃键盘 ⇒ Enter 只能放行（主干那颗框里 Enter 也不做事）。
+                self.key_owner = KeyOwner::Other;
+            }
             Msg::Hover(key) => {
                 // 主干的「已复制」靠 1 秒 DispatcherQueue 定时器回落；reactor 借不到定时器，
                 // 改成指针离开该行时回落（行本身就是那颗钮的容器，离开即代表这一眼已经看完）。
@@ -3033,8 +3918,15 @@ impl Component for Shell {
                     .and_then(|(_, item)| item.note.clone())
                     .unwrap_or_default();
                 self.note_for = Some(message);
+                // 焦点证据（反向）：点开说明编辑器 = 下一发键大概率落进那颗多行框
+                // （`note_editor` 的根是 `Grid`，框架里只有 `Border` 挂 `PointerPressed`，
+                // 所以这条按「谁刚被打开」判，而不是新加一层容器）。
+                self.key_owner = KeyOwner::Other;
             }
-            Msg::NoteText(text) => self.note_text = text,
+            Msg::NoteText(text) => {
+                self.note_text = text;
+                self.key_owner = KeyOwner::Other;
+            }
             Msg::CloseNote(save) => {
                 if let Some(message) = self.note_for.take() {
                     let rating = self
@@ -3081,14 +3973,21 @@ impl Component for Shell {
             }
             Msg::OpenSub(id) => self.sub = Some(id),
             Msg::CloseSub => self.sub = None,
-            Msg::Field(key, value) => set_pair(&mut self.fields, key, value),
+            Msg::Field(key, value) => {
+                set_pair(&mut self.fields, key, value);
+                self.key_owner = KeyOwner::Other;
+            }
+            Msg::KeyFocus(owner) => self.key_owner = owner,
             Msg::Number(key, value) => set_pair(&mut self.numbers, key, value),
             Msg::FontStep(step) => {
                 self.font_size =
                     (self.font_size + step).clamp(size::FONT_SIZE_MIN, size::FONT_SIZE_MAX);
             }
-            Msg::MuxReady(Ok(shared)) => {
+            Msg::MuxReady(Ok((shared, control))) => {
                 self.mux = Some(shared);
+                // 流标记与 `mux` 实例同一条消息里落地：`poll_mux` 是这条消息末尾才上臂的，
+                // 所以第一批控制帧必然认得出自己的流（先 polling 后记 id 就会串到兜底那一支）。
+                self.control_stream = Some(control);
                 self.poll_mux(context);
                 // 主线 MW:2626-2630：第 4 段（RefreshWorkspaces / SubscribeEvents）跑完才算引导成功
                 // ⇒ 条子推满、驻留 350ms、撤卡。卡已经不亮着（日后重开流）时 `boot_succeed` 自己早退。
@@ -3104,11 +4003,22 @@ impl Component for Shell {
                 }
             }
             Msg::MuxFailed(error) => {
+                // 丢实例 = 丢流（见 `restart_kernel_boot` 那条对应关系）：两张流标记跟着作废，
+                // 否则下一根连接的 streamId 会顶着旧映射把帧分给别的流。
                 self.mux = None;
+                self.follows.clear();
+                self.control_stream = None;
                 self.push_log(format!("工作区流中断: {error}"));
             }
             Msg::MuxEvents(events) => self.apply_mux_events(events, context),
-            Msg::Input(text) => self.input = text,
+            // 焦点归属（钩子的 Composer/Other 二档）：XAML 真把字送进了哪颗框，就是那颗在吃键。
+            Msg::Input(text) => {
+                self.input = text;
+                self.key_owner = KeyOwner::Composer;
+                // 主干那颗 InputBox 的 `TextChanged` 只挂了一件事：`UpdateCommandPalette`
+                // （+ @ 引用浮层，分叉未移植）——所以浮层完全由文本驱动，没有独立开关。
+                self.refresh_palette(context);
+            }
             Msg::Connected(shared, rows) => {
                 // 先把引导线程那三段上报落地，再在 `open_mux` 之前报第 4 段
                 // （主线 MW:2612 的 `ReportKernelBootStage("正在加载工作区与会话…")` 同一位置）。
@@ -3160,12 +4070,16 @@ impl Component for Shell {
                         self.reset_feedback();
                         // 主干 `CreateSessionAsync`：清单里还没有这条就先本地合成一行。
                         self.ensure_local_session_row(&id);
+                        self.forget_commands();
                         self.load_feedback(&id, context);
                         self.push_log(format!("已创建会话 {id}"));
                     }
                 }
             }
         }
+        // 钩子读的是 thread-local 副本：每条消息落完推一次（`sub` 会在这条消息里变，
+        // `key_owner` 也是）。放收尾而不是各条 arm 里，是为了「二级页开着」这类事实永远不会漏。
+        self.publish_keys();
     }
 
     fn view(&self, _input: &(), context: &mut ViewContext<Self>) -> View {
@@ -3189,7 +4103,15 @@ impl Component for Shell {
                 .backdrop(WindowBackdrop::Mica),
         );
 
-        let palette = Palette::for_scheme(self.scheme);
+        let mut palette = Palette::for_scheme(self.scheme);
+        // 主干 `ApplyBubbleMaterial`（MW:18109）在构造里就先落一次、之后每改一次设置落一次：
+        // 气泡底由「材质档 + 不透明度 + 窗口材质」现算并覆掉 Tokens.xaml 那支基线，
+        // 用户/助手/交付物三处气泡读的都是 `p.bubble` ⇒ 改这两个控件就是全量即时生效。
+        palette.bubble = palette.bubble_with(
+            self.bubble_material(),
+            self.window_material(),
+            self.bubble_opacity(),
+        );
         // 槽位按状态增删：缺席的 keyed cell 会被真正 Destroy（retire 路径发 RemoveChild + native Destroy）。
         // 这里**没有**启动遮罩：主线 `KernelBootPanel` 不是整窗覆盖层，它挂在 ChatPage 的内容面里
         // （`MainWindow.xaml:691-709` Row 1），见 `chat_page` / `kernel_boot_panel`。
@@ -3268,7 +4190,7 @@ impl Shell {
                 .margin(th([14.0, 0.0, 0.0, 0.0]))
                 .vertical_alignment(VerticalAlignment::Center)
                 .children((
-                    brand_mark(self.brand(), size::TOP_BAR_MARK),
+                    brand_mark(self.brand(), size::TOP_BAR_MARK, ""),
                     TextBlock::new()
                         .text("Blade²")
                         .font_size(type_ramp::BODY.size)
@@ -3289,6 +4211,8 @@ impl Shell {
                 .border_brush(p.stroke)
                 .border_thickness(size::STROKE)
                 .corner_radius(radius::PILL)
+                // 焦点证据（反向）：按进搜索框那一颗 pill ⇒ Enter 只能放行。
+                .on_pointer_pressed(context.callback(|_| Msg::KeyFocus(KeyOwner::Other)))
                 .content(
                     Grid::new()
                         .columns([GridLength::Auto, GridLength::STAR])
@@ -3891,7 +4815,7 @@ impl Shell {
             .horizontal_alignment(HorizontalAlignment::Center)
             .vertical_alignment(VerticalAlignment::Center)
             .children((
-                brand_mark(self.brand(), size::EMPTY_STATE_MARK),
+                brand_mark(self.brand(), size::EMPTY_STATE_MARK, ""),
                 TextBlock::new()
                     .text(self.catalog.l("开始一段新的会话"))
                     .font_size(type_ramp::TITLE.size)
@@ -3926,9 +4850,144 @@ impl Shell {
         if self.boot.showing {
             cells.push(KeyedView::new("boot", self.kernel_boot_panel(context, p)));
         }
+        // 主干 `CommandPalette`（MX:745-809）与 `ChatList`/`KernelBootPanel` 同格（ChatPage Row 1）、
+        // 贴底（`VerticalAlignment=Bottom`）叠放，声明在最后 ⇒ 层级最高。分叉这一格同样是
+        // 「后入者在上」，所以它排在 `stream`/`boot` 之后（见上面那条 keyed 槽位注释）。
+        if self.palette.showing {
+            cells.push(KeyedView::new("palette", self.command_palette(context, p)));
+        }
         Grid::new()
             .rows([GridLength::STAR, GridLength::Auto])
             .keyed_children(cells)
+    }
+
+    /// 主干 `CommandPalette`（MX:745-809）：一张贴在内容面底部的浮层卡片。
+    /// 主干那段 XAML 的注释就是这里的实现口径——「用普通元素做浮层而不是 Flyout/Popup：浮层不能
+    /// 抢焦点，键盘全部由 InputBox 处理，鼠标点选后把焦点还给 InputBox」⇒ 分叉这里连一颗
+    /// 可获得焦点的控件都不放（行是自绘 `Border`），按键走 `keys` 那条钩子通路。
+    /// 几何逐属性照抄：`MaxWidth=640` / `MaxHeight=264` / `Margin=OverlayMargin(12,0,12,8)` /
+    /// `CardBrush` 底 + `StrokeBrush` 1px 描边 / `CornerMedium=8`；内部两行 `[Auto, *]` =
+    /// 标题（`HintTextStyle` + `OverlayHeaderMargin`）与列表（`MaxHeight=216` + `OverlayListPadding`）。
+    ///
+    /// 显隐：reactor 没有 `Visibility` ⇒ 整棵由 `chat_page` 那个 keyed 槽位增删；
+    /// 「目录取不到」那一态（MW:17708-17714）列表区收起、只留标题那行原因，同样用槽位表达。
+    fn command_palette(&self, context: &mut ViewContext<Shell>, p: Palette) -> View {
+        let header_text = self.palette.header(&self.catalog);
+        let header = TextBlock::new()
+            .text(header_text.clone())
+            .font_size(type_ramp::CAPTION.size)
+            .foreground(p.text_tertiary.clone())
+            .margin(th(pad::OVERLAY_HEADER))
+            .grid_row(0)
+            .automation_id("CommandPaletteHeader")
+            .automation_name(header_text);
+        let mut rows: Vec<KeyedView> = Vec::new();
+        if self.palette.list_visible {
+            for (index, command) in self.palette.matches.iter().enumerate() {
+                let row: View = self.palette_row(index, command, p, context);
+                rows.push(KeyedView::new(format!("command-{index}"), row));
+            }
+        }
+        let list = ScrollViewer::new()
+            .grid_row(1)
+            .max_height(PALETTE_LIST_MAX_HEIGHT)
+            .automation_id("CommandPaletteList")
+            .content(
+                // 主干 Padding 挂在 ListView 上；ScrollViewer 没有 padding ⇒ 内衬挪到里面这层
+                // Border，量出来的行位置一致（4,0,4,6）。
+                Border::new()
+                    .padding(th(pad::OVERLAY_LIST))
+                    .content(StackPanel::new().keyed_children(rows)),
+            );
+        Border::new()
+            .grid_row(0)
+            .horizontal_alignment(HorizontalAlignment::Stretch)
+            .vertical_alignment(VerticalAlignment::Bottom)
+            .max_width(PALETTE_MAX_WIDTH)
+            .max_height(PALETTE_MAX_HEIGHT)
+            .margin(th(pad::OVERLAY))
+            .background(p.card.clone())
+            .border_brush(p.stroke.clone())
+            .border_thickness(size::STROKE)
+            .corner_radius(radius::MEDIUM)
+            .automation_id("CommandPalette")
+            .content(Grid::new().rows([GridLength::Auto, GridLength::STAR]).children((header, list)))
+            .into()
+    }
+
+    /// 主干 `CommandList` 的一行（`ItemContainerStyle` + `DataTemplate`，MX:779-806）：
+    /// 行容器 `Padding=8,5,8,5` / `MinHeight=0` / 内容横向 Stretch；三列 `[Auto, *, Auto]`、
+    /// 列距 `Space10=10` = `/名字`（`CodeTextStyle` 12，不换行）+ 描述（`CaptionTextStyle` 12 +
+    /// `TextSecondaryBrush` + `CharacterEllipsis`）+ `input.hint`（`HintTextStyle` 12 + Tertiary）。
+    /// 选中档 = 主干 ListViewItem 的 Selected 底色，这里用分叉既有的行级提亮画刷（与左栏行同源），
+    /// 悬停档同理。行的 UIA Name 照主干 `CommandVm.ToString()`：有描述就 `/名字  描述`（两个空格）。
+    ///
+    /// 为什么是 `Border` 而不是 `Button`/`ListViewItem`：reactor 没有 `ItemContainerStyle` 那一层，
+    /// 默认容器模板的 Padding(11,5,11,6) 与最小高会把主干钉死的 26 DIP 行撑回 40；
+    /// `CodeTextStyle` 的 `FontFamily=Consolas…` 也抄不过来（`TextBlock` 公开面没有字体族属性，
+    /// 见 `settings_code_text` 同一处偏差）。
+    fn palette_row(
+        &self,
+        index: usize,
+        command: &CommandEntry,
+        p: Palette,
+        context: &mut ViewContext<Shell>,
+    ) -> View {
+        let key = format!("palette-row-{index}");
+        let selected = self.palette.index >= 0 && self.palette.index as usize == index;
+        let hovered = self.hover.as_deref() == Some(key.as_str());
+        let name = command.slash_name();
+        let automation_name = if command.description.is_empty() {
+            name.clone()
+        } else {
+            format!("{name}  {}", command.description)
+        };
+        let description = command.description.clone();
+        let hint = command.hint.clone();
+        let entered = key;
+        Border::new()
+            .padding(th(PALETTE_ROW_PADDING))
+            .background(if selected || hovered {
+                p.subtle_hover.clone()
+            } else {
+                p.transparent.clone()
+            })
+            .on_pointer_entered(context.callback(move |_| {
+                Msg::Hover(Some(entered.clone()))
+            }))
+            .on_pointer_exited(context.callback(|_| Msg::Hover(None)))
+            .on_pointer_released(context.callback(move |_| Msg::PalettePick(index)))
+            .automation_name(automation_name)
+            .content(
+                Grid::new()
+                    .columns([GridLength::Auto, GridLength::STAR, GridLength::Auto])
+                    .column_spacing(space::S10)
+                    .children((
+                        TextBlock::new()
+                            .grid_column(0)
+                            .text(name)
+                            .font_size(type_ramp::CODE.size)
+                            .foreground(p.text_primary.clone())
+                            .text_wrapping(TextWrapping::NoWrap)
+                            .vertical_alignment(VerticalAlignment::Center),
+                        TextBlock::new()
+                            .grid_column(1)
+                            .text(description)
+                            .font_size(type_ramp::CAPTION.size)
+                            .foreground(p.text_secondary.clone())
+                            .text_trimming(TextTrimming::CharacterEllipsis)
+                            .text_wrapping(TextWrapping::NoWrap)
+                            .vertical_alignment(VerticalAlignment::Center),
+                        TextBlock::new()
+                            .grid_column(2)
+                            .text(hint)
+                            .font_size(type_ramp::CAPTION.size)
+                            .foreground(p.text_tertiary.clone())
+                            .text_wrapping(TextWrapping::NoWrap)
+                            .vertical_alignment(VerticalAlignment::Center),
+                    )),
+            )
+            .into()
     }
 
     /// 主干 `ChatList`：渲染 `_messages`，末尾接在途的 live 气泡与「少女祈祷中」占位行。
@@ -5013,7 +6072,13 @@ impl Shell {
                         StackPanel::new()
                             .orientation(Orientation::Vertical)
                             .children((
-                                Border::new().padding(th(pad::COMPOSER_INPUT)).content(
+                                Border::new()
+                                    .padding(th(pad::COMPOSER_INPUT))
+                                    // 焦点证据（正向）：框架里只有 `Border` 挂了 `PointerPressed`，
+                                    // 而指针按进 composer 那一格 = 主干那颗 InputBox 拿到焦点。
+                                    // 只加事件回调，不加任何容器/尺寸 ⇒ 布局与观感零变化。
+                                    .on_pointer_pressed(context.callback(|_| Msg::KeyFocus(KeyOwner::Composer)))
+                                    .content(
                                     TextBox::new()
                                         .text(self.input.clone())
                                         .placeholder_text(
@@ -5134,21 +6199,39 @@ impl Shell {
     ///
     /// 显隐：reactor 0.100.0 没有 `Visibility` ⇒ Hint / Retry 各占一枚 keyed 槽，缺席即 Destroy；
     /// 整颗卡由 `chat_page` 的那个 `if self.boot.showing` 决定进不进树。
-    /// 已知偏差（规格 §6.3 ⑧）：`TextAlignment=Center` 抄不过来（公开面无该属性），
-    /// 只能靠 `.horizontal_alignment(Center)` 把整块居中，多行时行内退化成左对齐。
+    /// 已知偏差（规格 §6.3 ⑧）：`TextAlignment=Center` 抄不过来。**已按「Style/Setter 试一发」的
+    /// 口径做过实测**（临时塞进本函数体编译后回滚）：9 条编译错误、进程根本没起来 ⇒ 谈不上
+    /// 0xC000027B 那条风险。原样摘录：`no method named 'text_alignment' found for struct
+    /// 'windows_reactor::TextBlock'`、`cannot find type 'Style'/'Setter'/'TextAlignment' in
+    /// this scope`、`no method named 'style' found for struct 'windows_reactor::TextBlock'`、
+    /// `no method named 'resource_overrides' found for struct 'windows_reactor::TextBlock'`。
+    /// 公开面（`LayoutControl`：width/height/min-max/opacity/h-v_alignment/margin/exit_transition）
+    /// 与 `TextBlock` 的 8 个属性里都没有文本对齐；框架内部那条 `<Style><Setter/></Style>` 的
+    /// XAML 生成路（`native/winui/mod.rs:1027`）只喂 `ThemeStyle` 的四枚**画刷**槽，不外露。
+    /// ⇒ 只能靠 `.horizontal_alignment(Center)` 把整块居中，多行时行内退化成左对齐。
+    ///
+    /// 六颗 `automation_id` 逐字取自 `MainWindow.xaml:703-708` 的 `x:Name`（WinUI 由 x:Name 生成
+    /// AutomationId）：`KernelBootMark` / `KernelBootStage` / `KernelBootBar` / `KernelBootStep` /
+    /// `KernelBootHint` / `KernelBootRetry` ⇒ UIA 侧按 id 反查两棵树得到同一套坐标。
     fn kernel_boot_panel(&self, context: &mut ViewContext<Shell>, p: Palette) -> View {
         let frame = self.boot.render();
         // 每颗子元素先落成 `View` 局部量：`KeyedView::new` 收 `impl Into<View>`，
         // 直接在实参里写 `.into()` 会让目标类型推不出来（E0283）。
-        let mark: View = brand_mark(self.brand(), size::EMPTY_STATE_MARK);
+        let mark: View = brand_mark(self.brand(), size::EMPTY_STATE_MARK, "KernelBootMark");
+        // 三行文案各算一次：`.text()` 与 `.automation_name()` 必须同源 —— 主干那三颗 TextBlock
+        // 没写 `AutomationProperties.Name`，UIA 的 Name 就是它自己的 Text（英文界面下 Name 也跟着
+        // 变成英文）。分叉原先给 Step/Hint 硬写了「内核加载进度」那枚 Name，是把**面板**的 Name
+        // （MX:708）抄到了子元素上，属于「文案多做」，这里一并收掉。
+        let stage_text = self.catalog.l(frame.stage_key);
         let stage: View = TextBlock::new()
-            .text(self.catalog.l(frame.stage_key))
+            .text(stage_text.clone())
             .font_size(type_ramp::TITLE.size)
             .font_weight(FontWeight::SEMI_BOLD)
             .foreground(p.text_primary.clone())
             .text_wrapping(TextWrapping::Wrap)
             .horizontal_alignment(HorizontalAlignment::Center)
-            .automation_name(frame.stage_key)
+            .automation_id("KernelBootStage")
+            .automation_name(stage_text)
             .into();
         let bar: View = ProgressBar::new()
             .minimum(0.0)
@@ -5160,21 +6243,23 @@ impl Shell {
             .automation_id("KernelBootBar")
             .into();
         // 主线 `BootStepLine()`（KC:159-161）：第几步 / 共几步 / 当前百分比。
+        let step_text = self.catalog.lf(
+            "第 {0} 步，共 {1} 步 · {2}%",
+            &[
+                frame.step.to_string(),
+                kernel_boot::STEP_TOTAL.to_string(),
+                frame.percent.to_string(),
+            ],
+        );
         let step: View = TextBlock::new()
-            .text(self.catalog.lf(
-                "第 {0} 步，共 {1} 步 · {2}%",
-                &[
-                    frame.step.to_string(),
-                    kernel_boot::STEP_TOTAL.to_string(),
-                    frame.percent.to_string(),
-                ],
-            ))
+            .text(step_text.clone())
             .font_size(type_ramp::BODY_STRONG.size)
             .font_weight(FontWeight::SEMI_BOLD)
             .foreground(p.text_primary.clone())
             .text_wrapping(TextWrapping::Wrap)
             .horizontal_alignment(HorizontalAlignment::Center)
-            .automation_name("内核加载进度")
+            .automation_id("KernelBootStep")
+            .automation_name(step_text)
             .into();
         let mut slots: Vec<KeyedView> = vec![
             KeyedView::new("mark", mark),
@@ -5205,12 +6290,13 @@ impl Shell {
         };
         if let Some(text) = hint {
             let hint: View = TextBlock::new()
-                .text(text)
+                .text(text.clone())
                 .font_size(type_ramp::CAPTION.size)
                 .foreground(p.text_tertiary.clone())
                 .text_wrapping(TextWrapping::Wrap)
                 .horizontal_alignment(HorizontalAlignment::Center)
-                .automation_name("内核加载提示")
+                .automation_id("KernelBootHint")
+                .automation_name(text)
                 .into();
             slots.push(KeyedView::new("hint", hint));
         }
@@ -5678,6 +6764,7 @@ impl Shell {
     }
 
     /// 滑杆 + 读数（主干 `Slider` + `TextBlock "{0} px"` / `"{0}%"`，横向 Spacing 12）。
+    /// 单位串自己带不带空格照主干那两条原文：`{0}%` 传 `"%"`、`{0} px` 传 `" px"`。
     fn settings_slider(
         &self,
         id: &str,
@@ -5695,7 +6782,7 @@ impl Shell {
         let key = id.to_string();
         let value = self.number(&key, fallback);
         let readout: View = TextBlock::new()
-            .text(format!("{} {}", value as i32, unit))
+            .text(format!("{}{}", value as i32, unit))
             .font_size(type_ramp::BODY.size)
             .foreground(p.text_primary)
             .min_width(size::STEPPER_VALUE_MIN_WIDTH)
@@ -5873,7 +6960,11 @@ impl Shell {
                 "直接编辑记忆文件（JSONL，每行一个实体或关系），停止输入后自动保存；模型写入时自动重新载入。",
                 vec![KeyedView::new(
                     "line-editor",
-                    Border::new().padding(th(pad::SETTINGS_ROW)).content(
+                    Border::new()
+                        .padding(th(pad::SETTINGS_ROW))
+                        // 焦点证据（反向）：这颗是记忆文件的编辑框，Enter 不该发送。
+                        .on_pointer_pressed(context.callback(|_| Msg::KeyFocus(KeyOwner::Other)))
+                        .content(
                         TextBox::new()
                             .accepts_return(true)
                             .text_wrapping(TextWrapping::NoWrap)
@@ -5997,7 +7088,11 @@ impl Shell {
                 vec![
                     KeyedView::new(
                         "line-editor",
-                        Border::new().padding(th([0.0, 4.0, 0.0, 0.0])).content(
+                        Border::new()
+                            .padding(th([0.0, 4.0, 0.0, 0.0]))
+                            // 焦点证据（反向）：自定义指令编辑框，Enter 不该发送。
+                            .on_pointer_pressed(context.callback(|_| Msg::KeyFocus(KeyOwner::Other)))
+                            .content(
                             TextBox::new()
                                 .accepts_return(true)
                                 .text_wrapping(TextWrapping::Wrap)
@@ -6032,6 +7127,46 @@ impl Shell {
                     ),
                     p,
                 )],
+                p,
+            ),
+            self.settings_card(
+                "bubble",
+                "消息气泡",
+                "气泡背景：半透明直接透出背后画面，亚克力是系统材质；两项都即时生效。",
+                vec![
+                    self.settings_row(
+                        "bubble-material",
+                        "气泡材质",
+                        "半透明最透，亚克力是系统材质，跟随跟窗口材质走",
+                        self.settings_combo(
+                            BUBBLE_MATERIAL_KEY,
+                            BUBBLE_MATERIALS,
+                            0,
+                            "气泡材质",
+                            context,
+                        ),
+                        p,
+                    ),
+                    self.settings_row(
+                        "bubble-opacity",
+                        "气泡不透明度",
+                        "数值越大气泡自身越实，背后画面透出越少",
+                        self.settings_slider(
+                            BUBBLE_OPACITY_KEY,
+                            BUBBLE_OPACITY_MIN,
+                            BUBBLE_OPACITY_MAX,
+                            BUBBLE_OPACITY_STEP,
+                            BUBBLE_OPACITY_DEFAULT,
+                            BUBBLE_SLIDER_WIDTH,
+                            "%",
+                            "Setting_shell_bubbleOpacity",
+                            "气泡不透明度",
+                            context,
+                            p,
+                        ),
+                        p,
+                    ),
+                ],
                 p,
             ),
             self.settings_card(
@@ -6157,7 +7292,8 @@ impl Shell {
                             size::PET_CELL_STEP,
                             size::PET_CELL_DEFAULT,
                             size::PET_SLIDER_WIDTH,
-                            "px",
+                            // 主干原文是 `LF("{0} px")`：空格在单位串里（`settings_slider` 不再自己补）
+                            " px",
                             "PetSizeSlider",
                             "宠物大小",
                             context,
@@ -6902,6 +8038,10 @@ fn brand_mark_path() -> Option<PathBuf> {
 
 fn main() {
     App::run_component::<Shell>(()).unwrap();
+    // 窗口关了也要把钩子从链上摘掉（漏了它 = 这一枪永远挂在钩子链上）。`Unhooked` 三档见 `keys`：
+    // 真卸 / 没装过 / 换了线程（线程钩子留给线程退出时由 OS 摘）。走 stdout，界面不沾。
+    let unhooked = keys::uninstall();
+    println!("KBHOOK unhooked={unhooked:?}");
 }
 
 #[cfg(test)]
@@ -7381,6 +8521,158 @@ mod pill_tests {
         assert!(!boot.hint_shown, "只有新一轮引导（首轮/重试）才复位");
     }
 
+    /// 从源码里切出一段（两个锚点之间）。源码级断言专用：视图与引导线程都没法在单测里开窗口，
+    /// 「这一发真的接上了 / 这个字面量真的不在了」这类事实只能这样锁。
+    fn fn_slice<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
+        let (_, rest) = source
+            .split_once(start)
+            .unwrap_or_else(|| panic!("源码里找不到锚点 {start}"));
+        let body = rest.split_once(end).map_or(rest, |(body, _)| body);
+        assert!(!body.trim().is_empty(), "{start} 到 {end} 之间是空的？");
+        body
+    }
+
+    /// `BootEvent::Plugins` 的**生产者**接上了（缺口 #1）：
+    /// ① 内核那发 `{ready,total}` 的解析口径（`total == 0` = 主线 KC:100 的「本轮无包要装」）；
+    /// ② 抽样周期 = 主线 `WatchInstall` 的 250ms；
+    /// ③ 模型侧第 1 段真的按 ready/total 插值（不是恒 1.0 爬满），且 `正在安装插件 x/y` 那行出得来；
+    /// ④ 引导线程里这一发的位置：`Kernel::start` 之后、报 ② 之前 —— 已备案偏差，见 `start_kernel` doc。
+    #[test]
+    fn boot_plugin_ledger_producer_is_wired() {
+        // ① 解析：缺键 / 类型不对 / `total <= 0` 都算「无刻度」，宁可不显示也不糊弄。
+        assert_eq!(plugin_ledger(&json!({"ready": 2, "total": 6})), Some((2, 6)));
+        assert_eq!(plugin_ledger(&json!({"ready": 6, "total": 6})), Some((6, 6)));
+        assert_eq!(plugin_ledger(&json!({"ready": 0, "total": 0})), None);
+        assert_eq!(plugin_ledger(&json!({"ready": 3, "total": -1})), None);
+        assert_eq!(plugin_ledger(&json!({"ready": 1})), None);
+        assert_eq!(plugin_ledger(&Value::Null), None);
+        assert_eq!(plugin_ledger(&json!({"ready": "2", "total": 6})), None, "字符串不算数");
+        // ② 周期与预算：250ms 与主线同数；预算够长，但绝不无限等（加载卡不能被钉死在第 1 段）。
+        assert_eq!(kernel_boot::PLUGIN_POLL_MS, 250, "DshPluginBootstrap.cs:181 的那个 timer");
+        assert!(kernel_boot::PLUGIN_BUDGET_MS >= 10_000);
+        // ③ 第 1 段按真刻度爬：0/6 → 5（下沿钉住）、3/6 → 17.5、6/6 → 30（上沿）。
+        let mut boot = BootState::idle();
+        boot.show();
+        boot.seconds = 1;
+        boot.report_plugins(0, 6);
+        assert_eq!(boot.target, 5.0);
+        assert_eq!(boot.paint().hint, Some(BootHint::Plugins(0, 6)));
+        boot.report_plugins(3, 6);
+        assert_eq!(boot.target, 17.5);
+        assert_eq!(boot.paint().hint, Some(BootHint::Plugins(3, 6)));
+        boot.report_plugins(6, 6);
+        assert_eq!(boot.target, 30.0);
+        assert_eq!(
+            boot.paint().hint,
+            Some(BootHint::Seconds(1)),
+            "ready == total ⇒ 刻度行收起，回到秒数（KC:234 的 ready < total 前置）"
+        );
+        // ④ 线程侧那一发的顺序（含已备案偏差：握手落在第 1 段窗口内）。
+        let source = include_str!("main.rs");
+        let chain = fn_slice(source, "fn start_kernel(", "fn arm_boot_tick");
+        let at = |needle: &str| {
+            chain
+                .find(needle)
+                .unwrap_or_else(|| panic!("引导链里找不到 {needle}"))
+        };
+        assert!(at("BootEvent::Stage(1)") < at("Launch::from_env()"));
+        assert!(at("Launch::from_env()") < at("Kernel::start(&launch)"));
+        assert!(
+            at("Kernel::start(&launch)") < at("report_plugin_ledger(&tx, &mut kernel)"),
+            "台账要在能问话之后问"
+        );
+        assert!(at("report_plugin_ledger(&tx, &mut kernel)") < at("BootEvent::Stage(2)"));
+        assert!(at("BootEvent::Stage(2)") < at("BootEvent::Stage(3)"));
+        assert!(at("BootEvent::Stage(3)") < at("list_sessions()"));
+        // 生产者本体：真投递 + 问不出来就收手 + 预算上限。
+        let producer = fn_slice(source, "fn report_plugin_ledger", "struct Bubble");
+        assert!(producer.contains("BootEvent::Plugins(ready, total)"), "这一发得有生产者");
+        assert!(producer.contains("kernel_boot::PLUGIN_RPC"));
+        assert!(producer.contains("kernel_boot::PLUGIN_POLL_MS"));
+        assert!(producer.contains("kernel_boot::PLUGIN_BUDGET_MS"));
+        assert!(producer.contains("else {\n            return;"), "真内核 404 ⇒ 一次就收手");
+        // 死码标记必须摘掉：留着它就等于宣称「这一发没人投」。
+        let events = fn_slice(source, "enum BootEvent", "enum BootHint");
+        assert!(!events.contains("allow(dead_code)"), "Plugins 分支已接上真上报");
+    }
+
+    /// 六颗 `automation_id` 逐字对齐 `MainWindow.xaml:703-708` 的 `x:Name`（缺口 #2）：
+    /// 主干由 x:Name 生成 AutomationId，分叉只能显式写 —— 少一颗，UIA 侧就少一个可按 id 反查的点。
+    #[test]
+    fn boot_card_automation_ids_match_mainline_x_names() {
+        let source = include_str!("main.rs");
+        let card = fn_slice(source, "fn kernel_boot_panel", "fn settings_page");
+        // Mark 那枚 id 走 `brand_mark` 的参数（Image 由它统一构造）。
+        assert!(
+            card.contains("brand_mark(self.brand(), size::EMPTY_STATE_MARK, \"KernelBootMark\")"),
+            "KernelBootMark 得在卡片构造点上传进去"
+        );
+        for name in [
+            "KernelBootPanel",
+            "KernelBootStage",
+            "KernelBootBar",
+            "KernelBootStep",
+            "KernelBootHint",
+            "KernelBootRetry",
+        ] {
+            let needle = format!(".automation_id(\"{name}\")");
+            assert!(card.contains(&needle), "UIA 反查缺这颗 id：{name}");
+        }
+        // 根 + 五颗子元素 = 卡片函数体里正好六处 `.automation_id(`（第七颗 Mark 在调用参数上）。
+        assert_eq!(
+            card.matches(".automation_id(").count(),
+            6,
+            "加载卡的 id 数量变了要连着核对 MX:703-708"
+        );
+    }
+
+    /// 「文案多做」两处收掉（缺口 #3），逐字对齐主干：
+    /// ① 内置内核拿不出来 = 主线 MW:2483-2486 的**单参** `FailKernelBoot(reasonKey)` ⇒ detail 为空，
+    ///    Hint 只出「未找到内置内核；请安装 npm 版 dsh 或重新安装 Blade²」，不许多出「：原文」；
+    ///    原文不丢，改落 `DIAG:` 行（主线那条走 `Debug.WriteLine`，分叉的对应通道）。
+    /// ② 第一发 RPC 失败 = 主线 MW:2436 的 `FailKernelBoot("内核启动失败", ex.Message)`，
+    ///    分叉自加的「（内核已启动）」后缀主干没有 ⇒ 删。
+    #[test]
+    fn boot_failure_texts_have_no_fork_extra_words() {
+        let source = include_str!("main.rs");
+        let code: String = source
+            .lines()
+            .map(|line| match line.find("//") {
+                Some(cut) => &line[..cut],
+                None => line,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        // 拼串：断言用的字面量不许原样出现在源码里（否则这条测试只是在 grep 自己）。
+        let suffix = ["（内核已启", "动）"].concat();
+        assert!(!code.contains(&suffix), "主干没有这个后缀，Hint 少一个字都不算 1:1");
+        let chain = fn_slice(source, "fn start_kernel(", "fn arm_boot_tick");
+        let at = chain
+            .find("未找到内置内核；请安装 npm 版 dsh 或重新安装 Blade²")
+            .expect("第 1 段那条失败定性要在");
+        let arm = &chain[at..at + 200];
+        assert!(
+            arm.contains("String::new()"),
+            "这一条主干只给 reasonKey，detail 必须为空：{arm}"
+        );
+        assert!(
+            chain.contains("emit_line(&format!(\"DIAG: 内核组件解析失败: {error}\"))"),
+            "detail 收掉了，原文得有 DIAG 行可查"
+        );
+        // RPC 失败那条：detail 逐字 = 异常原文，没有前后缀。
+        assert!(
+            chain.contains("Msg::Failed(\"内核启动失败\".to_string(), error)"),
+            "detail 只能原样交给 ex.Message"
+        );
+        // 模型侧：detail 为空时 Hint 就是那一句（`kernel_boot_failed` 的全角冒号分支不进）。
+        let mut boot = BootState::idle();
+        boot.show();
+        boot.fail("未找到内置内核；请安装 npm 版 dsh 或重新安装 Blade²", "");
+        let frame = boot.render();
+        assert_eq!(frame.failure.as_ref().unwrap().1, "");
+        assert_eq!(frame.hint, None, "失败态那一行让给整句，由视图按 detail 是否为空拼");
+    }
+
     /// 加载卡用到的 11 个键在分叉 i18n 表里必须**逐条存在**（EN 查得到译文）。
     /// 规格 §5 的第 12 个键 `Blade²` 只服务于主线 `ShellToast.Show`（KC:155），分叉没有 toast 原语
     /// ⇒ 那一发改成 stdout 的 `STATUS:` 行，不进本表断言。
@@ -7447,5 +8739,506 @@ mod pill_tests {
             .expect("卡片函数必须存在");
         assert!(card.contains("ProgressBar::new()"), "进度条得用真控件");
         assert!(!card.contains("ProgressRing"), "卡片里不许出现手绘环/圈");
+    }
+
+    /// 控制面四型各一帧，形状照假内核 `control_opened` 推的那一串（会话 id 换成 `s-1`）。
+    /// 分流的两条用例共用这一份 ⇒ 「每一型该落到哪张表」的期望只有一处定义。
+    fn control_probe_frames() -> Vec<Value> {
+        vec![
+            json!({
+                "type": "baseline",
+                "value": {
+                    "queues": {"s-1": [
+                        {"id": "q-1", "placement": "queued",
+                         "message": {"id": "m-1", "content": [{"type": "text", "text": "等这轮"}]}},
+                    ]},
+                    "jobs": {"s-1": [
+                        {"id": "j-1", "kind": "bash-1", "label": "cargo check",
+                         "status": "running", "startedAt": 100},
+                    ]},
+                    "projections": {"s-1": {"asOfSeq": 9, "values": {"title": "甲"}}},
+                },
+            }),
+            json!({"type": "queue", "sessionId": "s-1", "items": [
+                {"id": "q-2", "placement": "steering", "message": {"id": "m-2", "content": []}},
+            ]}),
+            json!({"type": "jobs", "sessionId": "s-1", "jobs": [
+                {"id": "j-2", "kind": "subagent-2", "label": "查资料", "status": "completed",
+                 "startedAt": 50, "finishedAt": 90},
+            ]}),
+            json!({"type": "projection", "sessionId": "s-1", "key": "plan", "seq": 12,
+                   "value": {"active": true, "pending": true}}),
+        ]
+    }
+
+    /// #60 / spec6 R1 的主判据：`session/control` 那四型在自己的 streamId 上必须全部走到
+    /// `MuxSink::Control`，一帧都不许退回 `WorkspaceTree::apply` 那条兜底 —— 兜底读 `baseline`
+    /// 的 `value.items`（缺 → 返回 `false` 且不报错），控制面的 `baseline` 读
+    /// `value.queues/jobs/projections`，所以「只开流不分流」= 三张表永不落地且零错误。
+    #[test]
+    fn control_frames_route_to_control_state_and_never_to_the_tree() {
+        // `open_mux` 的编号口径：rs1 = workspace/follow、rs2 = $events、rs3 = session/control；
+        // 会话正文那一路从 rs4 起按会话补开（`ensure_follow`）。
+        let follows = vec![("s-1".to_string(), "rs4".to_string())];
+        let mut state = ControlState::default();
+        let mut tree = WorkspaceTree::default();
+        for frame in control_probe_frames() {
+            assert_eq!(
+                mux_frame_sink("rs3", Some("rs3"), &follows, &frame),
+                MuxSink::Control,
+                "控制帧被串到别的流上: {frame}"
+            );
+            assert!(
+                !tree.apply(&frame),
+                "R1 的静默丢帧没复现出来，兜底竟然认了这一帧: {frame}"
+            );
+            state.apply(&frame);
+        }
+        // 每一型各自落进自己那张表，且后到的整表替换 baseline 那一份（不是追加）。
+        let queued = state.queue_items("s-1");
+        assert_eq!((queued.len(), queued[0].item_id.as_str()), (1, "q-2"));
+        let jobs = state.jobs_of("s-1");
+        assert_eq!((jobs.len(), jobs[0].job_id.as_str()), (1, "j-2"));
+        assert!(!jobs[0].is_live(), "jobs 帧整表替换：running 那条不再作数");
+        let projections = state.projections("s-1").expect("baseline 的投影得在");
+        assert_eq!(projections.title, "甲", "projection 增量只动它自己那一个键");
+        assert_eq!(
+            projections.plan.map(|plan| (plan.active, plan.pending)),
+            Some((true, true)),
+            "projection 帧落的必须是 plan 那一键"
+        );
+        assert_eq!(projections.as_of_seq, Some(9), "增量帧不许动游标");
+
+        // 对照：分流臂没有动过其余三条流既有的去向。
+        let emit = json!({"type": "emit", "event": "api-session/status", "args": ["s-1", true]});
+        assert_eq!(
+            mux_frame_sink("rs4", Some("rs3"), &follows, &emit),
+            MuxSink::Follow("s-1".to_string())
+        );
+        assert_eq!(
+            mux_frame_sink("rs2", Some("rs3"), &follows, &emit),
+            MuxSink::Status("s-1".to_string(), true)
+        );
+        let workspace = json!({"type": "baseline", "value": {"items": [], "archivedSessionIds": []}});
+        assert_eq!(
+            mux_frame_sink("rs1", Some("rs3"), &follows, &workspace),
+            MuxSink::Workspace
+        );
+        // 同名不同形的那一型：同一条 `baseline`，换条流就换张表 ⇒ 判据只能是 streamId。
+        assert_eq!(
+            mux_frame_sink("rs3", Some("rs3"), &follows, &workspace),
+            MuxSink::Control
+        );
+        // 控制流还没开成（标记为 `None`）时，一条都不许被误认成控制帧。
+        assert_eq!(
+            mux_frame_sink("rs1", None, &follows, &workspace),
+            MuxSink::Workspace
+        );
+    }
+
+    /// 未识别的帧型不许静默消失（R1 的另一半）：`ControlTally` 按型计数、另开一桶「未识别」，
+    /// 一批只出一行 DIAG。主干 `OnControlFrame` 的 `default: return`（MW:15336）在壳侧是
+    /// 一个字都不写的，分叉这边至少得留下证据，否则「内核改名一个帧型」就等于「面板再也不刷」。
+    #[test]
+    fn control_tally_counts_types_and_speaks_once_per_batch() {
+        let frames = control_probe_frames();
+        let mut state = ControlState::default();
+        for frame in &frames {
+            state.apply(frame);
+        }
+        let mut tally = ControlTally::default();
+        assert_eq!(
+            tally.line(&state),
+            None,
+            "一批里一帧控制面元素都没见到 ⇒ 一行都不写"
+        );
+        for frame in &frames {
+            assert_eq!(control_frame_type(frame), Some(frame["type"].as_str().unwrap()));
+            tally.record(control_frame_type(frame));
+        }
+        for bogus in [
+            // 内核还没发过的型别（`ready` 那一类心跳也算）。
+            json!({"type": "heartbeat"}),
+            // 判别键写错位置：`type` 整个缺席。
+            json!({"kind": "queue", "sessionId": "s-1", "items": []}),
+        ] {
+            assert_eq!(control_frame_type(&bogus), None, "未识别型别必须报 None");
+            let before = state.clone();
+            assert!(!state.apply(&bogus).any());
+            assert_eq!(state, before, "未识别的帧不许动状态");
+            tally.record(control_frame_type(&bogus));
+        }
+        let line = tally.line(&state).expect("见过帧就得出声");
+        for needle in [
+            "控制面 6 帧:",
+            "baseline 1",
+            "queue 1",
+            "jobs 1",
+            "projection 1",
+            "未识别 2",
+            "队列 1 项 / 作业 1 项 / 投影 1 会话",
+        ] {
+            assert!(line.contains(needle), "少了 {needle}：{line}");
+        }
+    }
+
+    /// R1 的「必须同批」约束：开流点与分流臂是一件事的两半，少一半就是静默丢帧。
+    /// 单测里开不了窗口 ⇒ 照 `boot_plugin_ledger_producer_is_wired` 的口径在源码上锁顺序。
+    #[test]
+    fn control_stream_opens_and_demuxes_in_the_same_batch() {
+        let source = include_str!("main.rs");
+        let open = fn_slice(source, "fn open_mux(", "fn poll_mux(");
+        assert!(
+            open.contains("guard.open_session_control()"),
+            "第三发没开在 open_mux 里 ⇒ 那个发起口又是零调用"
+        );
+        let at_open = |needle: &str| {
+            open.find(needle)
+                .unwrap_or_else(|| panic!("open_mux 里找不到 {needle}"))
+        };
+        assert!(
+            at_open("\"workspace/follow\"") < at_open("\"$events\""),
+            "主干 0.7.1 的时序：workspace 域必须最先触碰（MW:2614-2616）"
+        );
+        assert!(
+            at_open("\"$events\"") < at_open("open_session_control()"),
+            "控制面排在两者之后（MW:2622）"
+        );
+
+        let pump = fn_slice(source, "fn apply_mux_events(", "fn start_kernel(");
+        let at_pump = |needle: &str| {
+            pump.find(needle)
+                .unwrap_or_else(|| panic!("事件泵里找不到 {needle}"))
+        };
+        assert!(
+            at_pump("MuxSink::Control") < at_pump("self.tree.apply"),
+            "分流臂必须排在兜底之前，否则 control 帧先被树吃掉"
+        );
+        assert!(
+            at_pump("control.record(") < at_pump("self.control.apply("),
+            "先认帧型再落表：未识别的那几帧不能悄悄算进已应用"
+        );
+        assert!(
+            at_pump("control.line(&self.control)") > at_pump("MuxSink::Control"),
+            "一批攒一行 DIAG（R1 要的「control 帧数 > 0」就靠这一行）"
+        );
+        // 丢实例 = 丢流：重开前两张流标记一起作废，否则新连接的 streamId 会顶着旧映射串台。
+        assert!(pump.contains("self.control_stream = None"));
+        assert!(pump.contains("self.follows.clear()"));
+
+        let ready = fn_slice(source, "Msg::MuxReady(Ok((shared", "Msg::MuxReady(Err");
+        assert!(
+            ready.contains("self.control_stream = Some(control)"),
+            "streamId 必须在 MuxReady 这一发里记下"
+        );
+        assert!(
+            ready.find("self.mux = Some(shared)").unwrap()
+                < ready.find("self.poll_mux(context)").unwrap(),
+            "实例先落地，泵后上臂"
+        );
+        assert!(
+            ready.find("self.control_stream = Some(control)").unwrap()
+                < ready.find("self.poll_mux(context)").unwrap(),
+            "流标记必须在第一次 poll 之前记下，不然首批控制帧无人认领"
+        );
+    }
+
+    // ---------------- 斜杠命令浮层（`CommandPalette`，spec6 #52） ----------------
+
+    fn command(name: &str, has_input: bool) -> CommandEntry {
+        CommandEntry {
+            name: name.to_string(),
+            description: format!("{name} 的说明"),
+            hint: if has_input { "<参数>".to_string() } else { String::new() },
+            has_input,
+        }
+    }
+
+    /// 主干 `UpdateCommandPalette` 的三个条件（MW:17686）：非空、首字符 `/`、**整串**不含
+    /// 空格/制表/回车/换行。最后那条决定 Enter 归谁：进入参数段浮层就让位给普通发送。
+    #[test]
+    fn palette_trigger_requires_leading_slash_and_no_whitespace() {
+        assert_eq!(palette_trigger(""), None);
+        assert_eq!(palette_trigger("compact"), None);
+        assert_eq!(palette_trigger("x /compact"), None);
+        assert_eq!(palette_trigger("/"), Some(""));
+        assert_eq!(palette_trigger("/com"), Some("com"));
+        assert_eq!(palette_trigger("/COMPACT"), Some("COMPACT"));
+        // 空白四型一律收（主干那句 `IndexOfAny([' ', '\t', '\r', '\n'])` 查的是整串）。
+        assert_eq!(palette_trigger("/compact now"), None);
+        assert_eq!(palette_trigger("/compact\tnow"), None);
+        assert_eq!(palette_trigger("/a\r\nb"), None);
+        assert_eq!(palette_trigger("/a "), None);
+        // 采纳后写回的那串带尾随空格 ⇒ 浮层自己让位（与主干 `TextChanged` 同一判据）。
+        assert_eq!(palette_trigger("/permission "), None);
+        // 非 ASCII 不改判据（C# 的 `text[0]` 是首字符，这里按前缀判，结果一致）。
+        assert_eq!(palette_trigger("/目标"), Some("目标"));
+    }
+
+    /// 主干 `TryLeadingCommandName`（MW:6901-6912）：composer 那一发**允许**参数段，
+    /// 只取第一个空白前的名字；`"/"` 与 `"/ x"` 这种没有命令名的形态一律不算。
+    #[test]
+    fn leading_command_name_takes_the_first_token_only() {
+        assert_eq!(leading_command_name("/compact"), Some("compact"));
+        assert_eq!(leading_command_name("  /permission danger-full-access "), Some("permission"));
+        assert_eq!(leading_command_name("/goal\tpause"), Some("goal"));
+        assert_eq!(leading_command_name("/"), None);
+        assert_eq!(leading_command_name("/ x"), None);
+        assert_eq!(leading_command_name("compact"), None);
+        assert_eq!(leading_command_name("看看 /compact"), None);
+    }
+
+    /// 主干那段过滤（MW:17716-17722）逐字口径：大小写无关 `Contains` → 前缀命中排前面
+    /// （`OrderByDescending(StartsWith)`）→ 同档按名字 `OrdinalIgnoreCase` 升序 → `Take(20)`。
+    #[test]
+    fn palette_filter_orders_prefix_first_then_name_ordinal() {
+        let entries = vec![
+            command("zeta", false),
+            command("Export", false),
+            command("export-log", true),
+            command("expose", false),
+            command("alpha", false),
+        ];
+        let names: Vec<String> =
+            filter_commands(&entries, "ex").into_iter().map(|entry| entry.name).collect();
+        assert_eq!(
+            names,
+            vec!["Export", "export-log", "expose"],
+            "前缀命中全部提前，组内 OrdinalIgnoreCase 升序（export < export-log < expose）"
+        );
+        // 大小写无关：换大写查询得到同一批、同一个序。
+        let upper: Vec<String> =
+            filter_commands(&entries, "EX").into_iter().map(|entry| entry.name).collect();
+        assert_eq!(upper, names);
+        // 中段命中（`Contains` 而不是 `StartsWith`）：`pose` 只命中 expose，没有前缀竞争者。
+        assert_eq!(filter_commands(&entries, "pose").len(), 1);
+        // 零命中：主干不放「无匹配」占位，直接收浮层。
+        assert!(filter_commands(&entries, "zzz").is_empty());
+        // 空前缀：`StartsWith("")` 对全体为真 ⇒ 前缀档无竞争者，序退化成按名升序。
+        let all: Vec<String> =
+            filter_commands(&entries, "").into_iter().map(|entry| entry.name).collect();
+        assert_eq!(all, vec!["alpha", "Export", "export-log", "expose", "zeta"]);
+        // Take(20)：25 条全命中也只留 20，且留的是排序后的前 20。
+        let many: Vec<CommandEntry> =
+            (0..25).map(|index| command(&format!("cmd{index:02}"), false)).collect();
+        let hits = filter_commands(&many, "cmd");
+        assert_eq!(hits.len(), 20, "Take(20)");
+        assert_eq!(hits[0].name, "cmd00");
+        assert_eq!(hits[19].name, "cmd19");
+    }
+
+    /// 3 秒负缓存（主干 17320-17323）：未知 agent 每键都问会把内核打穿，但**不能永久缓存**
+    /// —— 旧会话的 agent 由内核惰性拉起，首问常报 `gateway/lookup-not-found`，到点要自愈。
+    #[test]
+    fn commands_negative_cache_expires_after_three_seconds() {
+        let base = Instant::now();
+        let at = |millis: u64| base + Duration::from_millis(millis);
+        let mut palette = PaletteState::idle();
+        assert!(!palette.needs_fetch("", base), "没有会话 = 主干那句早退，一个字都不问");
+        assert!(palette.needs_fetch("s-1", base), "从没问过 ⇒ 问");
+
+        palette.record("s-1", Err("gateway/lookup-not-found".to_string()), base);
+        assert!(!palette.needs_fetch("s-1", at(2_999)), "3s 内不重复问");
+        // 主干这条**不按会话判**（17320 那只比时间）：切了会话也照样等窗口。
+        assert!(!palette.needs_fetch("s-2", at(1)), "负缓存跨会话生效（照抄主干）");
+        assert!(palette.needs_fetch("s-1", at(3_000)), "到点自愈，再问一次");
+
+        palette.record("s-1", Ok(vec![command("compact", false)]), at(3_000));
+        assert!(!palette.needs_fetch("s-1", at(3_000) + Duration::from_secs(3600)), "正缓存不过期");
+        assert!(palette.needs_fetch("s-2", at(3_000)), "正缓存按会话，切会话作废");
+
+        // 失败连目录一起清（17353）；成功才留条目。
+        palette.record("s-3", Err("boom".to_string()), at(4_000));
+        assert!(palette.entries.is_empty(), "失败清 `_commands`");
+        assert_eq!(palette.session, "s-3", "失败也记会话（17354）");
+    }
+
+    /// 整条链：钩子算出 `PaletteAccept` → `from_key_action` → 模型消息。
+    /// **浮层开着时 Enter 绝不落到 `Msg::Send`** —— 主干 `OnInputPreviewKeyDown`（MW:6822-6841）
+    /// 把 `HandlePaletteKey` 排在 `TryHandleEnterSend` 之前，顺序写反就是「选中即误发消息」。
+    #[test]
+    fn enter_never_sends_while_the_palette_is_open() {
+        let open = keys::Scene { on_chat: true, sub_open: false, palette_open: true };
+        let table = [
+            (keys::VK_RETURN, KeyAction::PaletteAccept),
+            (keys::VK_TAB, KeyAction::PaletteAccept),
+            (keys::VK_UP, KeyAction::PaletteMove(-1)),
+            (keys::VK_DOWN, KeyAction::PaletteMove(1)),
+            (keys::VK_ESCAPE, KeyAction::PaletteClose),
+        ];
+        for (vk, want) in table {
+            let action = keys::classify(vk, false, false, KeyOwner::Composer, open);
+            assert_eq!(action, want, "vk={vk:#04x} 该走浮层");
+            let message = Msg::from_key_action(action).expect("浮层那几档必须投消息，不许静默丢");
+            assert!(
+                !matches!(message, Msg::Send | Msg::SendAlternate),
+                "浮层开着时这一发绝不能落成发送（vk={vk:#04x}）"
+            );
+        }
+        // Ctrl+Enter 也被浮层吃掉（主干 `HandlePaletteKey` 的 Enter 分支只让 Shift）：
+        // 采纳优先于「反向档发送」。
+        assert_eq!(
+            keys::classify(keys::VK_RETURN, false, true, KeyOwner::Composer, open),
+            KeyAction::PaletteAccept
+        );
+        // Shift+Enter 仍是换行（放行给 TextBox，主干两处同口径）。
+        assert_eq!(
+            keys::classify(keys::VK_RETURN, true, false, KeyOwner::Composer, open),
+            KeyAction::Pass
+        );
+        // 焦点不在 composer ⇒ 浮层那几档一概不开火（主干那些处理器只挂在 InputBox 上）。
+        for (vk, _) in table {
+            assert_eq!(
+                keys::classify(vk, false, false, KeyOwner::Other, open),
+                KeyAction::Pass,
+                "vk={vk:#04x}"
+            );
+        }
+        // 浮层关掉 ⇒ 同一发 Enter 回到发送那条老路。
+        let closed = keys::Scene { palette_open: false, ..open };
+        assert_eq!(
+            keys::classify(keys::VK_RETURN, false, false, KeyOwner::Composer, closed),
+            KeyAction::Submit
+        );
+        assert_eq!(
+            keys::classify(keys::VK_TAB, false, false, KeyOwner::Composer, closed),
+            KeyAction::Pass
+        );
+    }
+
+    /// 采纳写回（主干 `AcceptCommandSelection`，MW:17802-17819）：
+    /// · 带参数（`input` 是对象）⇒ 输入框整串换成 `/名字` + 一个空格，**不执行**（typed 前缀不保留）；
+    /// · 无参 ⇒ 清空输入框并当场执行（这一发是自动发出的，不用再按 Enter）；
+    /// · 两种都收浮层并把代次推走；越界（含「目录不可用」那态的 -1）只收浮层。
+    #[test]
+    fn palette_accept_fills_argumented_and_runs_plain() {
+        let catalog = || vec![command("permission", true), command("compact", false)];
+        let mut palette = PaletteState::idle();
+        palette.matches = catalog();
+        palette.index = 0;
+        palette.showing = true;
+        palette.generation = 7;
+        assert_eq!(palette.take_accept(), PaletteAccept::Fill("/permission ".to_string()));
+        assert!(!palette.showing && palette.matches.is_empty() && palette.index == -1);
+        assert_eq!(palette.generation, 8, "采纳即 `HideCommandPalette`：在途回填就此作废");
+
+        let mut palette = PaletteState::idle();
+        palette.matches = catalog();
+        palette.index = 1;
+        assert_eq!(palette.take_accept(), PaletteAccept::Run("/compact".to_string()));
+
+        let mut palette = PaletteState::idle();
+        palette.matches = catalog();
+        palette.index = 2;
+        assert_eq!(palette.take_accept(), PaletteAccept::Nothing, "越界只收浮层（17806-17809）");
+        let mut palette = PaletteState::idle();
+        palette.showing = true;
+        assert_eq!(palette.take_accept(), PaletteAccept::Nothing, "目录不可用那态 index = -1");
+    }
+
+    /// 浮层三态：代次过期 / 零命中 / 目录不可用（17699-17736）。
+    #[test]
+    fn palette_apply_covers_stale_zero_hit_and_error() {
+        let mut palette = PaletteState::idle();
+        palette.entries = vec![command("compact", false), command("plan", true)];
+        palette.query = "com".to_string();
+        palette.generation = 3;
+        // 过期那一发：什么都不改。
+        palette.apply(4, "/com");
+        assert!(!palette.showing && palette.matches.is_empty());
+        palette.apply(3, "/com");
+        assert!(palette.showing && palette.list_visible && palette.index == 0);
+        assert_eq!(palette.matches.len(), 1);
+        let catalog = Catalog::load("zh", None);
+        assert_eq!(
+            palette.header(&catalog),
+            "“/com” 匹配 1 条（↑↓ 选择，Enter 执行，Esc 关闭）"
+        );
+        // 零命中 ⇒ 收浮层、不出占位（hide 把代次推到 4）。
+        palette.query = "zzz".to_string();
+        palette.apply(3, "/zzz");
+        assert!(!palette.showing && palette.matches.is_empty() && palette.generation == 4);
+        // 输入里已经没有触发形态（参数段/别的文本）⇒ 回填不许把浮层掀回来。
+        let mut stale = PaletteState::idle();
+        stale.entries = vec![command("compact", false)];
+        stale.generation = 1;
+        stale.apply(1, "/compact now");
+        assert!(!stale.showing);
+
+        // 目录取不到：浮层照样上屏、列表区收起、原因摊在标题上（主干 17706-17714「不静默」）。
+        let mut failed = PaletteState::idle();
+        failed.generation = 1;
+        failed.query = "c".to_string();
+        failed.record("s-9", Err("gateway/lookup-not-found".to_string()), Instant::now());
+        failed.apply(1, "/c");
+        assert!(failed.showing && !failed.list_visible && failed.index == -1);
+        assert_eq!(failed.header(&Catalog::load("zh", None)), "命令目录不可用：gateway/lookup-not-found");
+        // 采纳这一态 = 越界 ⇒ Nothing（主干 `HandlePaletteKey` 仍吃 Enter，因为浮层可见）。
+        assert_eq!(failed.take_accept(), PaletteAccept::Nothing);
+    }
+
+    /// `MoveCommandSelection`（MW:17791-17801）：夹到端点、不循环；没有候选时 `index` 原样不动。
+    #[test]
+    fn palette_move_clamps_and_ignores_empty() {
+        let mut palette = PaletteState::idle();
+        palette.move_selection(1);
+        assert_eq!(palette.index, -1, "没有候选 = 主干那句 `if (_commandMatches.Count == 0) return`");
+        palette.matches = (0..3).map(|index| command(&format!("c{index}"), false)).collect();
+        palette.index = 0;
+        palette.move_selection(-1);
+        assert_eq!(palette.index, 0, "首行再往上不循环");
+        for _ in 0..4 {
+            palette.move_selection(1);
+        }
+        assert_eq!(palette.index, 2, "末行再往下不循环（Math.Clamp）");
+    }
+
+    /// 浮层真的挂在内容面那一格里：与 `stream`/`boot` 同一个 keyed 容器、后入者在上，
+    /// 几何三个数值抄 MX:748-752 与 MX:774。这条是源码结构断言（分叉不能起 GUI 自测）。
+    #[test]
+    fn palette_overlay_is_mounted_in_the_chat_cell() {
+        let source = include_str!("main.rs");
+        let page = fn_slice(source, "fn chat_page(", "fn command_palette(");
+        assert!(
+            page.contains("if self.palette.showing"),
+            "显隐走 keyed 槽位：reactor 没有 Visibility"
+        );
+        let at_stream = page.find("\"stream\",").expect("stream 槽位在");
+        let at_boot = page.find("KeyedView::new(\"boot\"").expect("boot 槽位在");
+        let at_palette = page.find("KeyedView::new(\"palette\"").expect("palette 槽位在");
+        assert!(at_stream < at_boot && at_boot < at_palette, "同格叠放，后入者在上");
+        assert!(page.contains(".rows([GridLength::STAR, GridLength::Auto])"));
+
+        let shell = fn_slice(source, "fn command_palette(", "fn palette_row(");
+        for fact in [
+            ".grid_row(0)",
+            ".vertical_alignment(VerticalAlignment::Bottom)",
+            ".max_width(PALETTE_MAX_WIDTH)",
+            ".max_height(PALETTE_MAX_HEIGHT)",
+            ".margin(th(pad::OVERLAY))",
+            ".corner_radius(radius::MEDIUM)",
+            ".border_thickness(size::STROKE)",
+            "automation_id(\"CommandPalette\")",
+            "automation_id(\"CommandPaletteList\")",
+            "automation_id(\"CommandPaletteHeader\")",
+        ] {
+            assert!(shell.contains(fact), "浮层几何少了 {fact}");
+        }
+        // 三个数值 = 主干 MX:748-752 / MX:774 的字面量。
+        assert_eq!((PALETTE_MAX_WIDTH, PALETTE_MAX_HEIGHT, PALETTE_LIST_MAX_HEIGHT), (640.0, 264.0, 216.0));
+        assert_eq!(pad::OVERLAY, [12.0, 0.0, 12.0, 8.0]);
+        assert_eq!(radius::MEDIUM, 8.0);
+        assert_eq!(PALETTE_ROW_PADDING, [8.0, 5.0, 8.0, 5.0]);
+        assert_eq!(PALETTE_MATCH_LIMIT, 20);
+        assert_eq!(COMMANDS_NEGATIVE_CACHE, Duration::from_secs(3));
+
+        // 数据源仍是一条 RPC：`commands/list` 只经由 `Kernel::list_commands`。
+        let fetch = fn_slice(source, "fn fetch_commands(", "fn apply_palette(");
+        assert!(fetch.contains("kernel.list_commands(&session)"), "不许另开第二条 RPC 通路");
+        assert!(fetch.contains("Msg::CommandsLoaded"));
+        // 按键那条接缝真的接上了：`publish_keys` 报的是 `showing` 而不是写死的 false，
+        // 并且只在浮层真的在屏上（停在聊天页）时才开火。
+        let publish = fn_slice(source, "fn publish_keys(", "fn forget_commands(");
+        assert!(publish.contains("keys::sync_pages(on_chat, on_chat && self.palette.showing)"));
     }
 }

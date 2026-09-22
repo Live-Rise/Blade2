@@ -35,7 +35,7 @@ pub const EN: &[(&str, &str)] = &[
     ("内核未连接", "Kernel not connected"),
     (
         "会话创建响应缺少 sessionId。",
-        "Session create response is missing sessionId.",
+        "Session creation response is missing a sessionId.",
     ),
     // —— 对话正文：操作行 / 轮尾 / 工具行 / 交付物（主线 MainWindow.xaml.cs:924-943、1355-1357）——
     ("在新对话中分支", "Branch into a new conversation"),
@@ -1074,6 +1074,54 @@ pub const EN: &[(&str, &str)] = &[
         "Auto approval comes from the kernel plugin dsh-approval-gate: when a session permission preset switches to Auto approval, the Flash model pre-judges whether each write/command is irreversible - safe ones are approved automatically, while hard categories such as deletions, credentials and system configuration fall back to manual confirmation. The toggle adds or removes the auto-approve preset in the kernel profile patch, which the kernel hot-reloads immediately.",
     ),
     ("{0} tokens（近 {1} 天）", "{0} tokens (last {1} days)"),
+    // 目标条 / 上下文圈 / 轮次轨 / 气泡卡 / 附件 / 使用统计：主线 ShellEnglish 已登记的原文照抄。
+    // 管理、管理目标、已用 token、第 {0} 轮 主线在代码里用了却没登记进表（英文界面会露出中文），
+    // 这 4 条的译文是分叉自拟的。
+    ("目标待命", "Goal armed off"),
+    ("目标进行中", "Goal active"),
+    ("目标已暂停", "Goal paused"),
+    ("目标受阻", "Goal blocked"),
+    ("管理", "Manage"),
+    ("管理目标", "Manage goal"),
+    ("上下文已用 {0}%", "{0}% of context used"),
+    ("已用", "Used"),
+    ("上下文容量", "Context capacity"),
+    ("已用 token", "Used tokens"),
+    ("第 {0} 轮", "Turn {0}"),
+    ("消息气泡", "Message bubbles"),
+    (
+        "气泡背景：半透明直接透出背后画面，亚克力是系统材质；两项都即时生效。",
+        "Bubble background: the translucent option shows the content behind it, the acrylic option is the system material; both apply immediately.",
+    ),
+    ("气泡材质", "Bubble material"),
+    (
+        "半透明最透，亚克力是系统材质，跟随跟窗口材质走",
+        "Translucent is the most see-through, acrylic is the system material, follow tracks the window material",
+    ),
+    ("气泡不透明度", "Bubble opacity"),
+    (
+        "数值越大气泡自身越实，背后画面透出越少",
+        "Higher values make bubbles more solid and show less of what is behind them",
+    ),
+    ("半透明", "Translucent"),
+    ("亚克力", "Acrylic"),
+    ("跟随窗口材质", "Follow window material"),
+    ("图片读取失败，未添加附件：{0}", "Failed to read the image; no attachment added: {0}"),
+    ("拖入图片 {0:HHmmss}.png", "Dropped image {0:HHmmss}.png"),
+    (
+        "有 {0} 张图片无法按图片识别，已改为文件发送：{1}",
+        "{0} image(s) could not be recognized as images and were sent as files: {1}",
+    ),
+    ("放大查看 {0}", "Enlarge {0}"),
+    ("{0} 条用量记录", "{0} usage records"),
+    ("单日峰值 · {0}", "Peak day · {0}"),
+    ("{0} 个会话中的最大值", "Max across {0} sessions"),
+    ("截至今日", "As of today"),
+    ("共活跃 {0} 天", "{0} active days in total"),
+    ("暂无用量记录", "No usage records"),
+    ("无完整 turn 记录", "No complete turns"),
+    ("今日暂无记录", "No records today"),
+    ("暂无活跃记录", "No active days"),
 ];
 
 #[derive(Clone)]

@@ -221,7 +221,9 @@ pub struct Palette {
     /// 同上，按下档原色。
     pub subtle_pressed_color: Color,
     /// BubbleMicaBrush 的近似：reactor 没有 AcrylicBrush，用
-    /// SolidBackgroundFillColorBase + 主干的 TintOpacity(0.6/0.7) 当不透明底板
+    /// SolidBackgroundFillColorBase + 主干的 TintOpacity(0.6/0.7) 当不透明底板。
+    /// **只是 Tokens.xaml 那支基线**：`main.rs::view` 每轮按「材质档 + 不透明度 + 窗口材质」
+    /// 现算（[`bubble_brush`]）覆一次，设置·个性化的「消息气泡」卡因此是真生效而不是画的。
     pub bubble: Brush,
     pub info: Brush,
     /// InfoBgBrush ← SystemFillColorAttentionBackground
@@ -372,6 +374,16 @@ impl Palette {
         }
     }
 
+    /// 当前深浅主题下的气泡底：见 [`bubble_brush`]（材质档 / 窗口材质 / 不透明度三样事实）。
+    pub const fn bubble_with(
+        &self,
+        material: BubbleMaterial,
+        window: WindowMaterial,
+        opacity: f64,
+    ) -> Brush {
+        bubble_brush(self.scheme, material, window, opacity)
+    }
+
     /// Subtle 链里「静置身上**已经**有一层底」的那颗钮（主干只有 `ComposerAddButton`：
     /// `Background=CardHoverBrush` = Subtle Secondary）的**悬停**档 ——
     /// 状态层叠在静置层上（`overlay`），浅 `#11000000`、深 `#1DFFFFFF`。
@@ -385,6 +397,171 @@ impl Palette {
     pub const fn subtle_disc_pressed(&self) -> Brush {
         Brush::Solid(overlay(self.subtle_pressed_color, self.subtle_hover_color))
     }
+}
+
+/// 主干 `MainWindow.TraySettings.cs:30-32` 的 `shell.json` `bubbleMaterial` 三档
+/// （序同设置·个性化「消息气泡」下拉的 `BubbleMaterialChoices`）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BubbleMaterial {
+    /// 半透明：主题面色 + 不透明度直接当 alpha（主干唯一逐字抄得动的一档）。
+    Translucent,
+    /// 亚克力：主干是系统 `AcrylicBrush`。reactor 0.100 **没有元素级 Acrylic**
+    /// （`WindowVisuals::backdrop` 只管窗口），所以这一档在分叉只能近似成实色板，
+    /// 近似的口径见 [`bubble_brush`]。
+    Acrylic,
+    /// 跟随窗口材质：配方按 [`WindowMaterial`] 定，见 [`bubble_brush`]。
+    Follow,
+}
+
+impl BubbleMaterial {
+    /// 下拉框的当前下标 → 档位；越界按主干的兜底回落半透明
+    /// （`SetBubbleMaterial` 里非三个 id 之一就是 `BubbleMaterialTranslucent`）。
+    pub const fn from_index(index: usize) -> Self {
+        match index {
+            1 => Self::Acrylic,
+            2 => Self::Follow,
+            _ => Self::Translucent,
+        }
+    }
+}
+
+/// 主干 `material` 字段的四档（序同 `tokens::SETTINGS_MATERIALS` 那四颗标签）。
+/// 「跟随窗口材质」的气泡配方要看它，故单独一档一档列出来。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum WindowMaterial {
+    Mica,
+    MicaAlt,
+    Acrylic,
+    /// 无（纯色）：主干给这条兜了个不透明底（`RootGrid.Background`），气泡也落纯色卡。
+    None,
+}
+
+impl WindowMaterial {
+    pub const fn from_index(index: usize) -> Self {
+        match index {
+            1 => Self::MicaAlt,
+            2 => Self::Acrylic,
+            3 => Self::None,
+            _ => Self::Mica,
+        }
+    }
+}
+
+/// 主干 `BubbleOpacityMin/Max/Default`（`MainWindow.TraySettings.cs:35-37`）：
+/// 合法域 0.2–1.0，默认 0.6。滑杆按 100 满刻度铺（`Minimum = Min*100` 那一层换算在调用侧）。
+pub const BUBBLE_OPACITY_MIN: f64 = 0.2;
+pub const BUBBLE_OPACITY_MAX: f64 = 1.0;
+pub const BUBBLE_OPACITY_DEFAULT: f64 = 0.6;
+/// 主干 `BuildBubbleBrush` 里亚克力玻璃的取样亮度档（`TintLuminosityOpacity`）：
+/// 窗口材质 = acrylic 走 0.9（玻璃感、几乎不吃背后画面），mica / mica-alt 走 0.12（平面着色）。
+const ACRYLIC_LUMINOSITY: f64 = 0.9;
+
+const fn clamp_f64(value: f64, min: f64, max: f64) -> f64 {
+    if value < min {
+        min
+    } else if value > max {
+        max
+    } else {
+        value
+    }
+}
+
+/// 主干 `Scale`：同亮度下按系数收一档，四舍五入（.NET `Math.Round` 默认 ToEven，
+/// 与这里差 ≤1， mica-alt 那档的冷移幅度本来就只是「可辨但不刺眼」）。
+const fn scale_byte(value: u8, factor: f64) -> u8 {
+    let rounded = (value as f64 * factor + 0.5) as i32;
+    if rounded > 255 {
+        255
+    } else if rounded < 0 {
+        0
+    } else {
+        rounded as u8
+    }
+}
+
+/// 主干 `CoolShift`（mica-alt 的冷峻倾向）：红降 3%、绿降 1.5%、蓝不动。
+const fn cool_shift(color: Color) -> Color {
+    Color {
+        a: color.a,
+        r: scale_byte(color.r, 0.97),
+        g: scale_byte(color.g, 0.985),
+        b: color.b,
+    }
+}
+
+/// `SurfaceBrush` 的原色（主干 `ThemeBrush("SurfaceBrush")` = `SolidBackgroundFillColorBase`）：
+/// 气泡要按不透明度改 alpha 就得拿到分量，而 reactor 读不到主题画刷的分量 ⇒
+/// 按 generic.xaml 的字面值钉住 RGB（与 `Tokens.xaml:184/253` 那支 `BubbleMicaBrush` 同色）。
+pub const fn surface_color(scheme: Scheme) -> Color {
+    match scheme {
+        Scheme::Light => argb(0xFF, 0xF3_F3_F3),
+        Scheme::Dark => argb(0xFF, 0x20_20_20),
+    }
+}
+
+/// 滑杆那一头的百分数（20…100）换算回 0.2…1.0 并夹进合法域：主干是
+/// `SetBubbleOpacity(slider.Value / 100)` + 里面的 `Math.Clamp(opacity, Min, Max)` 两条腿，
+/// 分叉合成这一发（`main.rs::bubble_opacity`）。
+pub const fn clamp_percent_to_opacity(percent: f64) -> f64 {
+    clamp_f64(percent / 100.0, BUBBLE_OPACITY_MIN, BUBBLE_OPACITY_MAX)
+}
+
+/// 气泡底的不透明度：`0.2 … 1.0`，逐档口径同主干 `BuildBubbleBrush`。
+pub const fn bubble_alpha(
+    material: BubbleMaterial,
+    window: WindowMaterial,
+    opacity: f64,
+) -> f64 {
+    let value = clamp_f64(opacity, BUBBLE_OPACITY_MIN, BUBBLE_OPACITY_MAX);
+    match material {
+        // 半透明：滑杆就是 alpha，背后是视频/壁纸时画面直接透出来。
+        BubbleMaterial::Translucent => value,
+        // 亚克力：主干那层玻璃自带 0.9 的取样亮度（永远比半透明更实），
+        // 分叉没有玻璃 ⇒ 近似成「不低于材质档自己的不透明度」的实色板。
+        BubbleMaterial::Acrylic => {
+            if value > ACRYLIC_LUMINOSITY {
+                value
+            } else {
+                ACRYLIC_LUMINOSITY
+            }
+        }
+        BubbleMaterial::Follow => match window {
+            // 无材质：纯色卡，滑杆不参与（主干这条分支的 alpha 写死 1.0）。
+            WindowMaterial::None => 1.0,
+            WindowMaterial::Acrylic => {
+                if value > ACRYLIC_LUMINOSITY {
+                    value
+                } else {
+                    ACRYLIC_LUMINOSITY
+                }
+            }
+            // mica / mica-alt 是平面着色层（取样亮度 0.12，本来就几乎不吃不透明度）⇒
+            // 分叉按半透明那档透出 alpha，冷峻倾向只落在颜色上（见 `cool_shift`）。
+            WindowMaterial::Mica | WindowMaterial::MicaAlt => value,
+        },
+    }
+}
+
+/// 气泡底：主干 `ApplyBubbleMaterial` 写进根网格 `BubbleMicaBrush` 的那支笔刷的等价物。
+/// 三处气泡（用户 / 助手 / 交付物）都读同一支，所以换这一支就是全量生效。
+pub const fn bubble_brush(
+    scheme: Scheme,
+    material: BubbleMaterial,
+    window: WindowMaterial,
+    opacity: f64,
+) -> Brush {
+    let tint = if matches!(material, BubbleMaterial::Follow) && matches!(window, WindowMaterial::MicaAlt)
+    {
+        cool_shift(surface_color(scheme))
+    } else {
+        surface_color(scheme)
+    };
+    Brush::Solid(Color {
+        a: (bubble_alpha(material, window, opacity) * 255.0 + 0.5) as u8,
+        r: tint.r,
+        g: tint.g,
+        b: tint.b,
+    })
 }
 
 /// 主干图表色板（Tokens.xaml 写死的字面值，与主题资源无关）。
@@ -590,6 +767,105 @@ mod tests {
         assert_eq!(
             code_block_brush(Scheme::Dark),
             Brush::Solid(argb(0xFF, 0x202024))
+        );
+    }
+
+    /// 下拉的三档与越界兜底：序 = 主干 `BubbleMaterialChoices`（半透明/亚克力/跟随窗口材质），
+    /// 窗口材质那四颗的序 = `tokens::SETTINGS_MATERIALS`。越界一律回落默认档（主干
+    /// `SetBubbleMaterial` 对未知 id 的处理就是这个口径）。
+    #[test]
+    fn bubble_material_indexes_line_up_with_the_dropdown() {
+        assert_eq!(
+            [
+                BubbleMaterial::from_index(0),
+                BubbleMaterial::from_index(1),
+                BubbleMaterial::from_index(2),
+                BubbleMaterial::from_index(9),
+            ],
+            [
+                BubbleMaterial::Translucent,
+                BubbleMaterial::Acrylic,
+                BubbleMaterial::Follow,
+                BubbleMaterial::Translucent
+            ]
+        );
+        assert_eq!(
+            [
+                WindowMaterial::from_index(0),
+                WindowMaterial::from_index(1),
+                WindowMaterial::from_index(2),
+                WindowMaterial::from_index(3),
+                WindowMaterial::from_index(9),
+            ],
+            [
+                WindowMaterial::Mica,
+                WindowMaterial::MicaAlt,
+                WindowMaterial::Acrylic,
+                WindowMaterial::None,
+                WindowMaterial::Mica
+            ]
+        );
+    }
+
+    /// 主干 `BuildBubbleBrush` 的三条口径逐条核对：
+    /// ① 半透明档默认 0.6 ⇒ alpha `#99`，与 `Tokens.xaml:184` 那支基线**同值**；
+    /// ② 不透明度只吃 0.2–1.0，越界夹住（滑杆 `Minimum/Maximum` 就是这两端的 100 倍）；
+    /// ③ 亚克力档吃材质自身的取样亮度 0.9 当下限，切档必然比半透明更实（观感得看得出）。
+    #[test]
+    fn bubble_tiers_follow_the_mainline_recipe() {
+        let alpha = |brush: Brush| match brush {
+            Brush::Solid(color) => color.a,
+            Brush::Theme(_) => 255,
+        };
+        // ① 默认档：半透明 0.6，浅色 = Tokens.xaml 基线 #99F3F3F3
+        assert_eq!(
+            bubble_brush(Scheme::Light, BubbleMaterial::Translucent, WindowMaterial::Mica, 0.6),
+            Brush::Solid(argb(0x99, 0xF3F3F3))
+        );
+        // ② 两端 + 越界夹取：0.2 ⇒ #33、1.0 ⇒ #FF，滑杆外溢的 0.05 / 1.4 落回端点
+        let solid = |opacity: f64| alpha(bubble_brush(Scheme::Light, BubbleMaterial::Translucent, WindowMaterial::Mica, opacity));
+        assert_eq!(solid(BUBBLE_OPACITY_MIN), 0x33);
+        assert_eq!(solid(BUBBLE_OPACITY_MAX), 0xFF);
+        assert_eq!(solid(0.05), 0x33);
+        assert_eq!(solid(1.4), 0xFF);
+        // ③ 同不透明度下三档必须分得开：半透明 0.6 < 亚克力 0.9；跟随 + 无材质 = 不透明
+        let translucent = solid(0.6);
+        let acrylic = alpha(bubble_brush(Scheme::Light, BubbleMaterial::Acrylic, WindowMaterial::Mica, 0.6));
+        let follow_none = alpha(bubble_brush(Scheme::Dark, BubbleMaterial::Follow, WindowMaterial::None, 0.2));
+        assert_eq!((translucent, acrylic, follow_none), (0x99, 0xE6, 0xFF));
+        assert!(acrylic > translucent, "切到亚克力档得真的更实");
+        // 亚克力的取样亮度只是**下限**：滑杆推到 1.0 时两档收敛（主干同样收敛）
+        assert_eq!(
+            alpha(bubble_brush(Scheme::Light, BubbleMaterial::Acrylic, WindowMaterial::Mica, 1.0)),
+            0xFF
+        );
+        // 跟随 = mica：与半透明同 alpha（主干那条分支的取样亮度只吃 0.12，本来就几乎不吃滑杆）
+        assert_eq!(
+            alpha(bubble_brush(Scheme::Light, BubbleMaterial::Follow, WindowMaterial::Mica, 0.4)),
+            alpha(bubble_brush(Scheme::Light, BubbleMaterial::Translucent, WindowMaterial::Mica, 0.4))
+        );
+    }
+
+    /// 跟随 + mica-alt 才有主干 `CoolShift` 那笔冷移（红降 3%、绿降 1.5%、蓝不动）：
+    /// 浅 #F3F3F3 → #ECEFF3、深 #202020 → #1F2020。其余档一律原色面色。
+    #[test]
+    fn bubble_mica_alt_cool_shift_only_colors_the_follow_tier() {
+        let rgb = |brush: Brush| match brush {
+            Brush::Solid(color) => (color.r, color.g, color.b),
+            Brush::Theme(_) => (0, 0, 0),
+        };
+        assert_eq!(
+            rgb(bubble_brush(Scheme::Light, BubbleMaterial::Follow, WindowMaterial::MicaAlt, 0.6)),
+            (0xEC, 0xEF, 0xF3)
+        );
+        assert_eq!(
+            rgb(bubble_brush(Scheme::Dark, BubbleMaterial::Follow, WindowMaterial::MicaAlt, 0.6)),
+            (0x1F, 0x20, 0x20)
+        );
+        // 不跟随（亚克力档）时窗口材质不参与：主干 `BuildBubbleBrush` 里 material 被钉成 acrylic
+        assert_eq!(
+            rgb(bubble_brush(Scheme::Light, BubbleMaterial::Acrylic, WindowMaterial::MicaAlt, 0.6)),
+            (0xF3, 0xF3, 0xF3)
         );
     }
 }

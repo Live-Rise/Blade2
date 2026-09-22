@@ -19,8 +19,8 @@ namespace Blade2.Dsh;
 /// $DSH_HOME/pets/&lt;id&gt;/（Blade² 下即 %LocalAppData%\Blade2\pets），
 /// 供 @linxin666/dsh-pet 的注册表在下次内核启动时收录。
 ///
-/// 安装入口三种，全部来自用户显式操作：拖放的 zip、浏览选择的 zip、
-/// 粘贴的命令行。命令行只解析不执行——识别 petdex/petdex.dev 的 slug、
+/// 安装入口四种，全部来自用户显式操作：拖放的 zip、浏览选择的 zip、
+/// 粘贴的命令行。命令行只解析不执行——识别 petdex / codex-pets 的 slug、
 /// zip 直链和本地 zip 路径，下载与解压由本类自己完成；
 /// 任何其它形态（含 curl|unzip 之类管道）一律拒绝，绝不把用户粘贴的
 /// 文本送进 shell 或 pnpm。
@@ -29,6 +29,9 @@ public sealed class DshPetStore
 {
     /// <summary>zip 体积上限（插件资产路由图集 cap 20MB，留足余量）。</summary>
     private const long MaxZipBytes = 64 * 1024 * 1024;
+
+    /// <summary>codex-pets CLI（codex-pet-share）的默认 API 根，与 CLI 的 constants.js 对齐。</summary>
+    private const string CodexPetsApiBase = "https://codex-pets.net";
 
     /// <summary>下载超时（宠物图集动辄 2MB+，给足时间）。</summary>
     private static readonly TimeSpan DownloadTimeout = TimeSpan.FromSeconds(120);
@@ -314,11 +317,74 @@ public sealed class DshPetStore
             : result;
     }
 
+    // ---------------- 安装：codex-pets（codex-pet-share） ----------------
+
+    /// <summary>
+    /// 按 codex-pets（npx codex-pets add &lt;slug&gt;）的共享宠物安装。
+    /// 与 CLI 同链路：先 GET {api}/api/pets/{slug}/share-data 拿 downloadUrl，
+    /// 下载 zip 后走与 petdex 完全相同的安装管线（校验/落盘/清单纠正）。
+    /// 安装落点是 $DSH_HOME/pets（注册表扫描源之一），与 petdex 安装一致，
+    /// 不经 CLI 也就不写 ~/.codex/pets。
+    /// </summary>
+    public async Task<PetInstallResult> InstallCodexPetAsync(string slug, CancellationToken ct = default)
+    {
+        slug = slug.Trim().ToLowerInvariant();
+        if (!PetIdPattern.IsMatch(slug))
+            return PetInstallResult.Fail($"「{slug}」不是合法的宠物标识（小写字母/数字/连字符）。");
+        string shareJson;
+        try
+        {
+            using var resp = await Http.GetAsync(
+                $"{CodexPetsApiBase}/api/pets/{Uri.EscapeDataString(slug)}/share-data", ct);
+            if ((int)resp.StatusCode is 404 or 400)
+                return PetInstallResult.Fail($"codex-pets 里没有「{slug}」。可到 codex-pets.net 核对标识。");
+            shareJson = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode)
+                return PetInstallResult.Fail($"codex-pets 查询失败：服务器返回 {(int)resp.StatusCode}。");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException)
+        {
+            return PetInstallResult.Fail($"连接 codex-pets 失败：{ex.Message}");
+        }
+        string? downloadUrl = null;
+        string? displayName = null;
+        try
+        {
+            using var doc = JsonDocument.Parse(shareJson);
+            if (!doc.RootElement.TryGetProperty("pet", out var pet) ||
+                !pet.TryGetProperty("id", out var idEl) || idEl.GetString() is null)
+            {
+                return PetInstallResult.Fail("codex-pets 返回的数据异常。");
+            }
+            downloadUrl = pet.TryGetProperty("downloadUrl", out var d) ? d.GetString() : null;
+            displayName = pet.TryGetProperty("displayName", out var n) ? n.GetString() : null;
+        }
+        catch (JsonException)
+        {
+            return PetInstallResult.Fail("codex-pets 返回的数据解析失败。");
+        }
+        if (downloadUrl is null || downloadUrl == "")
+            downloadUrl = $"/api/pets/{slug}/download";
+        // downloadUrl 可能给相对路径（CLI 的 absoluteUrl 同样按 API 根解析）
+        if (!Uri.TryCreate(downloadUrl, UriKind.Absolute, out var zipUri))
+        {
+            if (!Uri.TryCreate(CodexPetsApiBase + "/" + downloadUrl.TrimStart('/'), UriKind.Absolute, out zipUri))
+                return PetInstallResult.Fail($"codex-pets 给的下载地址「{downloadUrl}」无效。");
+        }
+        if (zipUri.Scheme != Uri.UriSchemeHttp && zipUri.Scheme != Uri.UriSchemeHttps)
+            return PetInstallResult.Fail("codex-pets 给的下载地址不是 http(s) 链接。");
+        var result = await InstallFromUrlAsync(zipUri.ToString(), ct);
+        return result.Ok && displayName is not null
+            ? PetInstallResult.Succeed(result.Pet! with { DisplayName = displayName })
+            : result;
+    }
+
     // ---------------- 安装：命令行粘贴 ----------------
 
     /// <summary>
     /// 解析粘贴的命令行并安装。只认这几种形态，其余一律拒绝：
     ///   petdex install &lt;slug&gt; / npx|pnpm dlx|npm exec petdex install &lt;slug&gt;
+    ///   codex-pets add &lt;slug&gt; / npx|pnpm dlx|npm exec codex-pets add &lt;slug&gt;
     ///   petdex.dev/pets/&lt;slug&gt; 或含 petdex.dev 宠物页链接
     ///   node …/scripts/dsh-pet install &lt;dir&gt;（插件自家 CLI）
     ///   https://.../xxx.zip（含 curl -L/-o 等包装里的单个 zip 直链）
@@ -337,6 +403,12 @@ public sealed class DshPetStore
         var cli = Regex.Match(text, @"(?:^|[\s;&|])petdex\s+install\s+([A-Za-z0-9._-]+)", RegexOptions.IgnoreCase);
         if (cli.Success)
             return await InstallPetdexSlugAsync(cli.Groups[1].Value, ct);
+
+        // 1b) codex-pets CLI 形态：npx codex-pets add <slug>
+        // （add-collection 是连字符子命令，\s+ 匹配不到，会继续往下走）
+        var codexCli = Regex.Match(text, @"(?:^|[\s;&|])codex-pets\s+add\s+([A-Za-z0-9._-]+)", RegexOptions.IgnoreCase);
+        if (codexCli.Success)
+            return await InstallCodexPetAsync(codexCli.Groups[1].Value, ct);
 
         // 2) 插件自家 CLI：node scripts/dsh-pet install <dir>（本地宠物目录）
         var own = Regex.Match(text, @"dsh-pet\s+install\s+(.+?)(?:\s+--?[A-Za-z-]+.*)?$", RegexOptions.IgnoreCase);
@@ -366,8 +438,9 @@ public sealed class DshPetStore
             return await InstallZipFileAsync(local.Groups[1].Value, ct);
 
         return PetInstallResult.Fail(
-            "认不出这个命令。支持：petdex install <宠物标识>、node scripts/dsh-pet install <目录>、" +
-            "zip 直链、本地 .zip 路径。为安全起见，粘贴的命令行只会被解析，不会被执行。");
+            "认不出这个命令。支持：petdex install <宠物标识>、codex-pets add <宠物标识>、" +
+            "node scripts/dsh-pet install <目录>、zip 直链、本地 .zip 路径。" +
+            "为安全起见，粘贴的命令行只会被解析，不会被执行。");
     }
 
     // ---------------- 删除 ----------------

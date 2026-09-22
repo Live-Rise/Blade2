@@ -195,6 +195,17 @@ pub mod boot {
     /// 上屏瞬间的目标值 = 第 1 步的**下沿** 5（KC:60 `_bootTarget = Stages[0].From`）：
     /// 条子从 0 起，首个 tick 才朝 5 爬；步骤行同时写「第 1 步，共 4 步 · 0%」。
     pub const FIRST_TARGET: f64 = STAGES[0].2;
+    /// 插件台账的抽样周期 = 主线 `DshPluginBootstrap.WatchInstall` 的那个 timer（250ms，
+    /// DshPluginBootstrap.cs:181-183）。分叉问内核的间隔与壳扫盘的间隔取同一个数，
+    /// 「第 1 段按真刻度爬」的节奏才与主干一致。
+    pub const PLUGIN_POLL_MS: u64 = 250;
+    /// 第 1 段等台账的预算：内核一直报 `ready < total`（离线拉包）时也不能把加载卡钉死。
+    /// 20s —— 主线一次 pnpm 可以几分钟，但分叉不装包，20 秒问不出结果就该往下走了。
+    pub const PLUGIN_BUDGET_MS: u64 = 20_000;
+    /// 内核报插件装载台账的 RPC 名。**主线没有这一发**（那儿的 ready/total 是壳自己数
+    /// `node_modules` 得来的，MW:2466-2467 + DshPluginBootstrap.cs:186-198）⇒ 真内核回 404，
+    /// 分叉据此退回「第 1 段匀速爬满」，见 `main.rs` 的 `report_plugin_ledger`。
+    pub const PLUGIN_RPC: &str = "plugin/installProgress";
 }
 
 /// Segoe Fluent Icons 码位，取自主干 FontIcon Glyph。
