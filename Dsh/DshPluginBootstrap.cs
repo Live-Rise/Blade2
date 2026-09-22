@@ -275,6 +275,31 @@ internal static class DshPluginBootstrap
     }
 
     /// <summary>
+    /// 读取记忆文件原文，区分三种结果：文件不存在 = 空串（删除即清空）；
+    /// 读失败（并发写窗口期的共享冲突等）= null。watch 回调不能把一次读失败
+    /// 当成「内容被清空」把编辑器抹掉，所以需要这个可区分的形态。
+    /// </summary>
+    internal static string? ReadMemoryTextOrNull()
+    {
+        try
+        {
+            return File.ReadAllText(MemoryFilePath());
+        }
+        catch (FileNotFoundException)
+        {
+            return "";
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return "";
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// 校验 JSONL 原文，返回不合法行的行号（1 起，含空行跳过后的行号）。
     /// server-memory 的 loadGraph 对每一行 JSON.parse，坏行会让它整体抛错、
     /// 记忆工具全部失效——所以保存前必须挡掉。

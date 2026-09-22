@@ -22,7 +22,7 @@ public partial class MainWindow
     private const string AboutSectionId = "about";
 
     /// <summary>GitHub 更新仓库（owner/repo）。空 = 未配置，检查更新时提示配置。</summary>
-    private const string UpdateRepo = "";
+    private const string UpdateRepo = "Live-Rise/Blade2";
 
     private static string UpdateReleasesApiUrl => string.IsNullOrEmpty(UpdateRepo)
         ? ""

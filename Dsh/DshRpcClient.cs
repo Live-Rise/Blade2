@@ -137,6 +137,10 @@ public sealed class DshRpcClient : IAsyncDisposable
     /// <summary>
     /// 附件上传：POST api/session/uploadFileBinary?sessionId=&name=，
     /// body=原始字节（application/octet-stream，cookie 鉴权）→ 返回 receiptId。
+    /// 响应信封与 CallOkAsync 同构（{ok,value}），value = {receiptId, file}；
+    /// 另兼容 {receiptId} 直出、result 信封、纯字符串三种历史形态。
+    /// ok=false 抛 DshRpcException——上传失败必须让调用方看见，静默返回 null
+    /// 会让附件从消息里凭空消失（模型收不到图，用户以为发出去了）。
     /// </summary>
     public async Task<string?> UploadBytesAsync(Uri url, byte[] bytes, CancellationToken ct = default)
     {
@@ -145,27 +149,45 @@ public sealed class DshRpcClient : IAsyncDisposable
         using var resp = await _http.PostAsync(url, content, ct);
         resp.EnsureSuccessStatusCode();
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
-        // 响应形态可能是 {receiptId} 或 result 信封——两种都兼容
         var root = doc.RootElement;
-        if (root.TryGetProperty("receiptId", out var rid))
+        if (root.ValueKind == JsonValueKind.String)
+        {
+            return root.GetString();
+        }
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+        if (root.TryGetProperty("ok", out var okEl) && okEl.ValueKind == JsonValueKind.False)
+        {
+            var err = root.TryGetProperty("error", out var e) && e.ValueKind == JsonValueKind.Object ? e : default;
+            var code = err.ValueKind == JsonValueKind.Object && err.TryGetProperty("code", out var c) && c.ValueKind == JsonValueKind.String
+                ? c.GetString() ?? "unknown" : "unknown";
+            var message = err.ValueKind == JsonValueKind.Object && err.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String
+                ? m.GetString() ?? "dsh RPC failed" : "dsh RPC failed";
+            throw new DshRpcException(code, message);
+        }
+        if (root.TryGetProperty("receiptId", out var rid) && rid.ValueKind == JsonValueKind.String)
         {
             return rid.GetString();
         }
-        if (root.TryGetProperty("result", out var result) && result.ValueKind == JsonValueKind.Object)
+        var value = root.TryGetProperty("value", out var v) ? v : default;
+        if (value.ValueKind == JsonValueKind.Undefined &&
+            root.TryGetProperty("result", out var result) && result.ValueKind == JsonValueKind.Object &&
+            result.TryGetProperty("value", out var rv))
         {
-            if (result.TryGetProperty("value", out var value))
-            {
-                if (value.ValueKind == JsonValueKind.String)
-                {
-                    return value.GetString();
-                }
-                if (value.TryGetProperty("receiptId", out var rid2))
-                {
-                    return rid2.GetString();
-                }
-            }
+            value = rv;
         }
-        return root.ValueKind == JsonValueKind.String ? root.GetString() : null;
+        if (value.ValueKind == JsonValueKind.String)
+        {
+            return value.GetString();
+        }
+        if (value.ValueKind == JsonValueKind.Object &&
+            value.TryGetProperty("receiptId", out var rid2) && rid2.ValueKind == JsonValueKind.String)
+        {
+            return rid2.GetString();
+        }
+        return null;
     }
 
     /// <summary>

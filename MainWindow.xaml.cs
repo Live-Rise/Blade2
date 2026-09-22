@@ -6190,6 +6190,26 @@ public sealed partial class MainWindow : Window
                 }
                 return;
             }
+            // 反方向配对：本地回显晚于 journal 记录上屏（图片解码的等待窗口里，
+            // 模型的逐字回答已挤到两者中间，相邻去重够不着）。记录已在屏上，
+            // 回显只把待定信息（模型标注/撤回候选）补到记录上，不再插一条。
+            if (bubble.Seq == 0 && FindJournalUserEcho(bubble.Text) is { } journal)
+            {
+                if (bubble.Model.Length > 0 && journal.Model != bubble.Model)
+                {
+                    journal.Model = bubble.Model;
+                    RepaintUserActions(journal);
+                }
+                if (ReferenceEquals(_pendingUserBubble, bubble))
+                {
+                    _pendingUserBubble = journal; // header 认领要落在屏上的气泡
+                }
+                if (ReferenceEquals(_withdrawCandidate, bubble))
+                {
+                    _withdrawCandidate = journal;
+                }
+                return;
+            }
             _messages.Insert(UserInsertIndex(), bubble);
         }
         else
@@ -6217,6 +6237,22 @@ public sealed partial class MainWindow : Window
         for (var i = _messages.Count - 1; i >= 0 && i >= _messages.Count - 12; i--)
         {
             if (_messages[i] is { Role: "user", Seq: 0 } candidate && !candidate.Withdrawn && candidate.Text == text)
+            {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>就近找同文本的 journal 用户气泡（Seq>0）。本地回显因图片解码晚到时，
+    /// 对应的 journal 记录可能已先上屏且被逐字回答挤到后面——回显认领它而不重复插一条
+    /// （FindLocalUserEcho 的反方向配对，扫描方向相反取各自最近的配对）。
+    /// 已撤回编辑的气泡跳过：重发同一文本必须照常上屏。</summary>
+    private ChatBubble? FindJournalUserEcho(string? text)
+    {
+        for (var i = _messages.Count - 1; i >= 0 && i >= _messages.Count - 12; i--)
+        {
+            if (_messages[i] is { Role: "user", Seq: > 0 } candidate && !candidate.Withdrawn && candidate.Text == text)
             {
                 return candidate;
             }
@@ -6778,33 +6814,23 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /// <summary>上传文件附件：POST /api/session/uploadFileBinary?sessionId=&name=（octet-stream）→ receiptId。</summary>
+    /// <summary>上传文件附件：POST /api/session/uploadFileBinary?sessionId=&name=（octet-stream）→ receiptId。
+    /// 失败直接抛：附件传不上去还照发文本，模型收不到文件，用户以为发出去了（静默丢附件的教训）。</summary>
     private async Task<string?> UploadFileAsync(string sessionId, AttachmentVm att)
     {
-        try
-        {
-            var bytes = await File.ReadAllBytesAsync(att.FilePath);
-            return await UploadFileBytesAsync(sessionId, bytes, att.Name);
-        }
-        catch (Exception)
-        {
-            return null;
-        }
+        var bytes = await File.ReadAllBytesAsync(att.FilePath);
+        return await UploadFileBytesAsync(sessionId, bytes, att.Name);
     }
 
-    /// <summary>字节直传（无本地路径时用：降级重发的图片字节来自 base64，落盘再读纯属绕路）。
-    /// 上传失败返回 null，由调用方决定跳过该附件还是整条消息失败。</summary>
+    /// <summary>字节直传（无本地路径时用：降级重发的图片字节来自 base64，落盘再读纯属绕路）。</summary>
     private async Task<string?> UploadFileBytesAsync(string sessionId, byte[] bytes, string name)
     {
-        try
+        if (_rpc is null)
         {
-            var baseUri = new Uri(_rpc!.BaseUri, $"api/session/uploadFileBinary?sessionId={Uri.EscapeDataString(sessionId)}&name={Uri.EscapeDataString(name)}");
-            return await _rpc.UploadBytesAsync(baseUri, bytes);
+            throw new DshRpcException("no-kernel", "内核未连接");
         }
-        catch (Exception)
-        {
-            return null;
-        }
+        var baseUri = new Uri(_rpc.BaseUri, $"api/session/uploadFileBinary?sessionId={Uri.EscapeDataString(sessionId)}&name={Uri.EscapeDataString(name)}");
+        return await _rpc.UploadBytesAsync(baseUri, bytes);
     }
 
     /// <summary>
@@ -7129,10 +7155,13 @@ public sealed partial class MainWindow : Window
                         var receipt = att.IsImage
                             ? await UploadFileBytesAsync(sid, Convert.FromBase64String(att.DataBase64), att.Name)
                             : await UploadFileAsync(sid, att);
-                        if (receipt is not null)
+                        if (receipt is null)
                         {
-                            parts.Add(new { type = "file", receiptId = receipt });
+                            // 收不到 receiptId 就没有内容块可发：整条消息失败，绝不能少个附件照发
+                            throw new DshRpcException("attachment-upload-failed",
+                                LF("附件 {0} 上传失败，消息未发送。", att.Name));
                         }
+                        parts.Add(new { type = "file", receiptId = receipt });
                     }
                 }
                 return parts;
@@ -10188,8 +10217,12 @@ public sealed partial class MainWindow : Window
             UnloadInstructionsCard();
             _memoryWatcher?.Dispose();
             _memoryWatcher = null;
+            // 停计时器必须置空（同 UnloadInstructionsCard）：留着已停的旧计时器引用，
+            // 将来 start 处加守卫就会跨分区复用坏掉的计时器，防抖静默失效 = 自动保存失败。
             _memorySaveTimer?.Stop();
+            _memorySaveTimer = null;
             _memoryRefreshTimer?.Stop();
+            _memoryRefreshTimer = null;
             _memoryRawBox = null;
             _memorySaveState = null;
             _generalShellRegions.Clear();
@@ -11287,8 +11320,8 @@ public sealed partial class MainWindow : Window
         {
             Style = AppStyle("IconButtonStyle"),
             Content = new FontIcon { Glyph = expanded ? "\uE70D" : "\uE76C", FontSize = GlyphCaption },
-        }, $"ModelAdvanced_{index}", L("容量"));
-        ToolTipService.SetToolTip(toggle, L("容量"));
+        }, $"ModelAdvanced_{index}", L("容量与模态"));
+        ToolTipService.SetToolTip(toggle, L("容量与模态"));
         toggle.Click += (_, _) =>
         {
             editor.ExpandedModelRow = editor.ExpandedModelRow == index ? -1 : index;
@@ -11333,8 +11366,55 @@ public sealed partial class MainWindow : Window
             capacities.Children.Add(MakeCapacityField(editor, model, "maxTokens", L("最大输出 token 数"),
                 editor.FamilyDeepSeek && editor.DefaultMaxTokens is { } mt ? FormatCapacity(mt) : "32K", onChanged));
             body.Children.Add(capacities);
+
+            // 视觉模态：写模型目录的 input: ["text","image"]。缺这个键时 pi-ai 默认
+            // 纯文本，session/prompt 带 image 块会被内核以 attachment-invalid 拒掉
+            // （壳只能降级成文件重发，图就白贴了）。自定义提供方（stepfun 等）尤其要勾。
+            var vision = new StackPanel { Spacing = Sp2 };
+            var visionCheck = Aut(new CheckBox
+            {
+                Content = L("支持图片输入（视觉）"),
+                IsChecked = ModelSupportsImage(model),
+            }, $"ModelVision_{index}", L("支持图片输入"));
+            visionCheck.Checked += (_, _) =>
+            {
+                editor.ModelsOverridden = true;
+                model["input"] = new JsonArray { "text", "image" };
+                onChanged();
+            };
+            visionCheck.Unchecked += (_, _) =>
+            {
+                editor.ModelsOverridden = true;
+                model.Remove("input");
+                onChanged();
+            };
+            vision.Children.Add(visionCheck);
+            vision.Children.Add(new TextBlock
+            {
+                Text = L("未勾选时内核按纯文本模型处理：发送图片会被拒收并降级为普通文件，模型看不到图。"),
+                Style = AppStyle("CaptionTextStyle"),
+                Foreground = ThemeBrush("TextTertiaryBrush"),
+                TextWrapping = TextWrapping.Wrap,
+            });
+            body.Children.Add(vision);
         }
         return card;
+    }
+
+    /// <summary>模型目录条目是否声明了 image 模态（input 数组含 "image"）。</summary>
+    private static bool ModelSupportsImage(JsonObject model)
+    {
+        if (model.TryGetPropertyValue("input", out var node) && node is JsonArray arr)
+        {
+            foreach (var item in arr)
+            {
+                if (item is JsonValue v && v.TryGetValue<string>(out var s) && s == "image")
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /// <summary>容量输入（256K / 1M / 纯数字；空 = 继承提供方默认）。非法输入不落草稿，
@@ -13664,6 +13744,13 @@ public sealed partial class MainWindow : Window
     private FileSystemWatcher? _memoryWatcher;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _memorySaveTimer;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _memoryRefreshTimer;
+    /// <summary>编辑器草稿（归窗口，同自定义指令 _instructionsDraft）：分区重渲染只换视图，
+    /// 不重读磁盘——用户改到一半被坏行挡住没存成，切走再回来内容还在，不会凭空丢失。
+    /// null = 尚未载入过。保存成功时与 _memoryLoaded 一起落定。</summary>
+    private string? _memoryDraft;
+    /// <summary>上次成功保存/载入的内容：草稿与它相同即视为无修改（改回原样撤销待保存状态，
+    /// 与自定义指令的 dirty 判定同口径），防抖计时器也不会再空转。</summary>
+    private string _memoryLoaded = "";
 
     /// <summary>壳内建分区「记忆」：Blade² 默认插件组合里记忆服务器的开关与状态。
     /// 记忆由内核 dsh-mcp-client 挂载 MCP 参考记忆服务器提供（官方 examples/mcp-memory
@@ -14111,25 +14198,56 @@ public sealed partial class MainWindow : Window
         LoadMemoryRaw();
     }
 
-    /// <summary>从文件载入原文到编辑器（程序化写 Text，不算用户修改）。</summary>
+    /// <summary>从文件载入原文到编辑器（程序化写 Text，不算用户修改）。
+    /// 草稿归窗口（同自定义指令 _instructionsDraft）：有未保存修改时切分区再回来，
+    /// 内容原样还在；草稿已落定则以磁盘为准，模型新写的记忆照常进来。</summary>
     private void LoadMemoryRaw()
     {
         if (_memoryRawBox is null)
         {
             return;
         }
-        var text = DshPluginBootstrap.ReadMemoryText();
+        if (_memoryDraft is null || !_memoryDirty)
+        {
+            _memoryDraft = DshPluginBootstrap.ReadMemoryText();
+            _memoryLoaded = _memoryDraft;
+        }
+        _memoryDirty = _memoryDraft != _memoryLoaded;
         _memorySuppressChange = true;
         try
         {
-            _memoryRawBox.Text = text;
+            _memoryRawBox.Text = _memoryDraft;
         }
         finally
         {
             _memorySuppressChange = false;
         }
+        if (!_memoryDirty)
+        {
+            _memorySaveNote = L("停止输入后自动保存");
+        }
+        UpdateMemoryStateLine();
+    }
+
+    /// <summary>外部变更（模型写入）整份重载：草稿与磁盘落定为一致，非 dirty 时才走到这。</summary>
+    private void ReloadMemoryFromDisk()
+    {
+        var text = DshPluginBootstrap.ReadMemoryText();
+        _memoryDraft = text;
+        _memoryLoaded = text;
         _memoryDirty = false;
-        _memorySaveNote = L("停止输入后自动保存");
+        if (_memoryRawBox is not null)
+        {
+            _memorySuppressChange = true;
+            try
+            {
+                _memoryRawBox.Text = text;
+            }
+            finally
+            {
+                _memorySuppressChange = false;
+            }
+        }
         UpdateMemoryStateLine();
     }
 
@@ -14139,24 +14257,31 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
-        _memoryDirty = true;
+        _memoryDraft = _memoryRawBox.Text ?? "";
+        // 与上次落定内容比对：改回原样即撤销待保存状态（unconditional dirty 会让
+        // 改回原内容后永远显示"有未保存的修改"，防抖计时器也一直空转）。
+        _memoryDirty = _memoryDraft != _memoryLoaded;
         UpdateMemoryStateLine();
         // 防抖：停手约 1 秒才落盘，避免逐字符写文件
         if (_memorySaveTimer is { } timer)
         {
             timer.Stop();
-            timer.Start();
+            if (_memoryDirty)
+            {
+                timer.Start();
+            }
         }
     }
 
-    /// <summary>立即保存（防抖到点、离开分区时调用）。坏行挡住保存——server 的 loadGraph 遇坏行会整体抛错。</summary>
+    /// <summary>立即保存（防抖到点、离开分区时调用）。坏行挡住保存——server 的 loadGraph 遇坏行会整体抛错。
+    /// 被挡时 dirty 保持、草稿留住内容：用户改对再存，期间切分区也不会丢。</summary>
     private void SaveMemoryRaw()
     {
         if (_memoryRawBox is null || !_memoryDirty)
         {
             return;
         }
-        var text = _memoryRawBox.Text ?? "";
+        var text = _memoryDraft ?? _memoryRawBox.Text ?? "";
         var bad = DshPluginBootstrap.MemoryBadLines(text);
         if (bad.Count > 0)
         {
@@ -14176,6 +14301,8 @@ public sealed partial class MainWindow : Window
             UpdateMemoryStateLine();
             return;
         }
+        _memoryLoaded = text;
+        _memoryDraft = text;
         _memoryDirty = false;
         _memorySaveNote = LF("已自动保存 · {0}", DateTime.Now.ToString("HH:mm:ss"));
         UpdateMemoryStateLine();
@@ -14188,7 +14315,7 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
-        var lines = (_memoryRawBox?.Text ?? "").Split('\n').Count(l => l.Trim().Length > 0);
+        var lines = (_memoryDraft ?? _memoryRawBox?.Text ?? "").Split('\n').Count(l => l.Trim().Length > 0);
         var note = _memoryDirty ? L("有未保存的修改…") : _memorySaveNote;
         _memorySaveState.Text = LF("共 {0} 行 · {1}", lines, note);
     }
@@ -14237,13 +14364,19 @@ public sealed partial class MainWindow : Window
                 refreshTimer.Stop();
                 // 自己保存触发的回环：内容相同就不重载，避免编辑器光标被重置。
                 // 行结尾差异（用户输入 \r\n / server 写 \n）不算内容差异。
-                var onDisk = DshPluginBootstrap.ReadMemoryText().Replace("\r\n", "\n");
-                var inBox = (_memoryRawBox?.Text ?? "").Replace("\r\n", "\n");
+                // 读不到文件（并发写窗口期的共享冲突）时保持原样：把一次读失败
+                // 当成"文件被清空"会把编辑器内容整个抹掉。
+                var onDisk = DshPluginBootstrap.ReadMemoryTextOrNull()?.Replace("\r\n", "\n");
+                if (onDisk is null)
+                {
+                    return;
+                }
+                var inBox = (_memoryDraft ?? "").Replace("\r\n", "\n");
                 if (onDisk == inBox)
                 {
                     return;
                 }
-                LoadMemoryRaw();
+                ReloadMemoryFromDisk();
             };
             _memoryRefreshTimer = refreshTimer;
 
