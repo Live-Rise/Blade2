@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.Encodings.Web;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -299,38 +300,66 @@ internal static class DshPluginBootstrap
         }
     }
 
-    /// <summary>
-    /// 校验 JSONL 原文，返回不合法行的行号（1 起，含空行跳过后的行号）。
-    /// server-memory 的 loadGraph 对每一行 JSON.parse，坏行会让它整体抛错、
-    /// 记忆工具全部失效——所以保存前必须挡掉。
-    /// </summary>
-    internal static List<int> MemoryBadLines(string text)
+    private static readonly JsonSerializerOptions MemoryLineOptions = new()
     {
+        // 本地文件、人要读：中文 observation 保持原文，不转 \uXXXX
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
+    /// <summary>
+    /// 把编辑器原文归一成合法 JSONL。两类行分开处理：
+    ///   · 以 { 起头的行 = 手写 entity/relation，原样保留，但必须是带 type 的合法 JSON
+    ///     （坏行号随第三个返回值带回，由调用方挡住保存并显示原因）；
+    ///   · 其余非空行 = 用户写的自然语言。server-memory 只认 entity/relation，
+    ///     非 JSON 行会让 loadGraph 整体抛错、全部记忆工具失效；直接挡下保存又等于
+    ///     编辑器对普通用户不可用。折中：包成一条 entity 观察行落盘——话还是用户的原话，
+    ///     模型能通过记忆工具读到，loadGraph 也不炸。
+    /// 返回 (归一化文本, 转换行数, 坏 JSON 行号[同 MemoryBadLines 编号])。
+    /// </summary>
+    internal static (string Text, int Converted, List<int> Bad) MemoryNormalize(string text)
+    {
+        var newline = text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+        var lines = text.Split('\n');
         var bad = new List<int>();
+        var converted = 0;
         var lineNo = 0;
-        foreach (var raw in text.Split('\n'))
+        for (var i = 0; i < lines.Length; i++)
         {
-            var line = raw.Trim();
+            var line = lines[i].Trim();
             if (line.Length == 0)
             {
                 continue;
             }
             lineNo++;
-            try
+            if (line.StartsWith("{", StringComparison.Ordinal))
             {
-                using var doc = JsonDocument.Parse(line);
-                if (!doc.RootElement.TryGetProperty("type", out var t) ||
-                    t.ValueKind != JsonValueKind.String)
+                try
+                {
+                    using var doc = JsonDocument.Parse(line);
+                    if (!doc.RootElement.TryGetProperty("type", out var t) ||
+                        t.ValueKind != JsonValueKind.String)
+                    {
+                        bad.Add(lineNo);
+                    }
+                }
+                catch (Exception)
                 {
                     bad.Add(lineNo);
                 }
+                continue;
             }
-            catch (Exception)
+            var label = line.Length <= 24 ? line : line[..24] + "…";
+            lines[i] = JsonSerializer.Serialize(new
             {
-                bad.Add(lineNo);
-            }
+                type = "entity",
+                name = label,
+                entityType = "note",
+                observations = new[] { line },
+            }, MemoryLineOptions);
+            converted++;
         }
-        return bad;
+        var normalized = string.Join(newline, lines.Select(l => l.TrimEnd('\r')));
+        return (normalized, converted, bad);
     }
 
     /// <summary>

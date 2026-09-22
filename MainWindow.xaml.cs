@@ -1575,12 +1575,13 @@ public sealed partial class MainWindow : Window
         ["已安装，未挂载"] = "Installed, not mounted",
         ["未安装（离线？启动后自动重试）"] = "Not installed (offline? retried on next launch)",
         ["记忆内容"] = "Memory contents",
-        ["直接编辑记忆文件（JSONL，每行一个实体或关系），停止输入后自动保存；模型写入时自动重新载入。"] =
-            "Edit the memory file (JSONL, one entity or relation per line) directly; it auto-saves when you stop typing and reloads automatically when the model writes.",
+        ["直接编辑记忆文件（JSONL）。停止输入或点到别处即自动保存；自然语言行会自动转成记忆实体；模型写入时自动重新载入。"] =
+            "Edit the memory file (JSONL) directly. It auto-saves when you stop typing or click elsewhere; plain-language lines are turned into memory entities automatically; reloads when the model writes.",
         ["记忆文件内容"] = "Memory file contents",
         ["共 {0} 行 · {1}"] = "{0} lines · {1}",
         ["有未保存的修改…"] = "Unsaved changes…",
         ["已自动保存 · {0}"] = "Auto-saved · {0}",
+        ["已自动保存 · {0} · {1} 行文本已转为记忆实体"] = "Auto-saved · {0} · {1} line(s) turned into memory entities",
         ["停止输入后自动保存"] = "Auto-saves when you stop typing",
         ["第 {0} 行不是合法 JSON，已阻止保存。"] = "Line {0} is not valid JSON; save blocked.",
         ["保存失败：{0}"] = "Save failed: {0}",
@@ -7088,6 +7089,28 @@ public sealed partial class MainWindow : Window
         var sid = _activeSessionId!;
         // 降级标记提到 try 外：发送成功后的本地回显也要读它（决定是否登记 journal 图片认领）
         var imagesAsFiles = false;
+        // 本地图片回显的 journal 认领登记：必须在发送之前完成。prompt 一受理，user/message
+        // 就已落盘，follow 首帧/补拉页随时把它带上屏——登记若晚于任何一次 await，journal 侧
+        // 按名认领不到就会回读字节重贴，本地回显 + 回放 = 同一张图出现两次（已实测复现）。
+        // 发送成功则计数由 journal 侧逐条消耗；发送被拒则原样释放（ReleaseClaims 幂等），
+        // 残留计数会把下一次同名图误认成"已在屏上"而不再贴出。
+        var claimedImages = new List<string>();
+        void ReleaseClaims()
+        {
+            foreach (var name in claimedImages)
+            {
+                ReleaseLocalImageEcho(name);
+            }
+            claimedImages.Clear();
+        }
+        foreach (var att in attachments)
+        {
+            if (att.IsImage && !imagesAsFiles)
+            {
+                claimedImages.Add(att.Name);
+                _localImageEchoes[att.Name] = _localImageEchoes.TryGetValue(att.Name, out var left) ? left + 1 : 1;
+            }
+        }
         try
         {
             // 模式选择：随消息把当前会话模型+推理档落到所选值（用 selectModel；失败不阻塞发送）。
@@ -7187,6 +7210,7 @@ public sealed partial class MainWindow : Window
                 // 内核 sharp 拒收图片字节（壳认不出的格式/文件损坏）。附件入口已按魔数
                 // 规范化，能走到这里的是字节本身坏掉的情况：降级为文件附件重发一次。
                 imagesAsFiles = true;
+                ReleaseClaims(); // 降级后 journal 落的是文件块（本就不贴图）：认领登记作废
                 content = await BuildContentAsync();
                 await _rpc.CallOkAsync("session/prompt", new
                 {
@@ -7212,12 +7236,14 @@ public sealed partial class MainWindow : Window
         }
         catch (DshRpcException ex)
         {
+            ReleaseClaims(); // 发送失败：认领登记作废，别把计数留给下一次同名图
             _ = ShowErrorAsync(LF("发送失败：{0}", ex.Message));
             return;
         }
         catch (Exception)
         {
             // 网络/连接层异常：不沿 async void 上抛（0xc000027b 教训）
+            ReleaseClaims();
             return;
         }
         await FollowSessionAsync(sid);
@@ -7265,13 +7291,8 @@ public sealed partial class MainWindow : Window
             }
             foreach (var (name, image) in echoedImages)
             {
-                // 登记待认领：journal 的 user/message 到达时按名认领，本地回显与历史回放不重复贴图。
-                // 降级为文件发送时不登记：journal 回放的是文件块（本就不贴图），登记反而会
-                // 误认领后续同名真图片。
-                if (!imagesAsFiles)
-                {
-                    _localImageEchoes[name] = _localImageEchoes.TryGetValue(name, out var left) ? left + 1 : 1;
-                }
+                // 认领登记已在发送前完成（claimedImages，先于任何 await）：这里只贴本地回显。
+                // journal 的 user/message 到达时按名认领，本地回显与历史回放不重复贴图。
                 _messages.Insert(UserInsertIndex(), new ChatBubble { Role = "user-image", Text = name, Image = image });
             }
             if (echoedImages.Count > 0)
@@ -13737,6 +13758,9 @@ public sealed partial class MainWindow : Window
     private TextBlock? _memorySaveState;
     /// <summary>有未保存修改：watcher 不得覆盖用户正在编辑的内容。</summary>
     private bool _memoryDirty;
+    /// <summary>上一次保存是否被挡下（坏 JSON 行/写失败）：dirty 时状态行要显示挡住的原因，
+    /// 而不是一句"有未保存的修改"——否则用户不知道为什么停下不保存。</summary>
+    private bool _memoryBlocked;
     /// <summary>程序化写 Text 时抑制 TextChanged（否则会把「载入」误判成用户修改）。</summary>
     private bool _memorySuppressChange;
     /// <summary>状态行的保存注记（错误信息也走这里，保留 dirty 让用户继续改）。</summary>
@@ -14170,7 +14194,7 @@ public sealed partial class MainWindow : Window
     {
         var rows = NewCard(
             L("记忆内容"),
-            L("直接编辑记忆文件（JSONL，每行一个实体或关系），停止输入后自动保存；模型写入时自动重新载入。"));
+            L("直接编辑记忆文件（JSONL）。停止输入或点到别处即自动保存；自然语言行会自动转成记忆实体；模型写入时自动重新载入。"));
 
         _memoryRawBox = new TextBox
         {
@@ -14273,16 +14297,17 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /// <summary>立即保存（防抖到点、离开分区时调用）。坏行挡住保存——server 的 loadGraph 遇坏行会整体抛错。
-    /// 被挡时 dirty 保持、草稿留住内容：用户改对再存，期间切分区也不会丢。</summary>
+    /// <summary>立即保存（防抖到点、失焦、离开分区时调用）。自然语言行先转成 entity 观察行
+    /// （server 只认 entity/relation，非 JSON 行会让 loadGraph 整体抛错、记忆工具全失效）；
+    /// 手写 JSON 行有错时挡住保存并显示原因，dirty 保留、草稿留住内容：用户改对再存。</summary>
     private void SaveMemoryRaw()
     {
         if (_memoryRawBox is null || !_memoryDirty)
         {
             return;
         }
-        var text = _memoryDraft ?? _memoryRawBox.Text ?? "";
-        var bad = DshPluginBootstrap.MemoryBadLines(text);
+        var draft = _memoryDraft ?? _memoryRawBox.Text ?? "";
+        var (normalized, converted, bad) = DshPluginBootstrap.MemoryNormalize(draft);
         if (bad.Count > 0)
         {
             var shown = string.Join(", ", bad.Take(5));
@@ -14290,25 +14315,46 @@ public sealed partial class MainWindow : Window
             {
                 shown += "…";
             }
+            _memoryBlocked = true;
             _memorySaveNote = LF("第 {0} 行不是合法 JSON，已阻止保存。", shown);
             UpdateMemoryStateLine();
             return; // 保持 dirty：用户改对再存
         }
-        var err = DshPluginBootstrap.SaveMemoryText(text);
+        var err = DshPluginBootstrap.SaveMemoryText(normalized);
         if (err.Length > 0)
         {
+            _memoryBlocked = true;
             _memorySaveNote = LF("保存失败：{0}", err);
             UpdateMemoryStateLine();
             return;
         }
-        _memoryLoaded = text;
-        _memoryDraft = text;
+        // 归一化把自然语言行换成了 entity 行：编辑器跟着磁盘走。用户看见自己写的话落在
+        // 图里（observation），此后这些行以 { 起头，再编辑就是 JSON 行、不再转换。
+        if (!string.Equals(normalized, draft, StringComparison.Ordinal))
+        {
+            _memoryDraft = normalized;
+            _memorySuppressChange = true;
+            try
+            {
+                _memoryRawBox.Text = normalized;
+            }
+            finally
+            {
+                _memorySuppressChange = false;
+            }
+        }
+        _memoryLoaded = normalized;
+        _memoryDraft = normalized;
         _memoryDirty = false;
-        _memorySaveNote = LF("已自动保存 · {0}", DateTime.Now.ToString("HH:mm:ss"));
+        _memoryBlocked = false;
+        _memorySaveNote = converted > 0
+            ? LF("已自动保存 · {0} · {1} 行文本已转为记忆实体", DateTime.Now.ToString("HH:mm:ss"), converted)
+            : LF("已自动保存 · {0}", DateTime.Now.ToString("HH:mm:ss"));
         UpdateMemoryStateLine();
     }
 
-    /// <summary>状态行：非空行数 + 保存注记。</summary>
+    /// <summary>状态行：非空行数 + 保存注记。被挡下时显示挡住的原因（dirty 的第一优先级），
+    /// 否则未保存显示进行提示、已保存显示落盘时间——"有未保存的修改…"不能盖住真正的错误。</summary>
     private void UpdateMemoryStateLine()
     {
         if (_memorySaveState is null)
@@ -14316,7 +14362,7 @@ public sealed partial class MainWindow : Window
             return;
         }
         var lines = (_memoryDraft ?? _memoryRawBox?.Text ?? "").Split('\n').Count(l => l.Trim().Length > 0);
-        var note = _memoryDirty ? L("有未保存的修改…") : _memorySaveNote;
+        var note = _memoryBlocked ? _memorySaveNote : _memoryDirty ? L("有未保存的修改…") : _memorySaveNote;
         _memorySaveState.Text = LF("共 {0} 行 · {1}", lines, note);
     }
 
