@@ -15,7 +15,7 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <PublishReadyToRun>false</PublishReadyToRun>
-    <Version>0.8.1.0</Version>
+    <Version>0.8.2.0</Version>
     <AssemblyName>Blade2</AssemblyName>
     <!-- 版本信息里的显示名走品牌名：无包形态下 AppNotificationManager 的无参 Register 让
          shell 解析发送者显示名，取的是 exe 的版本信息（FileDescription 由 AssemblyTitle 生成，
@@ -81,8 +81,12 @@
     <ApplicationDefinition Remove="_styles_*.xaml" />
     <Compile Remove="artifacts\**" />
     <Compile Remove="probe\**" />
-    <Compile Remove="_scratch\**" />
-  </ItemGroup>
+        <Compile Remove="_scratch\**" />
+        <!-- ReleaseSetup/ 是独立安装器工程（自带 Blade2Setup.csproj + obj）。默认通配的
+             obj/** 排除只锚定根目录，嵌套 obj 里的生成物会被编进 Blade2，CS0579 重复特性；
+             它有独立 csproj，排除不影响它自己的构建。 -->
+        <Compile Remove="ReleaseSetup\**" />
+    </ItemGroup>
 
 </Project>
 

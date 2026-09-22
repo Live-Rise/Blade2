@@ -608,23 +608,21 @@
                                 </ListView>
                             </Border>
 
-                            <!-- 历史快速定位（对标官方 TurnNavigator）：聊天流右缘一列轮次刻度，
+                            <!-- 历史快速定位（对标官方 TurnNavigator）：聊天视口右缘一列轮次刻度，
                                  数据源 = 内核 turnOutline 投影（dsh-session-turn-outline）。
-                                 收起（Collapsed）时不占宽；悬停刻度出预览卡（prompt + response 摘要），
+                                 整列在聊天视口带内垂直居中，高度 = min(自然高, 带高-64, 420)
+                                 （官方 frame 同语义），超出带高时 rail 内部滚动；收起（Collapsed）
+                                 时不占宽。悬停刻度出预览卡（prompt + response 摘要），
                                  点击滚动到该轮首条用户气泡。跨行 0-1（含会话头）保持右缘对齐。 -->
                             <Grid x:Name="TurnRailHost" Grid.Row="0" Grid.RowSpan="2" Grid.Column="1"
-                                  Width="44" Margin="0,4,4,4"
+                                  Width="48" Margin="0,0,4,0"
+                                  VerticalAlignment="Center"
                                   Visibility="Collapsed"
                                   AutomationProperties.AutomationId="TurnRailHost"
                                   AutomationProperties.Name="历史快速定位">
-                                <Grid.ColumnDefinitions>
-                                    <!-- 列 1 = 刻度列（ListView）；列 0 = 悬停预览卡（横向左偏出）。 -->
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <ListView x:Name="TurnRailMarks" Grid.Column="0"
+                                <ListView x:Name="TurnRailMarks"
                                           SelectionMode="None" IsItemClickEnabled="False"
-                                          Padding="0,8"
+                                          Padding="0,2"
                                           VerticalAlignment="Stretch"
                                           HorizontalAlignment="Right"
                                           ScrollViewer.HorizontalScrollBarVisibility="Disabled"
@@ -637,33 +635,47 @@
                                             <Setter Property="HorizontalContentAlignment" Value="Center" />
                                             <Setter Property="Padding" Value="0" />
                                             <Setter Property="MinHeight" Value="0" />
-                                            <Setter Property="Margin" Value="0,3" />
+                                            <Setter Property="Margin" Value="0" />
                                         </Style>
                                     </ListView.ItemContainerStyle>
                                     <ListView.ItemTemplate>
-                                        <!-- 刻度 = 右缘小圆条（活动轮更长）。ListViewItem 本身是命中区；
-                                             Tapped 由 OnTurnRailMarkClick 处理（sender 是 ListViewItem）。 -->
+                                        <!-- 刻度 = 右缘小圆条（活动轮更长）。每槽 20dip 高，
+                                             槽内铺透明矩形做命中区——刻度本体只有 24×6，没它指针得
+                                             精确压在刻度上；ListViewItem 无背景不参与命中。
+                                             Tapped 由 OnTurnRailMarkClick 处理（OriginalSource 即刻度项）。 -->
                                         <DataTemplate x:DataType="local:TurnRailMark">
-                                            <Rectangle Width="{x:Bind MarkWidth}" Height="4"
-                                                       HorizontalAlignment="Right"
-                                                       RadiusX="2" RadiusY="2"
-                                                       Fill="{ThemeResource AccentBrush}"
-                                                       Opacity="{x:Bind MarkOpacity}" />
+                                            <Grid Height="20">
+                                                <Rectangle Fill="Transparent" />
+                                                <!-- 必须 OneWay：x:Bind 默认 OneTime 只算一次值，不跟踪
+                                                     INotifyPropertyChanged，活动/悬浮态改了 MarkWidth、
+                                                     MarkOpacity 也传不到 UI（刻度永远一个样）。
+                                                     宽度三态：常态 24、悬浮 32、活动 40（官方 mark 三态，
+                                                     按 200% 缩发放大）。 -->
+                                                <Rectangle Width="{x:Bind MarkWidth, Mode=OneWay}" Height="6"
+                                                           HorizontalAlignment="Right" VerticalAlignment="Center"
+                                                           RadiusX="3" RadiusY="3"
+                                                           Fill="{ThemeResource AccentBrush}"
+                                                           Opacity="{x:Bind MarkOpacity, Mode=OneWay}" />
+                                            </Grid>
                                         </DataTemplate>
                                     </ListView.ItemTemplate>
                                 </ListView>
                                 <!-- 悬停预览卡：内容由 ShowTurnRailPreview 代码填充（预览文案来自投影，
-                                     非静态文本），横向左偏出聊天流。 -->
-                                <Border x:Name="TurnRailPreviewCard" Grid.Column="0"
+                                     非静态文本）。负左边距让整卡右缘停在 rail 左缘再往左 10px
+                                     （官方 preview right:calc(100% + 10px)），不遮刻度本身；
+                                     纵向 Top 由代码按刻度中心跟随、夹在 rail 上下沿内
+                                     （官方 preview top clamp 同语义）。 -->
+                                <Border x:Name="TurnRailPreviewCard"
                                         Width="276" HorizontalAlignment="Left" VerticalAlignment="Top"
-                                        Margin="0"
+                                        Margin="-286,0,0,0"
                                         Visibility="Collapsed"
                                         Background="{ThemeResource CardBrush}"
                                         BorderBrush="{ThemeResource StrokeBrush}"
                                         BorderThickness="1"
                                         CornerRadius="{ThemeResource CornerMedium}"
                                         Padding="10,8"
-                                        IsHitTestVisible="False">
+                                        IsHitTestVisible="False"
+                                        AutomationProperties.AutomationId="TurnRailPreviewCard">
                                     <StackPanel Spacing="{ThemeResource Space4}">
                                         <TextBlock x:Name="TurnRailPreviewPrompt"
                                                    Style="{StaticResource BodyTextStyle}"

@@ -46,11 +46,17 @@ public partial class App : Application
         // ----AppNotificationActivated: 拉起本进程，激活参数经 AppInstance 透传。正常建窗并
         // 置前即完成响应；已在运行的实例不走这条路，走 ShellToast.NotificationInvoked。
         var activated = AppInstance.GetCurrent().GetActivatedEventArgs();
+        var toastArgument = "";
         if (activated.Kind == ExtendedActivationKind.AppNotification)
         {
-            System.Diagnostics.Debug.WriteLine("[shell-toast] cold-start via app notification activation");
+            // AppInstance 只给基类 AppActivationArguments，具体参数在 Data 里：
+            // AppNotifications 的 AppNotificationActivatedEventArgs，Argument 形如 "action=update"。
+            toastArgument = activated.Data is Microsoft.Windows.AppNotifications.AppNotificationActivatedEventArgs notificationArgs
+                ? notificationArgs.Argument ?? ""
+                : "";
+            System.Diagnostics.Debug.WriteLine($"[shell-toast] cold-start via app notification activation: {toastArgument}");
         }
-        MainWindow = new MainWindow();
+        MainWindow = new MainWindow(toastArgument);
         MainWindow.Activate();
     }
 }

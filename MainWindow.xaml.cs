@@ -1505,8 +1505,8 @@ public sealed partial class MainWindow : Window
         ["宠物插件还没就位：安装包缺失或内核还没加载它。装过宠物后重启一次 Blade² 即可；引导器下次启动会自动重试安装。"] =
             "The pet plugin is not ready yet: the package is missing or the kernel has not loaded it. Install a pet and restart Blade² once; the bootstrapper retries the install on the next launch.",
         ["正在读取宠物清单…"] = "Reading the pet list…",
-        ["一只宠物都没有。装一个：把 Codex 宠物 zip 拖到下面的安装区，或粘贴 petdex install <宠物标识>。"] =
-            "No pets yet. Install one: drop a Codex pet zip onto the install area below, or paste petdex install <pet-id>.",
+        ["一只宠物都没有。装一个：把 Codex 宠物 zip 拖到下面的安装区，或粘贴 petdex install / codex-pets add <宠物标识>。"] =
+            "No pets yet. Install one: drop a Codex pet zip onto the install area below, or paste petdex install / codex-pets add <pet-slug>.",
         ["宠物库"] = "Pet library",
         ["已收录的宠物（插件内置 + ~/.codex/pets + 本机安装的）。切换立即生效。"] =
             "Pets on record (plugin built-ins + ~/.codex/pets + locally installed). Switching applies immediately.",
@@ -1531,7 +1531,7 @@ public sealed partial class MainWindow : Window
             "Drag a Codex pet zip here from File Explorer to install it.",
         ["浏览并安装"] = "Browse and install",
         ["浏览并安装宠物压缩包"] = "Browse for a pet archive and install it",
-        ["petdex install <宠物标识>"] = "petdex install <pet-slug>",
+        ["petdex install 或 codex-pets add <宠物标识>"] = "petdex install or codex-pets add <pet-slug>",
         ["宠物安装命令行"] = "Pet install command line",
         ["安装"] = "Install",
         ["按命令行安装宠物"] = "Install a pet from the command line",
@@ -2226,7 +2226,7 @@ public sealed partial class MainWindow : Window
         public bool Focused;
     }
 
-    public MainWindow()
+    public MainWindow(string? coldStartToastArgument = null)
     {
         InitializeComponent();
         ShellTranslateFunc = L;
@@ -2242,7 +2242,7 @@ public sealed partial class MainWindow : Window
         InstallShellIntegration();   // 窗口子类化：system 偏好实时跟随 Windows 深浅色 + 托盘图标
         ShellToast.EnsureRegistered(); // 系统 toast 提前注册（打包形态应成功；失败走托盘气球兜底并留诊断）
         ShellToast.BalloonFallback = ShowTrayBalloon;                   // dev 无包身份：退化托盘气球
-        ShellToast.ActivateRequested = () => PostUi(ActivateFromTray);  // 通知点击回前台
+        ShellToast.ActivateRequested = arg => PostUi(() => HandleToastActivation(arg));  // 通知点击回前台（带动作参数）
         WireRunStatsUi();            // 运行状态条两胶囊的面板弹出
         ResizeToWorkableDefault();
         Activated += OnWindowActivated; // 视频皮肤失焦暂停：焦点变化驱动播放/暂停
@@ -2388,6 +2388,13 @@ public sealed partial class MainWindow : Window
 
         // 内核不再先于界面启动：壳先亮相，内核在后台起，进度摆在主页加载卡上。
         StartKernelBoot();
+        ScheduleUpdateCheck(); // 启动静默检查更新：有新版本且未提醒过 → 系统通知一次
+        if (!string.IsNullOrEmpty(coldStartToastArgument))
+        {
+            // 冷启动由 toast 点击拉起（进程此前没在跑）：等窗口激活后走与热启动同一条动作路由。
+            // PostUi 排在本轮构造之后执行，那时 Activate() 已调用、窗口已在位。
+            PostUi(() => HandleToastActivation(coldStartToastArgument));
+        }
     }
 
     /// <summary>
@@ -2645,6 +2652,8 @@ public sealed partial class MainWindow : Window
         await Task.Delay(TimeSpan.FromMilliseconds(350), ct);
         HideKernelBootPanel();
         PostUi(UpdateEmptyState);
+        // 冷启动来自更新通知时，此刻才补跳设置页的「关于」分区（此前内核没连上，跳不了）。
+        PostUi(FlushPendingUpdateDeepLink);
     }
 
     private Task OnSessionAddedAsync(JsonElement _) => RefreshAllListsAsync();

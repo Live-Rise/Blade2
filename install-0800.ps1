@@ -1,5 +1,5 @@
 <#
-  install-0800.ps1 - Install Blade2 0.8.1 (MSIX)
+  install-0800.ps1 - Install Blade2 0.8.2 (MSIX)
 
   Steps:
     1) Kill running Blade2 process tree + orphaned dsh kernel (strict matching)
@@ -21,7 +21,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$ExpectedVersion = '0.8.1.0'
+$ExpectedVersion = '0.8.2.0'
 $Thumbprint      = 'E2B4870249B661186E86F816E2A403261E74F6A0'
 $PackageName     = 'Blade2'
 $Signtool        = 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe'
@@ -32,17 +32,17 @@ function Write-Warn2($t) { Write-Host "  [WARN] $t" -ForegroundColor Yellow }
 
 # ---------- 0. Resolve msix path ----------
 if (-not $MsixPath) {
-  $candidate = Join-Path $PSScriptRoot "AppxPkgs0800\$PackageName`_0.8.1.0_x64_Test\$PackageName`_0.8.1.0_x64.msix"
+  $candidate = Join-Path $PSScriptRoot "AppxPkgs0800\$PackageName`_0.8.2.0_x64_Test\$PackageName`_0.8.2.0_x64.msix"
   if (Test-Path -LiteralPath $candidate) {
     $MsixPath = $candidate
   } else {
     $found = Get-ChildItem -LiteralPath $PSScriptRoot -Recurse -Filter "*.msix" -ErrorAction SilentlyContinue |
-             Where-Object { $_.Name -like "*0.8.1*" } | Select-Object -First 1
+             Where-Object { $_.Name -like "*0.8.2*" } | Select-Object -First 1
     if ($found) { $MsixPath = $found.FullName }
   }
 }
 if (-not $MsixPath -or -not (Test-Path -LiteralPath $MsixPath)) {
-  throw "msix for 0.8.1 not found. Pass -MsixPath or run the Release build first."
+  throw "msix for 0.8.2 not found. Pass -MsixPath or run the Release build first."
 }
 
 Write-Head "Target msix"

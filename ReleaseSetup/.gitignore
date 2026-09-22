@@ -1,0 +1,4 @@
+# Blade2-Setup.exe 的构建中间产物（发布时从 AppxPkgs0800 复制最新 MSIX 进 payload/）
+bin/
+obj/
+payload/

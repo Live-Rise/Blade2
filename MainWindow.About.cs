@@ -132,6 +132,8 @@ public partial class MainWindow
         _aboutDownloadButton.Click += (_, _) => _ = DownloadAndInstallUpdateAsync();
         row.Children.Add(_aboutDownloadButton);
         updCard.Children.Add(MakeRow(L("GitHub Release"), string.IsNullOrEmpty(UpdateRepo) ? null : UpdateReleasesPageUrl, row));
+        // 启动静默检查已命中的新版本直接铺到卡上：点通知跳来的用户不必再点「检查更新」。
+        ApplySilentUpdateToAboutCard();
     }
 
     private TextBlock SelectableVersionText(string version) => new()

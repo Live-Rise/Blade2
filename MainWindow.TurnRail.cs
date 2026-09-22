@@ -13,8 +13,8 @@ namespace Blade2;
 /// <summary>
 /// 聊天页右侧历史快速定位（turn rail）：内核 dsh-session-turn-outline 的 turnOutline 投影
 /// 提供全量轮次（seq + 首条用户 prompt 预览 + 最终答案预览），壳侧将其渲染成右侧一列
-/// 圆点刻度（对齐官方 Web UI TurnNavigator 的最小同语义：hover 预览、点击跳转、
-/// 活动轮次高亮），点击跳转滚动到该轮首条用户气泡。
+/// 圆点刻度（对齐官方 Web UI TurnNavigator 的最小同语义：rail 在聊天视口带内垂直居中、
+/// hover 预览、点击跳转、活动轮次高亮），点击跳转滚动到该轮首条用户气泡。
 ///
 /// 数据来源两处，与既有投影键（plan/permissions/schedule/goal）同一路径：
 /// 1) session/list 的 projections.values["turnOutline"]（快照，RefreshSessionStateFromListAsync 补齐）；
@@ -41,16 +41,34 @@ public partial class MainWindow
 
     private const int TurnRailSampleIntervalMs = 500;
 
+    /// <summary>刻度槽高（每格含 6dip 刻度 + 命中区）：官方定距 10px，按本机 200% 缩放
+    /// 翻倍，否则刻度细到看不见、槽也太小不好命中。</summary>
+    private const double TurnRailPitch = 20;
+    /// <summary>rail 上下端留白（官方 RAIL_INSET_PX）：ListView Padding。</summary>
+    private const double TurnRailInset = 2;
+    /// <summary>rail 居中时带内上下最少让出的空间（官方 height:min(…, band-64px, 420px)）。</summary>
+    private const double TurnRailBandInset = 64;
+    /// <summary>rail 高度上限（官方 420px）。</summary>
+    private const double TurnRailMaxHeight = 420;
+    /// <summary>预览卡标称高度（官方 --turn-preview-height）：卡心对准刻度中心按半值算。</summary>
+    private const double TurnRailPreviewHeight = 100;
+    /// <summary>预览卡相对 rail 左缘的左偏移（负值整卡左偏出 rail，官方 right:calc(100% + 10px)）。</summary>
+    private const double TurnRailPreviewLeftOffset = -286;
+
     /// <summary>构造期一次性挂接 rail 事件与数据源。</summary>
     private void InitTurnRail()
     {
         TurnRailMarks.ItemsSource = _turnRailMarks;
         TurnRailMarks.PointerMoved += OnTurnRailPointerMoved;
         TurnRailMarks.PointerExited += OnTurnRailPointerExited;
+        TurnRailMarks.Tapped += OnTurnRailMarkClick;
         // 活动轮次跟踪：只钩一次（内部滚动面在首个非空列表布局后出现，
         // Loaded/SizeChanged 兜底——空会话首屏没有滚动面）。
         ChatList.Loaded += (_, _) => HookTurnRailScroll();
         ChatList.SizeChanged += (_, _) => HookTurnRailScroll();
+        // 居中带高随时变：作曲器长高（多行输入）、文件右栏开关、目标条/提问卡显隐
+        // 都会改 ChatViewport 高度，rail 的居中位置与高度上限随之重算。
+        ChatViewport.SizeChanged += (_, _) => LayoutTurnRail();
     }
 
     private void HookTurnRailScroll()
@@ -94,6 +112,7 @@ public partial class MainWindow
         {
             _turnRailActiveTurn = turn;
             UpdateTurnRailStyles();
+            EnsureActiveMarkInView();
         }
     }
 
@@ -152,6 +171,8 @@ public partial class MainWindow
             _turnRailActiveTurn = _turnRailMarks[^1].Turn;
         }
         UpdateTurnRailStyles();
+        EnsureActiveMarkInView();
+        LayoutTurnRail();
     }
 
     private void UpdateTurnRailVisibility()
@@ -162,6 +183,39 @@ public partial class MainWindow
         {
             TurnRailHost.Visibility = target;
         }
+        LayoutTurnRail();
+    }
+
+    /// <summary>
+    /// rail 几何：整列在聊天视口带（含会话头、不含作曲器）内垂直居中，高度取
+    /// min(自然高, 带高-64, 420)，自然高超限时 rail 内部滚动（官方 frame 同语义）。
+    /// 刻度数变化、视口高度变化（窗口缩放、作曲器长高、右栏开关、目标条显隐）后重算。
+    /// </summary>
+    private void LayoutTurnRail()
+    {
+        if (TurnRailHost.Visibility != Visibility.Visible)
+        {
+            return;
+        }
+        var count = _turnRailMarks.Count;
+        if (count < 2)
+        {
+            return;
+        }
+        // 自然高 = 端留白×2 + 刻度数×步距（ListView Padding + 每槽 10dip）
+        var natural = TurnRailInset * 2 + count * TurnRailPitch;
+        var band = ChatViewport.ActualHeight;
+        var height = band > TurnRailBandInset
+            ? Math.Min(natural, Math.Min(band - TurnRailBandInset, TurnRailMaxHeight))
+            : natural; // 首帧视口还没布局出高度：先按自然高居中，SizeChanged 会补算
+        // Height 初值是 NaN（自动），NaN 与任何数比较都是 false——直接写 != 判断会永远跳过，
+        // rail 实际留在 auto 高度；此时悬浮出现的预览卡（带 top Margin）参与父 Grid 测量，
+        // 会把 rail 撑高，居中布局两端同时外扩，整列看着从居中位置往上跳。
+        var current = TurnRailHost.Height;
+        if (double.IsNaN(current) || Math.Abs(current - height) > 0.5)
+        {
+            TurnRailHost.Height = height;
+        }
     }
 
     /// <summary>刻度样式刷新：活动轮长条，悬停轮次中等长度，其余短点。</summary>
@@ -171,10 +225,16 @@ public partial class MainWindow
         {
             var m = _turnRailMarks[i];
             m.IsActive = m.Turn == _turnRailActiveTurn;
-            m.MarkWidth = m.IsActive ? 20 : m.IsHovered ? 14 : 12;
-            m.MarkOpacity = m.IsActive ? 1 : m.IsHovered ? 0.8 : 0.55;
+            m.MarkWidth = m.IsActive ? 40 : m.IsHovered ? 32 : 24;
+            m.MarkOpacity = m.IsActive ? 1 : m.IsHovered ? 0.9 : 0.55;
         }
-        // 让活动刻度留在 rail 可视区内（官方：active mark keeps itself in view）
+    }
+
+    /// <summary>让活动刻度留在 rail 可视区内（官方：active mark keeps itself in view）。
+    /// 只在活动轮变化（切轮、点击跳转）时调用；悬浮/移出只改样式不动滚动，
+    /// 否则用户每划过一个刻度 rail 内部就跟着滚一次，指针下的内容会跑掉。</summary>
+    private void EnsureActiveMarkInView()
+    {
         if (_turnRailActiveTurn > 0 && _turnRailMarks.FirstOrDefault(x => x.Turn == _turnRailActiveTurn) is { } active)
         {
             TurnRailMarks.ScrollIntoView(active, ScrollIntoViewAlignment.Default);
@@ -252,16 +312,39 @@ public partial class MainWindow
 
     private void OnTurnRailPointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
-        // 指针位置 → 刻度项：命中测试取 DataContext（官方 itemAtPointer 同语义）
+        // 自己算命中，与搜索建议悬浮同一套做法：UIElement 没有 IsPointerOver，按指针 Y
+        // 与各容器上下沿比对即可（未实现的容器为 null，虚拟化下自然跳过）。
+        // 此前的 FindElementsInHostCoordinates(point, TurnRailMarks) 用的是元素局部坐标，
+        // 而该 API 收的是窗口坐标，永远对不准，悬浮预览从没显示过。
+        // 官方 itemAtPointer 是「最近槽」语义：指针落在刻度间空隙也命中最近刻度，
+        // 这里容器比对同样带最近距离兜底。
         var point = e.GetCurrentPoint(TurnRailMarks).Position;
-        var hit = Microsoft.UI.Xaml.Media.VisualTreeHelper.FindElementsInHostCoordinates(point, TurnRailMarks);
-        foreach (var el in hit)
+        TurnRailMark? hit = null;
+        var bestDistance = double.MaxValue;
+        foreach (var mark in _turnRailMarks)
         {
-            if (el is FrameworkElement fe && fe.DataContext is TurnRailMark mark)
+            if (TurnRailMarks.ContainerFromItem(mark) is not ListViewItem container)
             {
-                ShowTurnRailPreview(mark);
-                return;
+                continue;
             }
+            var top = container.TransformToVisual(TurnRailMarks).TransformPoint(new Windows.Foundation.Point(0, 0));
+            var bottom = top.Y + Math.Max(container.ActualHeight, 1);
+            if (point.Y >= top.Y && point.Y <= bottom)
+            {
+                hit = mark; // 槽内（每槽 10dip 透明区铺满，总能命中）
+                break;
+            }
+            // 空隙里：容器按序排列，距离随容器序单调，记下最近的即可
+            var distance = point.Y < top.Y ? top.Y - point.Y : point.Y - bottom;
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                hit = mark;
+            }
+        }
+        if (hit is not null)
+        {
+            ShowTurnRailPreview(hit);
         }
     }
 
@@ -295,14 +378,19 @@ public partial class MainWindow
             TurnRailPreviewResponse.Visibility = Visibility.Collapsed;
         }
 
-        // 预览卡贴刻度左侧放置，纵向跟随刻度中心
+        // 预览卡贴刻度左侧放置（横向偏移在 XAML 的负 Margin），纵向按刻度中心对齐
+        // 卡心、夹在 rail 上下沿内——官方 preview top clamp 同语义：近两端刻度悬停时
+        // 卡片沿边缘内收，而不是探出带外。
         if (TurnRailMarks.ContainerFromItem(mark) is ListViewItem container)
         {
             var host = TurnRailHost;
             var pos = container.TransformToVisual(host).TransformPoint(new Windows.Foundation.Point(0, 0));
-            var y = Math.Max(0, pos.Y + container.ActualHeight / 2 - 24);
-            y = Math.Min(y, Math.Max(0, host.ActualHeight - 120));
-            TurnRailPreviewCard.Margin = new Thickness(0, y, 0, 0);
+            var center = pos.Y + container.ActualHeight / 2;
+            // 卡高以实测为准（文案 MaxLines 卡住后高度是定的），首帧还没布局时才用标称值
+            var cardHeight = TurnRailPreviewCard.ActualHeight > 0 ? TurnRailPreviewCard.ActualHeight : TurnRailPreviewHeight;
+            var maxTop = Math.Max(0, host.ActualHeight - cardHeight);
+            var y = Math.Clamp(center - cardHeight / 2, 0, maxTop);
+            TurnRailPreviewCard.Margin = new Thickness(TurnRailPreviewLeftOffset, y, 0, 0);
         }
         TurnRailPreviewCard.Visibility = Visibility.Visible;
     }
@@ -311,7 +399,9 @@ public partial class MainWindow
 
     private void OnTurnRailMarkClick(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
     {
-        if (sender is not FrameworkElement fe || fe.DataContext is not TurnRailMark mark)
+        // Tapped 挂在 ListView 上，sender 即 ListView（DataContext 为空）；
+        // 命中的刻度项从 OriginalSource 取（槽内透明矩形冒泡上来的 DataContext）。
+        if (e.OriginalSource is not FrameworkElement fe || fe.DataContext is not TurnRailMark mark)
         {
             return;
         }
@@ -331,6 +421,7 @@ public partial class MainWindow
 
         _turnRailActiveTurn = mark.Turn;
         UpdateTurnRailStyles();
+        EnsureActiveMarkInView();
 
         // 对齐官方「loaded 刻度滚动」语义：目标行顶到视口上沿
         ChatList.ScrollIntoView(target, ScrollIntoViewAlignment.Leading);
@@ -359,9 +450,9 @@ public sealed class TurnRailMark : INotifyPropertyChanged
     private bool _isHovered;
     public bool IsHovered { get => _isHovered; set { if (_isHovered != value) { _isHovered = value; Changed(nameof(IsHovered)); } } }
 
-    /// <summary>刻度宽度（活动态更长），UI 线程由 UpdateTurnRailStyles 赋值。</summary>
+    /// <summary>刻度宽度：常态 24、悬浮 32、活动 40（dip），UI 线程由 UpdateTurnRailStyles 赋值。</summary>
     public double MarkWidth { get => _markWidth; set { if (Math.Abs(_markWidth - value) > 0.01) { _markWidth = value; Changed(nameof(MarkWidth)); } } }
-    private double _markWidth = 12;
+    private double _markWidth = 24;
 
     /// <summary>刻度不透明度：活动轮全显、悬停中等、常态弱化（官方 mark/markActive 三态）。</summary>
     public double MarkOpacity { get => _markOpacity; set { if (Math.Abs(_markOpacity - value) > 0.01) { _markOpacity = value; Changed(nameof(MarkOpacity)); } } }

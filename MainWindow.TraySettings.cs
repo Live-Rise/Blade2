@@ -45,6 +45,8 @@ public partial class MainWindow
         public string Material { get; set; } = MaterialMica;
         public string BubbleMaterial { get; set; } = BubbleMaterialTranslucent;
         public double BubbleOpacity { get; set; } = BubbleOpacityDefault;
+        /// <summary>已就此版本弹过更新通知的 Release tag（空 = 没提醒过；每个新版本只提醒一次）。</summary>
+        public string RemindedUpdateTag { get; set; } = "";
     }
 
     private ShellOptions _shellOptions = new();
@@ -78,6 +80,7 @@ public partial class MainWindow
                     Material = GetShellMaterial(root),
                     BubbleMaterial = GetShellBubbleMaterial(root),
                     BubbleOpacity = GetShellBubbleOpacity(root),
+                    RemindedUpdateTag = GetShellText(root, "remindedUpdateTag"),
                 };
             }
         }
@@ -138,6 +141,21 @@ public partial class MainWindow
             (el.ValueKind == JsonValueKind.True || el.ValueKind == JsonValueKind.False)
             ? el.GetBoolean()
             : fallback;
+
+    /// <summary>字符串字段读取：缺失/非字符串回空串（旧版 shell.json 没有这个字段）。</summary>
+    private static string GetShellText(JsonElement root, string name)
+        => root.ValueKind == JsonValueKind.Object &&
+            root.TryGetProperty(name, out var el) &&
+            el.ValueKind == JsonValueKind.String
+            ? el.GetString() ?? ""
+            : "";
+
+    /// <summary>记下「就该版本弹过更新通知」的 tag：同一版本不再提醒（落盘，重启后仍生效）。</summary>
+    private void SetRemindedUpdateTag(string tag)
+    {
+        _shellOptions.RemindedUpdateTag = tag;
+        SaveShellOptions();
+    }
 
     private void SaveShellOptions()
     {

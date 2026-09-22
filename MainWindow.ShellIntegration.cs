@@ -326,8 +326,9 @@ internal static class ShellToast
     /// <summary>无包身份时的托盘气球兜底（MainWindow 构造时注入）。</summary>
     internal static Action<string, string>? BalloonFallback;
 
-    /// <summary>通知点击 → 窗口回前台（MainWindow 构造时注入；可能来自后台线程）。</summary>
-    internal static Action? ActivateRequested;
+    /// <summary>通知点击 → 窗口回前台并执行动作（MainWindow 构造时注入；可能来自后台线程）。
+    /// 参数 = 通知携带的动作串（形如 "action=update"），空串 = 无动作的普通点击。</summary>
+    internal static Action<string>? ActivateRequested;
 
     /// <summary>已注册发送者名的标记文件（DataHome 下，与皮肤/会话数据同目录，包外）。</summary>
     private static string SenderStampPath => Path.Combine(MainWindow.DataHome, "shell-toast.sender");
@@ -456,7 +457,8 @@ internal static class ShellToast
     private static void OnNotificationInvoked(
         Microsoft.Windows.AppNotifications.AppNotificationManager sender,
         Microsoft.Windows.AppNotifications.AppNotificationActivatedEventArgs args)
-        => ActivateRequested?.Invoke();
+        // 激活参数原样透出：点击不同通知要落到不同动作（如更新提醒 → 打开更新页），由注入方解析。
+        => ActivateRequested?.Invoke(args.Argument ?? "");
 
     /// <summary>退出时注销 COM 服务：否则注册残留指向已退出的进程，下次激活行为不可预期。</summary>
     internal static void Unregister()
@@ -476,7 +478,7 @@ internal static class ShellToast
         }
     }
 
-    internal static void Show(string title, string body)
+    internal static void Show(string title, string body, string? action = null)
     {
         try
         {
@@ -486,10 +488,14 @@ internal static class ShellToast
                 BalloonFallback?.Invoke(title, body); // dev 无包身份：退化托盘气球
                 return;
             }
-            var notification = new Microsoft.Windows.AppNotifications.Builder.AppNotificationBuilder()
+            var builder = new Microsoft.Windows.AppNotifications.Builder.AppNotificationBuilder()
                 .AddText(title, new Microsoft.Windows.AppNotifications.Builder.AppNotificationTextProperties().SetMaxLines(1))
-                .AddText(body)
-                .BuildNotification();
+                .AddText(body);
+            if (!string.IsNullOrEmpty(action))
+            {
+                builder.AddArgument("action", action); // 点击时随激活事件回传（冷启动同样带到 OnLaunched）
+            }
+            var notification = builder.BuildNotification();
             Microsoft.Windows.AppNotifications.AppNotificationManager.Default.Show(notification);
         }
         catch (Exception ex)
