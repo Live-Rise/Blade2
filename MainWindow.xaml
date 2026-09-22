@@ -679,10 +679,12 @@
                                     <StackPanel Spacing="{ThemeResource Space4}">
                                         <TextBlock x:Name="TurnRailPreviewPrompt"
                                                    Style="{StaticResource BodyTextStyle}"
+                                                   TextWrapping="Wrap"
                                                    TextTrimming="CharacterEllipsis"
                                                    MaxLines="2" />
                                         <TextBlock x:Name="TurnRailPreviewResponse"
                                                    Style="{StaticResource HintTextStyle}"
+                                                   TextWrapping="Wrap"
                                                    TextTrimming="CharacterEllipsis"
                                                    MaxLines="3" />
                                     </StackPanel>
