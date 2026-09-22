@@ -19,7 +19,7 @@ A native WinUI 3 desktop shell for the dsh agent kernel. No Electron, no WebView
 
 **A Windows app for dsh. Not a browser window.**
 
-[简体中文](README.zh.md) · v0.8.0 · Windows 10 19041+ · x64 · .NET 8 · WinUI 3
+[简体中文](README.zh.md) · v0.8.1 · Windows 10 19041+ · x64 · .NET 8 · WinUI 3
 
 > **Status** · Rust rewrite of the Windows shell in progress · macOS version in development
 

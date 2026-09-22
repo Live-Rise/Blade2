@@ -226,6 +226,12 @@ public sealed class SearchHitVm
     public Visibility HitVisibility => IsNotice ? Visibility.Collapsed : Visibility.Visible;
     public Visibility NoticeVisibility => IsNotice ? Visibility.Visible : Visibility.Collapsed;
 
+    /// <summary>本地标题回落的说明行（"本地标题匹配"）：悬浮提示不带它。</summary>
+    public bool IsFallbackNote { get; init; }
+
+    /// <summary>悬浮提示全文：行内标题/片段都是单行省略，停留时要能看全（对标搜索结果悬浮预览）。</summary>
+    public string Full => Snippet.Length == 0 || IsFallbackNote ? Title : Title + "\n" + Snippet;
+
     /// <summary>AutoSuggestBox 的 TextMemberPath 与 UIA 名都读它。</summary>
     public override string ToString() => Title;
 }
@@ -2333,6 +2339,8 @@ public sealed partial class MainWindow : Window
         Nav.SelectionChanged += OnNavSelectionChanged;
         SearchBox.TextChanged += OnSearchBoxChanged;
         SearchBox.QuerySubmitted += OnSearchBoxQuerySubmitted;
+        // 焦点落到搜索框上一并补挂指针跟随（下拉上次已挂过就跳过）
+        SearchBox.GotFocus += (_, _) => PostUi(HookSuggestionHover);
         // 搜索框：正椭圆（半径 = 实测控件高 / 2）。AutoSuggestBox 的圆角不传导内层 TextBox，
         // 因此视觉树里外层与内层同时设；高度随字号/DPI 变化，必须按实测高重算而非写死令牌。
         SearchBox.Loaded += (_, _) => ApplySearchPill();
@@ -2478,6 +2486,14 @@ public sealed partial class MainWindow : Window
         }
 
         ReportKernelBootStage("正在启动内核…");
+        // 先收上次异常退出残留的内核：它还占着会话目录的写租约，新一轮 resume 同一条会话
+        // 会撞 SessionAlreadyOwnedError——闪退后重进会话"发送失败"的根因就在这里。
+        // 只杀父进程链上没有活 Blade² 的本安装内核（见 SweepOrphanKernels），不动别的 node。
+        var sweptKernels = DshKernelHost.SweepOrphanKernels();
+        if (sweptKernels > 0)
+        {
+            System.Diagnostics.Debug.WriteLine($"[kernel] 收掉异常退出残留的内核进程 {sweptKernels} 个");
+        }
         var url = await _kernel.StartAsync(dshHome, ct);
         if (url is null)
         {
@@ -5710,6 +5726,9 @@ public sealed partial class MainWindow : Window
                     // 图片块：journal 里只存 attachmentId 引用（不存字节），字节经
                     // session/attachment 回读后作为 user-image 气泡渲染。
                     // 与发送链路不重叠：发送走内联 base64/receiptId，这里只服务于历史回放。
+                    // 锚取这条消息自己的用户气泡：本地回显若已被这条记录认领，屏上的那条就是回显本体
+                    // （AppendBubble 的 Seq>0 认领分支），按引用都能找到。
+                    var imageAnchor = text.Length > 0 ? FindLocalUserEcho(text) ?? bubble : null;
                     if (Volatile.Read(ref _activeSessionId) is { } imgSid)
                     {
                         foreach (var block in content.EnumerateArray())
@@ -5725,7 +5744,7 @@ public sealed partial class MainWindow : Window
                                 // 这张图已在发送成功时本地回显过（同名登记）：认领而不回读字节重贴
                                 if (!ClaimLocalImageEcho(attName))
                                 {
-                                    _ = RenderAttachmentImageAsync(imgSid, attachmentId, attName);
+                                    _ = RenderAttachmentImageAsync(imgSid, attachmentId, attName, imageAnchor);
                                 }
                             }
                         }
@@ -6410,8 +6429,10 @@ public sealed partial class MainWindow : Window
     /// 历史图片回读（session/attachment：request{sessionId, attachmentId} → {attachment, data:base64}）。
     /// journal 只带 attachmentId，字节要从内核取；结果按 attachmentId 缓存（同一图片只取一次），
     /// 已渲染过的 attachmentId 记入 _renderedAttachmentIds，避免 journal 补拉与 follow 流重复贴图。
+    /// anchor：这张图所属的那条提问（用户气泡）。回读是异步的，直接追加到末尾会被期间到达的
+    /// 后续事件挤到前面——图片于是沉到回答/思考过程下面。锚在位就贴在它后面。
     /// </summary>
-    private async Task RenderAttachmentImageAsync(string sessionId, string attachmentId, string name)
+    private async Task RenderAttachmentImageAsync(string sessionId, string attachmentId, string name, ChatBubble? anchor = null)
     {
         if (_rpc is null || !_renderedAttachmentIds.Add(attachmentId))
         {
@@ -6455,7 +6476,18 @@ public sealed partial class MainWindow : Window
             {
                 return;
             }
-            _messages.Add(new ChatBubble { Role = "user-image", Text = name, Image = image });
+            // 锚 = 这条消息自己的用户气泡：贴在它后面才是 journal 里的顺序（同一事件的图片块）。
+            // 锚不在屏上（纯图片消息没有文本气泡 / 被 400 上限裁掉）才按到达顺序追加到末尾。
+            var at = _messages.Count;
+            if (anchor is not null)
+            {
+                var idx = _messages.IndexOf(anchor);
+                if (idx >= 0)
+                {
+                    at = idx + 1;
+                }
+            }
+            _messages.Insert(at, new ChatBubble { Role = "user-image", Text = name, Image = image });
             if (_messages.Count > 400)
             {
                 _messages.RemoveAt(0);
@@ -7191,7 +7223,8 @@ public sealed partial class MainWindow : Window
             }
 
             var content = await BuildContentAsync();
-            try
+            // 发送本体抽成本地函数：租约被占时要重发一次（见下面 catch），重发也得走同一条路
+            async Task SendPromptAsync()
             {
                 await _rpc.CallOkAsync("session/prompt", new
                 {
@@ -7204,26 +7237,35 @@ public sealed partial class MainWindow : Window
                     },
                 });
             }
-            catch (DshRpcException ex) when (!imagesAsFiles && attachments.Any(a => a.IsImage) &&
-                                             ex.Code.EndsWith("attachment-invalid", StringComparison.Ordinal))
+
+            try
             {
-                // 内核 sharp 拒收图片字节（壳认不出的格式/文件损坏）。附件入口已按魔数
-                // 规范化，能走到这里的是字节本身坏掉的情况：降级为文件附件重发一次。
-                imagesAsFiles = true;
-                ReleaseClaims(); // 降级后 journal 落的是文件块（本就不贴图）：认领登记作废
-                content = await BuildContentAsync();
-                await _rpc.CallOkAsync("session/prompt", new
+                try
                 {
-                    request = new
-                    {
-                        requestId = $"c2-{Guid.NewGuid():N}",
-                        sessionId = sid,
-                        mode,
-                        content,
-                    },
-                });
-                var names = attachments.Where(a => a.IsImage).Select(a => a.Name).ToList();
-                PostUi(() => AppendSystemMessage(LF("有 {0} 张图片无法按图片识别，已改为文件发送：{1}", names.Count, string.Join("、", names))));
+                    await SendPromptAsync();
+                }
+                catch (DshRpcException ex) when (!imagesAsFiles && attachments.Any(a => a.IsImage) &&
+                                                 ex.Code.EndsWith("attachment-invalid", StringComparison.Ordinal))
+                {
+                    // 内核 sharp 拒收图片字节（壳认不出的格式/文件损坏）。附件入口已按魔数
+                    // 规范化，能走到这里的是字节本身坏掉的情况：降级为文件附件重发一次。
+                    imagesAsFiles = true;
+                    ReleaseClaims(); // 降级后 journal 落的是文件块（本就不贴图）：认领登记作废
+                    content = await BuildContentAsync();
+                    await SendPromptAsync();
+                    var names = attachments.Where(a => a.IsImage).Select(a => a.Name).ToList();
+                    PostUi(() => AppendSystemMessage(LF("有 {0} 张图片无法按图片识别，已改为文件发送：{1}", names.Count, string.Join("、", names))));
+                }
+            }
+            catch (DshRpcException ex) when (DshKernelHost.IsSessionLeaseBusy(ex) && DshKernelHost.SweepOrphanKernels() > 0)
+            {
+                // 上一次异常退出残留的内核还占着这条会话的写租约（resume failed:
+                // SessionAlreadyOwnedError）。把它当"发送失败"报给用户解决不了问题——清掉残留
+                // 进程、租约随进程死亡释放，再发一次才对。此刻本轮什么都还没落（回显在下面、
+                // 认领登记也走不到），重发零副作用；扫不到残留则放过，照旧走下面的失败分支。
+                await Task.Delay(300); // 等进程连同它的 semaphore 一起消失
+                content = await BuildContentAsync();
+                await SendPromptAsync();
             }
 
             // 发送成功后清空附件
@@ -7246,8 +7288,43 @@ public sealed partial class MainWindow : Window
             ReleaseClaims();
             return;
         }
+        // prompt 已受理：本地立即回显这条提问并挂「少女祈祷中」占位（按钮随之转停止），
+        // 不等 journal 的 user 记录——它要等内核落盘，正是这段空窗让界面看着没反应。
+        // 回显必须赶在 follow 流与图片解码之前落位：这两步都要 await，等待期间 UI 线程会让给
+        // journal 帧（上下文注入行、流式气泡都从那里上屏），回显排在它们之后就会被插到中间，
+        // 图片也会被后来的流式气泡一路推向底部。
+        ChatBubble? echo = null;
+        if (text.Length > 0)
+        {
+            echo = new ChatBubble
+            {
+                Role = "user",
+                Text = text,
+                Time = NowMs(),
+                // 先按即将发出的模型标注；内核 request/header 到达后按实际生效值校正
+                Model = _selectedModelId.Length > 0 ? _selectedModelId : _catalogDefault?.Model ?? "",
+            };
+        }
+        // 撤回编辑候选：只有真正起了一轮的那次发送才登记。会话忙时的发送是排队/插话，
+        // 那一轮还没开跑，按钮得留在正在跑的提问上，否则点下去停错轮、撤错消息。
+        var withdrawCandidate = echo is not null && !IsSessionBusy() ? echo : null;
+        PostUi(() =>
+        {
+            if (echo is not null)
+            {
+                // 登记等 header 认领：journal 的 user 记录可能后到并认领同一条气泡（Seq>0），
+                // 指针指的是同一个对象，两种先后顺序都不会漏标。
+                _pendingUserBubble = echo;
+                if (withdrawCandidate is not null)
+                {
+                    _withdrawCandidate = withdrawCandidate;
+                }
+                AppendBubble(echo);
+            }
+            SetPendingThinking(true);
+        });
         await FollowSessionAsync(sid);
-        // 图片本地回显先解码（BitmapImage.SetSourceAsync 要在 UI 线程跑），再随文本一起上屏
+        // 图片本地回显先解码（BitmapImage.SetSourceAsync 要在 UI 线程跑），解码完贴到回显正下方
         var echoedImages = new List<(string Name, Microsoft.UI.Xaml.Media.ImageSource Image)>();
         foreach (var att in attachments)
         {
@@ -7264,47 +7341,28 @@ public sealed partial class MainWindow : Window
                 // 图裂了不挡发送：文本与思考占位照常
             }
         }
-        // prompt 已受理：本地立即回显这条提问（文本 + 图片）并挂「少女祈祷中」占位（按钮随之转停止），
-        // 不等 journal 的 user 记录——它要等内核落盘，正是这段空窗让界面看着没反应。
-        PostUi(() =>
+        if (echoedImages.Count > 0)
         {
-            if (text.Length > 0)
+            PostUi(() =>
             {
-                var echo = new ChatBubble
+                // 图片按引用锚在回显气泡后面：位置不能按列表现况重新找（解码这几百毫秒里 journal
+                // 帧已经改了列表），否则图片会落到上下文注入行与思考过程后面，且越沉越深。
+                var at = echo is null ? -1 : _messages.IndexOf(echo);
+                foreach (var (name, image) in echoedImages)
                 {
-                    Role = "user",
-                    Text = text,
-                    Time = NowMs(),
-                    // 先按即将发出的模型标注；内核 request/header 到达后按实际生效值校正
-                    Model = _selectedModelId.Length > 0 ? _selectedModelId : _catalogDefault?.Model ?? "",
-                };
-                // 登记等 header 认领：journal 的 user 记录可能先到并认领同一条气泡（Seq>0），
-                // 指针指的是同一个对象，两种先后顺序都不会漏标。
-                _pendingUserBubble = echo;
-                // 撤回编辑候选：只有真正起了一轮的那次发送才登记。会话忙时的发送是排队/插话，
-                // 那一轮还没开跑，按钮得留在正在跑的提问上，否则点下去停错轮、撤错消息。
-                if (!IsSessionBusy())
-                {
-                    _withdrawCandidate = echo;
+                    // 认领登记已在发送前完成（claimedImages，先于任何 await）：这里只贴本地回显。
+                    // journal 的 user/message 到达时按名认领，本地回显与历史回放不重复贴图。
+                    var insertAt = at >= 0 ? at + 1 : UserInsertIndex();
+                    _messages.Insert(insertAt, new ChatBubble { Role = "user-image", Text = name, Image = image });
+                    at = insertAt;
                 }
-                AppendBubble(echo);
-            }
-            foreach (var (name, image) in echoedImages)
-            {
-                // 认领登记已在发送前完成（claimedImages，先于任何 await）：这里只贴本地回显。
-                // journal 的 user/message 到达时按名认领，本地回显与历史回放不重复贴图。
-                _messages.Insert(UserInsertIndex(), new ChatBubble { Role = "user-image", Text = name, Image = image });
-            }
-            if (echoedImages.Count > 0)
-            {
                 if (_messages.Count > 400)
                 {
                     _messages.RemoveAt(0);
                 }
                 ScrollTranscriptToBottom(force: true);
-            }
-            SetPendingThinking(true);
-        });
+            });
+        }
         // 兜底：follow 流可能未及时送达（内核 mux 心跳窗口），发送后补拉一页增量。
         // throughSeq 过大会 "past cursor"：从 64 对半收缩试探（与 LoadSessionHistory 同法）。
         try
@@ -13531,6 +13589,8 @@ public sealed partial class MainWindow : Window
         sender.ItemsSource = hits.Count > 0
             ? hits
             : new List<SearchHitVm> { new() { Title = LF("没有找到与 {0} 相关的结果", text), IsNotice = true } };
+        // 建议列表这会儿可能随弹出层进了视觉树：延迟一帧挂上指针跟随（已挂过则跳过）
+        PostUi(HookSuggestionHover);
     }
 
     /// <summary>内核内容命中 + 本地标题命中合并：内核结果在前，标题命中按会话 id 去重。</summary>
@@ -13580,12 +13640,17 @@ public sealed partial class MainWindow : Window
     private List<SearchHitVm> LocalTitleHits(string text) =>
         _sessions
             .Where(s => s.Title.Contains(text, StringComparison.OrdinalIgnoreCase))
-            .Select(s => new SearchHitVm
+            .Select(s =>
             {
-                SessionId = s.SessionId,
-                Title = s.Title,
-                Snippet = string.IsNullOrEmpty(s.Subtitle) ? L("本地标题匹配") : s.Subtitle,
-                FromKernel = false,
+                var hasSubtitle = !string.IsNullOrEmpty(s.Subtitle);
+                return new SearchHitVm
+                {
+                    SessionId = s.SessionId,
+                    Title = s.Title,
+                    Snippet = hasSubtitle ? s.Subtitle : L("本地标题匹配"),
+                    FromKernel = false,
+                    IsFallbackNote = !hasSubtitle,
+                };
             })
             .ToList();
 
@@ -13680,6 +13745,79 @@ public sealed partial class MainWindow : Window
     /// <summary>最近一次实测的搜索框高度 / 圆角（供探针与报告核对 R == H/2）。</summary>
     private double _searchPillHeight;
     private double _searchPillRadius;
+
+    /// <summary>已挂上指针跟随的建议列表（下拉开的是同一个 ListView 实例，按引用防重复挂）。</summary>
+    private ListView? _hoveredSuggestions;
+
+    /// <summary>搜索建议的指针跟随：鼠标划过建议行即选中它。AutoSuggestBox 本身只让键盘方向键
+    /// 移动选中项，鼠标悬停既不选中也不给反馈，用户根本无法"悬浮选中"某条命中；选中后 Enter/
+    /// 点击都以这条为准（QuerySubmitted 的 ChosenSuggestion）。建议列表在弹出层的视觉树里，
+    /// 每次刷新建议后延迟挂一次。</summary>
+    private void HookSuggestionHover()
+    {
+        try
+        {
+            if (FindSuggestionList() is not { } list || ReferenceEquals(_hoveredSuggestions, list))
+            {
+                return;
+            }
+            _hoveredSuggestions = list;
+            list.PointerMoved += OnSuggestionPointerMoved;
+        }
+        catch (Exception) { } // 挂不上不影响键盘选择，仅少一个鼠标便利
+    }
+
+    private void OnSuggestionPointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is not ListView list)
+        {
+            return;
+        }
+        // 自己算命中：UIElement 没有 IsPointerOver，按指针位置与各容器上下沿比对即可。
+        // 未实现的容器为 null（虚拟化），自然跳过。
+        var point = e.GetCurrentPoint(list).Position;
+        foreach (var item in list.Items)
+        {
+            if (list.ContainerFromItem(item) is not ListViewItem row)
+            {
+                continue;
+            }
+            var top = row.TransformToVisual(list).TransformPoint(new Windows.Foundation.Point(0, 0));
+            if (point.Y < top.Y || point.Y > top.Y + Math.Max(row.ActualHeight, 1))
+            {
+                continue;
+            }
+            if (row.Content is SearchHitVm { IsNotice: false } hit &&
+                !ReferenceEquals(list.SelectedItem, hit))
+            {
+                list.SelectedItem = hit;
+            }
+            return;
+        }
+    }
+
+    /// <summary>从窗口根找建议列表（Popup 打开时其内容挂到 PopupRoot，从搜索框往下走不到）。
+    /// 只认模板部件名 SuggestionsList：ChatList 也是 ListView，按"第一个 ListView"兜底会把
+    /// 鼠标跟随误挂到聊天流上。</summary>
+    private ListView? FindSuggestionList() => FindNamedListView(Content);
+
+    private static ListView? FindNamedListView(DependencyObject root)
+    {
+        var count = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(root, i);
+            if (child is ListView { Name: "SuggestionsList" } list)
+            {
+                return list;
+            }
+            if (FindNamedListView(child) is { } found)
+            {
+                return found;
+            }
+        }
+        return null;
+    }
 
     /// <summary>
     /// 输入卡聚焦时的视觉处理（第 5 条）：**什么都不改**。
@@ -15707,9 +15845,12 @@ public sealed partial class MainWindow : Window
             {
                 items = _queues.TryGetValue(sid, out var q) ? q : new List<QueueItemVm>();
             }
+            // 只列 next-turn 里的项（placement=queued）。插话成功后内核把该项移进 next-step
+            // （placement=steering），消息本体已在对话里上屏，队列条就该消失——官方端 QueueDock
+            // 同样只过滤 queued；把 steering 也列进来会让面板在插话后一直挂着。
             // placement=context 是内核插件注入的模型上下文（如 user-approval 的审批策略变更通知），
             // 不是用户消息：不算「排队中」，也不给编辑/插话/删除——网页端同样不把它当用户排队项。
-            items = items.Where(i => i.Placement is "queued" or "steering").ToList();
+            items = items.Where(i => i.Placement == "queued").ToList();
             if (items.Count == 0)
             {
                 QueuePanel.Visibility = Visibility.Collapsed;
@@ -16782,6 +16923,19 @@ public sealed partial class MainWindow : Window
                     else if (kind == "remove")
                     {
                         list.RemoveAt(index);
+                    }
+                    else if (kind == "steer")
+                    {
+                        // steer 被受理即移出 next-turn（内核 agent.inbox.remove + steer）：
+                        // 本地先把位置标成 steering，队列条立刻收起，不等队列帧到达
+                        list[index] = new QueueItemVm
+                        {
+                            SessionId = item.SessionId,
+                            ItemId = item.ItemId,
+                            Placement = "steering",
+                            Text = item.Text,
+                            Content = item.Content,
+                        };
                     }
                 }
             }

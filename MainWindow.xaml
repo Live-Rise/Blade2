@@ -149,7 +149,9 @@
                     </AutoSuggestBox.Resources>
                     <AutoSuggestBox.ItemTemplate>
                         <DataTemplate x:DataType="local:SearchHitVm">
-                            <StackPanel Padding="0,2,0,2">
+                            <!-- 标题与片段都是单行省略：悬浮给出未截断全文（对标搜索结果悬浮预览），
+                                 指针划过即选中该行（见 MainWindow.xaml.cs HookSuggestionHover） -->
+                            <StackPanel Padding="0,2,0,2" ToolTipService.ToolTip="{Binding Full}">
                                 <!-- 结果行：标题 + 片段（提示行时整体隐藏） -->
                                 <TextBlock Text="{Binding Title}"
                                            TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"

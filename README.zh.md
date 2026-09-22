@@ -19,7 +19,7 @@ dsh 智能体内核的原生 WinUI 3 桌面壳。无 Electron，无 WebView—�
 
 **给 dsh 的 Windows 应用。不是浏览器窗口。**
 
-[English](README.md) · v0.8.0 · Windows 10 19041+ · x64 · .NET 8 · WinUI 3
+[English](README.md) · v0.8.1 · Windows 10 19041+ · x64 · .NET 8 · WinUI 3
 
 > **状态** · Windows 壳 Rust 重构中 · macOS 版开发中
 

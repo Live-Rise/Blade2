@@ -7,7 +7,7 @@
   xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
   xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10">
 
-  <Identity Name="Blade2" Publisher="CN=DshWinUI" Version="0.8.0.0" />
+  <Identity Name="Blade2" Publisher="CN=DshWinUI" Version="0.8.1.0" />
 
   <Properties>
     <DisplayName>Blade²</DisplayName>

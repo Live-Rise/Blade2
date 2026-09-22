@@ -15,7 +15,7 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <PublishReadyToRun>false</PublishReadyToRun>
-    <Version>0.8.0.0</Version>
+    <Version>0.8.1.0</Version>
     <AssemblyName>Blade2</AssemblyName>
     <!-- 版本信息里的显示名走品牌名：无包形态下 AppNotificationManager 的无参 Register 让
          shell 解析发送者显示名，取的是 exe 的版本信息（FileDescription 由 AssemblyTitle 生成，

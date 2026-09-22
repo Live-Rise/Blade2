@@ -110,7 +110,7 @@ signtool sign /fd SHA256 /sha1 <thumbprint> <msix>
 Add-AppxPackage <msix>
 ```
 
-> 在 Git Bash 里跑 msbuild/signtool 前先 `export MSYS_NO_PATHCONV=1`，否则 `/p:`、`/pa` 会被改写成假路径（MSB1008 / File not found: C:/Program Files/Git/pa）。根目录 `build-0800.ps1` 封装了 Release 构建 + 签名，`install-0800.ps1` 封装了杀进程 + 安装（0.8.0）。
+> 在 Git Bash 里跑 msbuild/signtool 前先 `export MSYS_NO_PATHCONV=1`，否则 `/p:`、`/pa` 会被改写成假路径（MSB1008 / File not found: C:/Program Files/Git/pa）。根目录 `build-0800.ps1` 封装了 Release 构建 + 签名，`install-0800.ps1` 封装了杀进程 + 安装（0.8.1）。
 
 产物为自包含 MSIX（WindowsAppSDKSelfContained + SelfContained，百 MB 级）：.NET 运行时、Windows App SDK、`Kernel/` 内核资源整目录随包发行，最终用户零环境要求。MSIX 安装目录只读，因此内核数据家走 `%LOCALAPPDATA%\Blade2` 而非安装目录。
 
@@ -136,9 +136,9 @@ Add-AppxPackage <msix>
 ## 版本史
 
 0.1.9 默认标题栏 + 黑鲸图标 → 0.2.0–0.2.16 WebView 混合壳时代（材质三坑、rc.1/rc.2 契约适配、图标三连修、定名 Code²，已退役）→ 0.3.0 原生 GUI 转向 → 0.3.1 MSIX CWD 修复 → 0.4.0 设置面板 + 模型选择器 → 0.5.x–0.6.x 会话/设置/插件迭代（0.6.3.x 多个装机版）→ 0.7.4 UI 修复批次（悬停圆角底色、文本控件聚焦零色变，取证见 `DELIVERY-NOTES-0.7.4.md`）→ 0.7.6.7 设置分区扩展（通用/模型/插件/预设/统计/维护）+ 统计页 + Goal/Schedules/Skills 能力菜单 + 28 语壳本地化（UIA 逐屏验收）。
-→ 0.7.6.8 品牌更名 Blade²——黑底白刃刀锋标全套图标 + 窗口/标题/文案全量替换，技术标识仍为 DshWinUI（0.8.0 起改为 Blade2，见 0.8.0 条），内核数据家 %LOCALAPPDATA%\Code2 → Blade2（首访自动搬迁）。
+→ 0.7.6.8 品牌更名 Blade²——黑底白刃刀锋标全套图标 + 窗口/标题/文案全量替换，技术标识仍为 DshWinUI（0.8.1 起改为 Blade2，见 0.8.1 条），内核数据家 %LOCALAPPDATA%\Code2 → Blade2（首访自动搬迁）。
 → 0.7.6.9 图标资产改为圆角矩形徽章形态（圆角外透明，与品牌源图一致，由徽章原图直接裁取缩放生成）。
 → 0.7.7.0 system 主题实时跟随 Windows 深浅色（WM_SETTINGCHANGE 钩子）+ 托盘图标（打开/退出）+ 系统 toast 通知（内核失败/未聚焦审批）+ 运行状态条（轮/步/tok/s/累计 token/缓存命中，对齐官方端）。
 → 0.7.7.1 状态条两胶囊可点开「会话统计」/「Token 用量」面板（fold 补 llmMs/toolMs/ttft/output 拆分）+ transcript 过程行（系统提示词/系统提示词更新/上下文注入·来源），对标官方端；_scratch/** 移出编译。
 → 0.7.8–0.7.9.x 桌面宠物（壳内建「宠物」分区 + 独立置顶无边框透明分层窗，宠物能力全部来自内核插件 @linxin666/dsh-pet，Codex Pet 包装进 $DSH_HOME/pets/，图集帧动画跟随模型状态，点击互动）+ 壁纸插件驱动背景皮肤（@baiiii/dsh-wallpaper-local）+ 个性化分区（AGENTS.md 自定义指令）+ 托盘设置 + 技能面板 + TurnRail + 图片灯箱。
-→ **0.8.0 当前版：壳源码以 MIT 许可发布（© 2026 SAKUSORA，根目录 LICENSE）；技术标识 DshWinUI → Blade2（Identity / exe / 命名空间全量改名，Publisher 保持 CN=DshWinUI 证书不变，升级需卸载重装）；随附发布：0.7.x 周期的宠物/壁纸/个性化特性定型，安装包版本与文档口径统一，新增 .gitignore 排除构建产物与测试残留。**
+→ **0.8.1 当前版：壳源码以 MIT 许可发布（© 2026 SAKUSORA，根目录 LICENSE）；技术标识 DshWinUI → Blade2（Identity / exe / 命名空间全量改名，Publisher 保持 CN=DshWinUI 证书不变，升级需卸载重装）；随附发布：0.7.x 周期的宠物/壁纸/个性化特性定型，安装包版本与文档口径统一，新增 .gitignore 排除构建产物与测试残留。**
