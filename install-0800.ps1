@@ -32,7 +32,7 @@ function Write-Warn2($t) { Write-Host "  [WARN] $t" -ForegroundColor Yellow }
 
 # ---------- 0. Resolve msix path ----------
 if (-not $MsixPath) {
-  $candidate = Join-Path $PSScriptRoot "AppxPkgs0800\$PackageName`_0.8.1_x64_Test\$PackageName`_0.8.1_x64.msix"
+  $candidate = Join-Path $PSScriptRoot "AppxPkgs0800\$PackageName`_0.8.1.0_x64_Test\$PackageName`_0.8.1.0_x64.msix"
   if (Test-Path -LiteralPath $candidate) {
     $MsixPath = $candidate
   } else {
