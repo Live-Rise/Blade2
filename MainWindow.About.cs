@@ -105,14 +105,14 @@ public partial class MainWindow
             L("随包发行的 dsh 内核版本"),
             SelectableVersionText(KernelVersionText())));
 
-        // 内核加载：本次启动的引导里程碑（阶段 · 累计耗时），引导期间实时刷新，
-        // 失败时补一行「失败：<原因> · 秒」——排障时一眼看出停在哪一步。
+        // 内核加载：本次启动的引导里程碑（阶段 · 进度百分比），引导期间实时刷新，
+        // 失败时补一行「失败：<原因> · N%」——排障时一眼看出停在哪一段、走了多远。
         AddDivider(verCard);
         _aboutKernelBootText = SelectableVersionText(RenderKernelBootTrail());
         _aboutKernelBootText.TextWrapping = TextWrapping.Wrap;
         verCard.Children.Add(MakeRow(
             L("内核加载"),
-            L("本次启动内核引导里程碑（阶段 · 累计耗时）"),
+            L("本次启动内核引导里程碑（阶段 · 进度百分比）"),
             _aboutKernelBootText));
 
         // P2-6 品牌/内测声明：预览版 · DSH 本地构建 + 内测声明正文（文案位对齐官方 locale）

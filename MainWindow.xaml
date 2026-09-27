@@ -152,14 +152,18 @@
                             <!-- 标题与片段都是单行省略：悬浮给出未截断全文（对标搜索结果悬浮预览），
                                  指针划过即选中该行（见 MainWindow.xaml.cs HookSuggestionHover） -->
                             <StackPanel Padding="0,2,0,2" ToolTipService.ToolTip="{Binding Full}">
-                                <!-- 结果行：标题 + 片段（提示行时整体隐藏） -->
+                                <!-- 结果行：标题 + 片段（提示行时整体隐藏）。
+                                     两行都必须 NoWrap + 省略：片段是内核给的原文切片，实测单条可达
+                                     数千字符（整段 write 工具调用的 JSON），一换行每行就撑到 ~174dip、
+                                     5 条命中就把下拉顶出屏幕（0.8.3.6 误把 0b1b4e7e 的转轮预览改法
+                                     套到这里，见 0.8.3.8 修复）。 -->
                                 <TextBlock Text="{Binding Title}"
-                                           TextWrapping="Wrap"
+                                           TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
                                            Visibility="{x:Bind HitVisibility}" />
                                 <TextBlock Text="{Binding Snippet}"
                                            Style="{StaticResource CaptionTextStyle}"
                                            Foreground="{ThemeResource TextSecondaryBrush}"
-                                           TextWrapping="Wrap"
+                                           TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
                                            Visibility="{x:Bind HitVisibility}" />
                                 <!-- 无结果提示行：单行纯文字，不可选中跳转（QuerySubmitted 拦截） -->
                                 <TextBlock Text="{Binding Title}"
@@ -835,11 +839,17 @@
                                                            Style="{StaticResource CodeTextStyle}"
                                                            TextWrapping="NoWrap"
                                                            VerticalAlignment="Center" />
+                                                <!-- 描述同行不换行：同排 SlashName/Hint 都是 NoWrap，
+                                                     三列里只让描述换行会把定高列表（MaxHeight=216，
+                                                     实测一行 ~34dip）撑到 3~4 行、行距忽大忽小。
+                                                     长描述靠 NoWrap + 省略号收尾，完整文案在选中后的
+                                                     命令详情里（见 0.8.3.8 修复）。 -->
                                                 <TextBlock Grid.Column="1"
                                                            Text="{Binding Description}"
                                                            Style="{StaticResource CaptionTextStyle}"
                                                            Foreground="{ThemeResource TextSecondaryBrush}"
-                                                           TextWrapping="Wrap"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           TextWrapping="NoWrap"
                                                            VerticalAlignment="Center" />
                                                 <TextBlock Grid.Column="2"
                                                            Text="{Binding Hint}"

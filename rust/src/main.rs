@@ -322,6 +322,18 @@ enum Msg {
         session: String,
         outcome: Result<Vec<CommandEntry>, String>,
     },
+    /// #73 刀 2（D3）：`fileReferences/list` + `sessionReferenceResolver/candidates` **两发**的
+    /// 合流回填（主干 `ShowReferencePaletteAsync` 里那两次 `await` 加 `notes`，`MW:18292-18351`）。
+    /// `generation` = 发出那一刻的 `_referenceGeneration`（回填先对号，`MW:18354`「已有更新的按键」
+    /// ⇒ 整段丢弃、连收浮层都不做）。`outcome` 的 `Ok` = `(候选表, 失败原因)` —— 两路各自 `catch`
+    /// 的 notes 走这一支（**一路失败不拖另一路**，`MW:18319` / `MW:18349`）；`Err` = 主干那发
+    /// **外层** `catch (Exception) { HideReferencePalette(); }`（`MW:18389-18392`）那一档，
+    /// 分叉两发失败都折进 notes ⇒ 今天恒 `Ok`，但那一支的判据在 [`ReferenceState::apply`] 里
+    /// 已由刀 1 钉死，不留第二条形状。
+    ReferenceLoaded {
+        generation: u64,
+        outcome: Result<(Vec<ReferenceVm>, Vec<String>), String>,
+    },
     /// `commands/execute` 的回填（主干 17889-17914 的四态 + `catch`）。
     /// `draft` = 主干那句 `submittedText`（只有 composer 那一发带得回来：命令成功且用户期间
     /// 没改过草稿时，输入框才被清空；从浮层采纳的无参命令不带草稿，见 `execute_command`）。
@@ -5140,8 +5152,11 @@ struct PermissionRow {
     checked: bool,
 }
 
-/// 主干 `PermissionPresetDescZh`（`MW:16678-16693`）：只有四档有产品文案，`custom` 与未知档
+/// 主干 `PermissionPresetDescZh`（现测 `MW:16764-16779`）：只有四档有产品文案，`custom` 与未知档
 /// 走 `_ => ""` ⇒ 落回内核给的英文 `description`，内核也没给才是空串。
+/// ⚠ **主干那张表里没有 `"auto"`**（`:16766-16771` 四臂 = read-only / workspace-write /
+///   danger-full-access / auto-approve）⇒ 分叉今天**已忠实**，本刀**只动 glyph 表、不动这一颗**
+///   （补 auto 说明 = 主干没有的文案位，多做即缺陷）。
 /// 「表里没有 ≠ 直接用内核文案」这个**次序**不许倒装（倒装了英文界面就再也回不到中文表）。
 fn permission_preset_desc_zh(catalog: &Catalog, value: &str, kernel_desc: &str) -> String {
     match value {
@@ -5155,15 +5170,20 @@ fn permission_preset_desc_zh(catalog: &Catalog, value: &str, kernel_desc: &str) 
     }
 }
 
-/// 主干 `PermissionPresetGlyph`（`MW:16667-16675`）六臂，逐档互不重复（原文注释：
+/// 主干 `PermissionPresetGlyph`（现测 `MW:16752-16760`）**七臂**：五档预设各用一个、`auto` 与
+/// `auto-approve` 共用星花、未知档才回落锁，逐档互不重复（原文注释：
 /// 「每个预设各用一个、互不重复——锁在『自动审批/完全权限』下是反直觉的」）。
 /// `custom` 那枚 E713 此前 `tokens.rs` 缺，本刀补上并连带改了钉码位的那颗测。
+/// ⚠ `"auto"` 那一臂（`:16758` 注「内核保留的活 `auto` 预设」）= `glyph::PERMISSION_AUTO`
+///   （`\u{f1ba}` SquareSparkle）；缺了它就落 `_ => PERMISSION_DEFAULT`（`\u{e72e}` Lock）
+///   ⇒ 与主干**正相反**，且正好踩中主干注释明令的那个反直觉档。
 fn permission_preset_glyph(value: &str) -> char {
     match value {
         "read-only" => glyph::PERMISSION_READ_ONLY,
         "workspace-write" => glyph::PERMISSION_WORKSPACE,
         "danger-full-access" => glyph::PERMISSION_FULL,
         "auto-approve" => glyph::PERMISSION_AUTO,
+        "auto" => glyph::PERMISSION_AUTO,
         "custom" => glyph::PERMISSION_CUSTOM,
         _ => glyph::PERMISSION_DEFAULT,
     }
@@ -6527,7 +6547,7 @@ impl PaletteState {
 
 // ===================== #73 刀 1：@ 引用浮层 `ReferencePalette` 的状态机与纯判据 =====================
 //
-// 母本 = `MainWindow.xaml.cs` 的「@ 输入引用」那一域（现测域头 18205-18216、字段 18218-18221、
+// 母本 = `MainWindow.xaml.cs` 的「@ 输入引用」那一域（现测域头 18205-18214、字段 18216-18220、
 // 判据 18223-18242、入口 18245-18273、上屏 18275-18397、关 18399-18406、采纳 18457-18477）。
 // **本刀只落状态机与纯判据**：不接 RPC 臂（刀 2）、不画 View、不借键盘格（刀 3），
 // 故下面这些项眼下零读者 ⇒ 各挂一枚 `#[allow(dead_code)]` 并注明未来的读者（成规先例：
@@ -6567,7 +6587,7 @@ struct ReferenceVm {
 ///   `U+3000` 一样「遇空白即停」（`MW:18233`）。
 ///
 /// ⚠ **有意的形制偏差**（登记报告 §1）：主干这一发的锚点是 `InputBox.SelectionStart`
-/// （`MW:18229` 那句 `Math.Clamp(SelectionStart, 0, text.Length)`），而分叉那颗输入框是受控件、
+/// （`MW:18228` 那句 `Math.Clamp(SelectionStart, 0, text.Length)`），而分叉那颗输入框是受控件、
 /// 写口只有 [`Msg::Input`] 一枚纯文本回调，**reactor 不给壳读回 caret 与选区** ⇒ 分叉只能把
 /// 「插入点」钉在**串尾**（调用方一律传 `input.len()`，即 RP1 §7「刀 1 前置决定」的选项 1）。
 /// 同一根因已有两处备案，口吻照抄它们：[`skill_token_insert`] 头上那段与
@@ -6598,7 +6618,7 @@ fn reference_trigger(text: &str, caret: usize) -> Option<(usize, &str)> {
     Some((at, &text[query_start..caret]))
 }
 
-/// @ 引用浮层的全部状态（字段一一对 `MW:18218-18221` 那五枚 + §A.5 的显隐位）。
+/// @ 引用浮层的全部状态（字段一一对 `MW:18216-18220` 那五枚 + §A.5 的显隐位）。
 /// 命名与形制口径照 [`PaletteState`]；那五枚之外的 `query/list_visible/showing/notes` 是
 /// 分叉把主干「控件属性」折成状态格的结果（reactor 没有 `Visibility`/`ItemsSource`）。
 #[allow(dead_code)] // 读者在刀 2（RPC 臂）与刀 3（View + 借格）。
@@ -6609,13 +6629,13 @@ struct ReferenceState {
     matches: Vec<ReferenceVm>,
     /// `_referenceIndex`：`-1` = 没有选中项（主干初值与收起态都是这个数）。
     index: i32,
-    /// `_referenceSpan`（`MW:18221`）：`(起点, 含 @ 的待替换长度)`。主干是枚不可空的
+    /// `_referenceSpan`（`MW:18219`）：`(起点, 含 @ 的待替换长度)`。主干是枚不可空的
     /// `(int,int)` 元组、初值 `(0,0)`；分叉用 `Option` 把「还没 arm 过」与「span 是 0 长」
     /// 分开 —— 只影响 [`ReferenceState::take_accept`] 那第二道守卫能不能成立，语义不外露。
     span: Option<(usize, usize)>,
-    /// `_referenceGeneration`（`MW:18218`）。
+    /// `_referenceGeneration`（`MW:18216`）。
     generation: u64,
-    /// `_referenceBusy`（`MW:18221`）：唯一的那枚节流闸 —— 在途就**排队不补发**。
+    /// `_referenceBusy`（`MW:18220`）：唯一的那枚节流闸 —— 在途就**排队不补发**。
     busy: bool,
     /// `ReferencePalette.Visibility == Visible`。
     showing: bool,
@@ -6783,6 +6803,143 @@ impl ReferenceState {
         self.hide();
         Some((start, length, inserted))
     }
+
+    /// 标题那一行的**五档**（#73 刀 2，D6）：主干 `MW:18369`（T2 失败态）/ `MW:18384-18385`
+    /// （T4 空查询 + notes）/ `MW:18386`（T4 有查询），加上 XAML 那句**静态默认**
+    /// （`MainWindow.xaml:896`，运行时总被覆盖）就是全部五条文案。口径照
+    /// [`PaletteState::header`]：**全走 A 道 `l`/`lf`**，本刀 `i18n.rs` 净新增 **0** 行
+    /// （十枚键的逐尺命中见报告 §4）。
+    /// ⚠ 三处方向不许抄反：
+    /// · **T2**（零候选 + `notes` 非空）是「原因摊在浮层上」= `引用不可用：{0}`，连接符是
+    ///   **全角分号 `；`**（`MW:18369` 的 `string.Join("；", notes)`）；
+    /// · **T3**（零候选 + 无 notes）整层收，主干此刻**根本没写标题** ⇒ 分叉回那句 XAML 静态默认，
+    ///   **不自造**「无匹配」占位句（主干没有这一档）；
+    /// · **T4** 空查询档后面那半截 `" · "` + notes 是**纯字符串拼接**（`MW:18385`，前置分隔符 =
+    ///   空格 + **半角**中点 `·` + 空格）⇒ 它**不进** i18n 表，别去表里找它、也别给它新起键。
+    /// 条数取 `matches.len()` = 主干那句 `results.Count`（内核返回多少列多少，无上限）。
+    #[allow(dead_code)] // 读者在刀 3 的 View（`ReferencePaletteHeader.Text` 那一格）。
+    fn header(&self, catalog: &Catalog) -> String {
+        if self.matches.is_empty() {
+            if self.notes.is_empty() {
+                // T3 / 收起态：主干那句 XAML 静态默认值（现测 `MX:881-884`；
+                //   ⚠ RP1 的 `MX:896` 是旧锚，今天已漂，勿再引）。
+                return catalog.l("引用（↑↓ 选择，Enter 插入，Esc 关闭）");
+            }
+            // T2：两路都失败 ⇒ 原因摊在浮层上（不静默收起）。
+            return catalog.lf("引用不可用：{0}", &[self.notes.join("；")]);
+        }
+        if self.query.is_empty() {
+            let line = catalog.lf(
+                "引用 {0} 条（@ 后输入可过滤；↑↓ 选择，Enter 插入，Esc 关闭）",
+                &[self.matches.len().to_string()],
+            );
+            if self.notes.is_empty() {
+                return line;
+            }
+            // 一路失败一路有候选：那一发挂在同一行尾巴上（`MW:18385` 的纯拼接）。
+            return format!("{line} · {}", self.notes.join("；"));
+        }
+        catalog.lf(
+            "“@{0}” 匹配 {1} 条（↑↓ 选择，Enter 插入，Esc 关闭）",
+            &[self.query.clone(), self.matches.len().to_string()],
+        )
+    }
+}
+
+// ---- #73 刀 2（D2 的回填半边）：两路回执的读取，逐字段照主干 `MW:18301-18345` ----
+
+/// 主干 `MW:18311` / `MW:18340` 的三枚字形（目录 `E8B7` / 文件 `E8A5` / 会话 `E8BD`）。
+/// [`ReferenceVm::glyph`] 刀 1 定成 `&'static str`，而 `tokens.rs` 那两枚是 `char`
+/// （`glyph::FOLDER` = `\u{e8b7}`、`glyph::FILE` = `\u{e8a5}`）⇒ 这里按码位写串，
+/// 同码性由 `the_reference_row_glyphs_match_the_token_codes` 那把尺钉住（防漂）。
+const REFERENCE_GLYPH_DIRECTORY: &str = "\u{e8b7}";
+const REFERENCE_GLYPH_FILE: &str = "\u{e8a5}";
+const REFERENCE_GLYPH_SESSION: &str = "\u{e8bd}";
+
+/// 一发引用 RPC 的薄壳：拿不到锁（= 主干那发 `_rpc` 不可用）与 `Kernel::call` 的 `Err`
+/// 合流成**同一条** notes —— 主干那两发 `catch (ex) when (ex is DshRpcException or
+/// InvalidOperationException)` 就是这个合流的母本（`MW:18319` / `MW:18349`）。
+/// 串走 A 道 `lf`（`i18n.rs:724` / `:727` 在册）。
+fn reference_rpc(
+    shared: &Shared,
+    method: &str,
+    args: Value,
+    catalog: &Catalog,
+    note_key: &str,
+) -> Result<Value, String> {
+    shared
+        .lock()
+        .map_err(|_| "内核状态不可用".to_string())
+        .and_then(|mut kernel| kernel.call(method, args))
+        .map_err(|error| catalog.lf(note_key, &[error]))
+}
+
+/// 主干文件路（`MW:18301-18315`）：**非数组当空**；`path` 空 ⇒ **丢该条**（不是整批失败）；
+/// `kind` 只判 `== "directory"` ⇒ 缺键/别的值一律按**文件**画（桩 `--refs=5` 那发「少 kind 的
+/// 负形」走的就是这一支，见报告 §6 纠正一）；除 `path`/`kind` 外**一个键都不读**。
+fn parse_reference_files(catalog: &Catalog, reply: &Value) -> Vec<ReferenceVm> {
+    let Some(items) = reply.as_array() else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            let path = read_str(item, "path");
+            if path.is_empty() {
+                return None;
+            }
+            let directory = read_str(item, "kind") == "directory";
+            Some(ReferenceVm {
+                glyph: if directory {
+                    REFERENCE_GLYPH_DIRECTORY
+                } else {
+                    REFERENCE_GLYPH_FILE
+                },
+                label: path.to_string(),
+                detail: catalog.l(if directory { "目录" } else { "文件" }),
+                insert: path.to_string(),
+            })
+        })
+        .collect()
+}
+
+/// 主干会话路（`MW:18331-18344`）：`mention` 空 ⇒ 丢该条；`label` 空 ⇒ **回落 `sessionId`**
+/// （`:18341`）；`sameWorkspace` 的读法是 `TryGetProperty(...) && ValueKind == True`
+/// （`:18337`）⇒ **缺键 = false**、非 `true` 的任何值也 = false ⇒ 文案是 `会话` 而不是
+/// `会话 · 同工作区`。⚠ 白名单外一律不读：`cwd`、`createdAt` 主干一个字都不碰，
+/// 内核 schema 里另有 `displayTitle`(optional) ⇒ **也不读**（桩不发它、主干也不读它）。
+fn parse_reference_sessions(catalog: &Catalog, reply: &Value) -> Vec<ReferenceVm> {
+    let Some(items) = reply.as_array() else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            let mention = read_str(item, "mention");
+            if mention.is_empty() {
+                return None;
+            }
+            let label = read_str(item, "label");
+            let same = item.get("sameWorkspace").and_then(Value::as_bool) == Some(true);
+            Some(ReferenceVm {
+                glyph: REFERENCE_GLYPH_SESSION,
+                label: if label.is_empty() {
+                    read_str(item, "sessionId").to_string()
+                } else {
+                    label.to_string()
+                },
+                detail: catalog.l(if same { "会话 · 同工作区" } else { "会话" }),
+                insert: mention.to_string(),
+            })
+        })
+        .collect()
+}
+
+/// 主干 `Str(obj, name)` 助手（现测 `MW:9854`；⚠ RP1/RPB 的 `MW:9712` 是旧锚，已漂 +142）
+/// 的等价物：缺失 / 非串 ⇒ `""`。
+/// 返回值挂在 `item` 那一侧（`key` 只是查表的串、不参与生命周期）。
+fn read_str<'a>(item: &'a Value, key: &str) -> &'a str {
+    item.get(key).and_then(Value::as_str).unwrap_or_default()
 }
 
 /// 主干 `DshRpcClient` 的重连退避（`DshRpcClient.cs:50-51`）：第一次 0.5s，每次翻倍，封顶 30s。
@@ -8556,6 +8713,12 @@ struct Shell {
     key_owner: KeyOwner,
     /// 命令浮层（主干 `CommandPalette` 那一族字段，见本节开头逐条对应）。
     palette: PaletteState,
+    /// #73 刀 2（D1）：@ 引用浮层（主干 `ReferencePalette` 那一族字段 `MW:18216-18220`，
+    /// 显隐位折进状态格的理由写在 [`ReferenceState`] 头上）。状态机本体与五档判据在刀 1
+    /// 已落，这一格就是它们等的那个**宿主**。
+    /// ⚠ **命名避让**：`self.reference_row` / `reference_chips` / `reference_link` 那一族是
+    ///   **#93 的气泡芯片**（跨会话召回），与本卡**毫无关系**，既不共用这一格也不该被本刀改动。
+    reference: ReferenceState,
     /// 交付物卡 ⋯ 菜单（主干 `FileActionMenu` 那张 MenuFlyout）：`None` = 没开。
     /// 只记「开着的是哪张卡的第几个文件 + 键盘选中行」，五项的表体是常量 [`FILE_MENU_ITEMS`]。
     file_menu: Option<FileMenuState>,
@@ -9521,6 +9684,10 @@ impl Shell {
             return;
         };
         self.input.clear();
+        // #73 刀 2（D4 之一/七）：清框 = 主干那发 `InputBox.Text` 改写 ⇒ `TextChanged` 会重判
+        // @ 触发（判不成 ⇒ `hide`）。分叉没有事件，手工补一发；顺序在发送那一发之前，
+        // 与主干「赋值当场就重判」同刻。
+        self.refresh_reference(context);
         self.echo = Some(text.clone());
         let session = self.active.clone().unwrap_or_default();
         let mux = self.mux.clone();
@@ -9621,6 +9788,81 @@ impl Shell {
         self.palette.query = query.to_string();
         self.palette.generation += 1;
         self.ensure_commands(self.palette.generation, context);
+    }
+
+    /// #73 刀 2（D2）：主干 `OnInputTextChanged` → `UpdateReferencePalette`（`MW:18245-18273`）
+    /// 加 `ShowReferencePaletteAsync`（`MW:18275-18397`）的**同步半边 + 那一发 RPC**。
+    /// 真序照主干，一格都不许倒：
+    /// · [`ReferenceState::arm`] = **T0**（三道闸 + 触发判据；不过闸就地 `hide`、不发 RPC）；
+    /// · [`ReferenceState::claim_fetch`] = **T1**（已有在途 ⇒ 一个字节都不改、也**不补发**）；
+    /// · 抢到才 `spawn_background` 打两发 RPC ⇒ 回填 [`Msg::ReferenceLoaded`] →
+    ///   [`ReferenceState::apply`]（**T2/T3/T4** + 代次丢弃 + `finally` 交还那枚闸）。
+    /// ⚠ `armed` 那三道闸读的都是 `Shell` 的格子（内核句柄在位 ∧ 有活动会话 ∧ **命令浮层没
+    ///   开着** = 主干 `MW:18255`「命令浮层优先（前导 `/` 时不同时开两个浮层」），只有这里拿得到。
+    ///   **反向**半边（命令浮层 `hide` 时顺手收本层）属刀 3，本刀不铺。
+    /// ⚠ 分叉的 `self.input` 是纯 `String`、**没有 `TextChanged` 事件** ⇒ 每处改写它的产品码都要
+    ///   **手工**补这一发（全集 7 处，落点清单见报告 §3；缺铺 = 那条路径不重判 = 少弹，方向与
+    ///   [`reference_trigger`] 头上备案的 caret 偏差一致，但属欠账）。
+    /// ⚠ **直调 [`Kernel::call`]**（现测 `kernel.rs:3614`，`pub`、签名不变）⇒ `kernel.rs` **零改动**；
+    ///   形制照 [`Shell::load_model_catalog`] 那颗直调，**不**照 [`Shell::fetch_commands`] 那条
+    ///   `Kernel::list_commands` 包装路线（另开一条 RPC 道就是第二份真相，也撞互斥）。
+    fn refresh_reference(&mut self, context: &ComponentContext<Shell>) {
+        // 闸一/闸二：`_rpc is null || _activeSessionId is not { Length: > 0 }`（`MW:18249`）
+        // ⇒ 空串也算「没有活动会话」。owned 副本是 `move` 闭包要的。
+        let session = self.active.clone().filter(|sid| !sid.is_empty());
+        // 闸三：`CommandPalette.Visibility == Visible`（`MW:18255`）。
+        let armed = self.kernel.is_some() && session.is_some() && !self.palette.showing;
+        let Some((generation, query)) = self.reference.arm(&self.input, armed) else {
+            return;
+        };
+        // 主干 `MW:18284-18287` 那句 `if (_rpc is null || string.IsNullOrEmpty(sid)) return;`
+        // 住在 `claim_fetch` 之前、`finally` 之内 ⇒ 净效果就是「busy 留在 false、别的什么都不改」；
+        // `armed` 已经判过这两枚 `Some`，这一道取不出就是同一条早退（不碰任何状态格）。
+        let Some((shared, sid)) = self.kernel.clone().zip(session) else {
+            return;
+        };
+        if !self.reference.claim_fetch() {
+            // T1：浮层留在上一屏的内容上，第二发压根不发（主干那三行 `if (_referenceBusy) return;`）。
+            return;
+        }
+        let catalog = self.catalog.clone();
+        context.spawn_background(move |_token| {
+            // 请求体**平铺、不裹 `request`**，两发逐字节同（`MW:18292-18293`）。
+            let args = json!({ "agentId": sid, "query": query });
+            // 两路**各 try**、一路失败不拖另一路（`MW:18319-18321` / `MW:18349-18351`）：
+            // 失败那一发摊成一条 notes，另一发照常被读。
+            let (files, mut notes) = match reference_rpc(
+                &shared,
+                "fileReferences/list",
+                args.clone(),
+                &catalog,
+                "文件引用不可用（{0}）",
+            ) {
+                Ok(reply) => (reply, Vec::new()),
+                Err(note) => (Value::Null, vec![note]),
+            };
+            let sessions = match reference_rpc(
+                &shared,
+                "sessionReferenceResolver/candidates",
+                args,
+                &catalog,
+                "会话引用不可用（{0}）",
+            ) {
+                Ok(reply) => reply,
+                Err(note) => {
+                    notes.push(note);
+                    Value::Null
+                }
+            };
+            // 追加序 = 文件块在前、会话块后，两路各自内部也**不重排、不截断**（主干那段没有
+            // `Take(N)`，对照命令面板的 20 ⇒ 候选数无上限）。
+            let mut matches = parse_reference_files(&catalog, &files);
+            matches.extend(parse_reference_sessions(&catalog, &sessions));
+            Msg::ReferenceLoaded {
+                generation,
+                outcome: Ok((matches, notes)),
+            }
+        });
     }
 
     /// 目录此刻能不能直接拿来判「命不命中」——主干 `SubmitInputAsync` 里那条 await 的等价物。
@@ -10008,9 +10250,17 @@ impl Shell {
     fn accept_palette(&mut self, context: &ComponentContext<Shell>) {
         self.key_owner = KeyOwner::Composer;
         match self.palette.take_accept() {
-            PaletteAccept::Fill(text) => self.input = text,
+            PaletteAccept::Fill(text) => {
+                self.input = text;
+                // #73 刀 2（D4 之二）：这处赋值会让主干 `TextChanged` 再烧一遍 ⇒ 手工补。
+                // 填进去的是 `/name ` 那种命令串（不含 `@`）⇒ 重判的结果就是 `hide`，
+                // 与主干同：不是「多弹」，是「同一刻把上一屏的 @ 候选收掉」。
+                self.refresh_reference(context);
+            }
             PaletteAccept::Run(line) => {
                 self.input.clear();
+                // #73 刀 2（D4 之三）：同一颗里的第二处改写，同一刻重判。
+                self.refresh_reference(context);
                 self.execute_command(line, false, context);
             }
             PaletteAccept::Nothing => {}
@@ -14862,6 +15112,9 @@ impl Component for Shell {
             // 不可误发一条消息（Enter 退回旧分叉的行为：就是个换行/不做事）。
             key_owner: KeyOwner::Other,
             palette: PaletteState::idle(),
+            // #73 刀 2：@ 引用浮层初值 = 主干 XAML 的 `Visibility="Collapsed"` + `_referenceIndex = -1`
+            // （口径同上一格，判据本体在 [`ReferenceState::idle`]）。
+            reference: ReferenceState::idle(),
             // 首屏没有 ⋯ 菜单开着（reactor 没有 Visibility ⇒ `None` 就是那棵节点不入树）。
             file_menu: None,
             // 首屏也没有详情浮层（同一口径：`None` ⇒ 那棵节点不入树）。
@@ -15201,6 +15454,9 @@ impl Component for Shell {
             Msg::SendContinue => {
                 self.input = self.catalog.bt("继续", "continue");
                 self.refresh_palette(context);
+                // #73 刀 2（D4 之四）：同一发程序化赋值 ⇒ 主干那刻 `TextChanged` 也重判 @。
+                // 排在 `refresh_palette` 之后 = 主干「命令浮层优先」的那道序（`MW:18255`）。
+                self.refresh_reference(context);
                 self.submit_input(context, None);
             }
             // #111 主干 `CancelModelRetry`（`MessageDetails.cs:673+`）：先把那一行状态压成
@@ -15224,6 +15480,13 @@ impl Component for Shell {
                     self.submit_input(context, mode);
                 }
             }
+            // #73 刀 2（D3）：@ 引用浮层两发的合流回填。判定（代次丢弃 / T2 / T3 / T4 /
+            // `finally` 交还那枚 busy 闸）**全在** [`ReferenceState::apply`] 那一颗里 ——
+            // 那里不起 GUI 就能测（刀 1 的 `reference_apply_walks_the_five_tiers_*` 就是它）。
+            // ⚠ 这一臂**只有一行**：把显隐判据写回这里就是第二份真相。
+            Msg::ReferenceLoaded { generation, outcome } => {
+                self.reference.apply(generation, outcome);
+            }
             Msg::CommandExecuted {
                 line,
                 session,
@@ -15238,6 +15501,8 @@ impl Component for Shell {
                 if let Some(draft) = draft.filter(|_| success) {
                     if self.active.as_deref() == Some(session.as_str()) && self.input == draft {
                         self.input.clear();
+                        // #73 刀 2（D4 之五）：清框 = 改写 ⇒ 重判（判不成 ⇒ `hide`）。
+                        self.refresh_reference(context);
                     }
                 }
             }
@@ -16095,6 +16360,10 @@ impl Component for Shell {
                 // `session/prompt`（主干那句注释 `CP:434` 自证）。插入点的偏差备案在
                 // [`skill_token_insert`] 的 doc 与报告 §6。
                 self.input = skill_token_insert(&self.input, &name);
+                // #73 刀 2（D4 之六）：插 token 也是「改写 InputBox.Text」那一发 ⇒ 主干那刻
+                // `TextChanged` 会重判 @。插进去的 `$name` 不含 `@`，且整串里若还留着一段
+                // `@词`（光标在串尾的判据下）就照那段重判 —— 与主干同刻、不多不少。
+                self.refresh_reference(context);
             }
             Msg::SkillPickerListed(outcome, session_id) => {
                 // 守卫 ①（`CP:392`）：RPC 回来**立刻**过期点检，throw ⇒ 面板**根本没开过**，
@@ -17862,9 +18131,11 @@ impl Component for Shell {
             Msg::Input(text) => {
                 self.input = text;
                 self.key_owner = KeyOwner::Composer;
-                // 主干那颗 InputBox 的 `TextChanged` 只挂了一件事：`UpdateCommandPalette`
-                // （+ @ 引用浮层，分叉未移植）——所以浮层完全由文本驱动，没有独立开关。
+                // 主干那颗 InputBox 的 `TextChanged` 挂的是**两件事**：`UpdateCommandPalette`
+                // ＋ `UpdateReferencePalette`（现测 `MW:18199-18200`）——所以浮层完全由文本驱动、
+                // 没有独立开关，#73 刀 2 之后分叉也是这两发并列（顺序 = 命令浮层优先）。
                 self.refresh_palette(context);
+                self.refresh_reference(context);
             }
             Msg::Connected(shared, rows) => {
                 if let Ok(kernel) = shared.lock() {
@@ -41801,7 +42072,8 @@ mod permission_selector_tests {
 
     // ---------------- ③ 字形与文案：六臂互不重复、UIA 名两支 ----------------
 
-    /// 主干 `PermissionPresetGlyph`（`MW:16667-16675`）的六臂**逐档互不重复**（原文注释：
+    /// 主干 `PermissionPresetGlyph`（现测 `MW:16752-16760`）**七臂**、字形只六枚（`auto` 与
+    /// `auto-approve` 共用 `\uF1BA`），那六枚**逐档互不重复**（原文注释：
     /// 「每个预设各用一个、互不重复——锁在『自动审批/完全权限』下是反直觉的」）。
     /// 其中 `custom` 那枚 E713 是本轮 `tokens.rs` 的连带件（码点闸已同步）。
     /// 反向半边：未知档走 `PERMISSION_DEFAULT`，且那一枚不与上面五枚中任何一枚撞车。
@@ -41822,6 +42094,39 @@ mod permission_selector_tests {
         let codes: Vec<char> = arms.iter().map(|(_, code)| *code).collect();
         let unique: std::collections::HashSet<char> = codes.iter().copied().collect();
         assert_eq!(unique.len(), codes.len(), "六臂里撞了字形 ⇒ 主干那句「互不重复」破了");
+    }
+
+    /// #180（rp2b 同批小件）：主干那颗的**第七臂** `"auto"`（现测 `MW:16758`，注「内核保留的活
+    /// `auto` 预设」）与 `"auto-approve"` 共用那枚 SquareSparkle。分叉缺它 ⇒ `"auto"` 落
+    /// `_ => PERMISSION_DEFAULT`（`\uE72E` = Lock）⇒ 与主干**正相反**，且正好踩中主干注释明令
+    /// 「锁在自动审批下是反直觉的」那一档。
+    /// ⚠ 反向半边（**说明表今天不许有 auto 臂**）：主干 `PermissionPresetDescZh`
+    ///   （现测 `:16764-16779`）只有**四臂**、无 `"auto"` ⇒ 走 `_ => ""` 再回落 `kernelDesc`，
+    ///   分叉已忠实 ⇒ 补一句中文说明 = 多做，这一发钉的就是「没补」。
+    #[test]
+    fn the_live_auto_preset_shares_the_sparkle_and_never_the_lock() {
+        assert_eq!(permission_preset_glyph("auto"), glyph::PERMISSION_AUTO);
+        assert_eq!(
+            glyph::PERMISSION_AUTO,
+            '\u{f1ba}',
+            "auto 那枚就是 SquareSparkle（主干 `:16758` 注释自证）"
+        );
+        assert_eq!(
+            permission_preset_glyph("auto"),
+            permission_preset_glyph("auto-approve"),
+            "两档同星花 = 主干 `:16757` 与 `:16758` 那相邻两臂"
+        );
+        assert_ne!(
+            permission_preset_glyph("auto"),
+            permission_preset_glyph("no-such-preset"),
+            "活的 `auto` 不许与未知档同落 Lock（`\\uE72E`）"
+        );
+        let catalog = Catalog::load("zh", None);
+        assert_eq!(
+            permission_preset_desc_zh(&catalog, "auto", "Kernel supplied description"),
+            "Kernel supplied description",
+            "说明表**没有** auto 臂 ⇒ 回落内核原文；分叉自己补一句就是主干没有的文案位"
+        );
     }
 
     /// 行 UIA 名的**两支**（`MW:16641` 与 `:16791`）：有说明才带「。{1}」第二段。
@@ -49841,7 +50146,7 @@ mod reference_palette_tests {
     }
 
     /// **判据 1 的反向半边**：触发看的是**光标位置**、不是整串（RP1 §A.1 原话），且 caret
-    /// 越界要像主干 `Math.Clamp(SelectionStart, 0, text.Length)`（`MW:18229`）那样夹回来。
+    /// 越界要像主干 `Math.Clamp(SelectionStart, 0, text.Length)`（`MW:18228`）那样夹回来。
     /// 分叉的 caret 恒为串尾（备案见 [`reference_trigger`] 头上那段），这两把是那条备案的尺。
     #[test]
     fn reference_trigger_reads_the_caret_not_the_whole_string() {
@@ -50083,5 +50388,243 @@ mod reference_palette_tests {
         crossed.index = 0;
         assert_eq!(crossed.take_accept("看 @中"), None);
         assert!(!crossed.showing);
+    }
+
+    // ===================== 刀 2（D2 的回填半边 + D6 + D4）=====================
+
+    /// RP1 §7 判据 4（刀 2 那把）—— 回帧读取的**六键白名单**：只读 `path`/`kind` 与
+    /// `mention`/`label`/`sessionId`/`sameWorkspace`。`cwd`/`createdAt`/`displayTitle` 一律
+    /// **不读**（这里把 `cwd`/`createdAt`/`displayTitle` 全喂成毒药值 ⇒ 一旦被读走就当场红）。
+    /// 另钉四条方向（全是「读侧臂」最易抄反的那几处）：
+    /// · 非数组当**空**（`MW:18301` / `MW:18331` 那句 `ValueKind == Array` 才进循环）；
+    /// · `path` 空 / `mention` 空 ⇒ **丢该条**，不是整批失败（`MW:18305` / `MW:18335`）；
+    /// · `kind` **只判 `== "directory"`** ⇒ 缺失或别的值一律按**文件**画（**不丢条**）——
+    ///   桩 `--refs=5` 那发「少 kind 的负形」走的就是这一支（报告 §6 纠正一）；
+    /// · `label` 空串 ⇒ 回落 `sessionId`（`MW:18341`）；`sameWorkspace` **缺键 ⇒ false**
+    ///   （`MW:18337` 是 `TryGetProperty(...) && ValueKind == True`）⇒ 文案是 `会话`。
+    #[test]
+    fn the_reference_receipt_reads_only_the_six_whitelisted_keys() {
+        let catalog = Catalog::load("zh", None);
+        let files = json!([
+            { "path": "E:\\demo\\a.rs", "kind": "file", "cwd": "毒", "createdAt": 1, "displayTitle": "毒" },
+            { "path": "E:\\demo\\dir", "kind": "directory" },
+            { "path": "", "kind": "directory" },
+            { "path": "E:\\demo\\nokind" },
+            { "kind": "file" },
+            "不是对象的一行",
+        ]);
+        let rows = parse_reference_files(&catalog, &files);
+        assert_eq!(rows.len(), 3, "六行里丢两条（空 `path` / 缺 `path`），其余照画");
+        assert_eq!(rows[0].label, "E:\\demo\\a.rs");
+        assert_eq!(rows[0].insert, "E:\\demo\\a.rs", "文件路：`insert` = `path` 原文");
+        assert_eq!(rows[0].detail, "文件", "`kind != \"directory\"` 那一支（`MW:18313`）");
+        assert_eq!(rows[0].glyph, REFERENCE_GLYPH_FILE);
+        assert_eq!(rows[1].detail, "目录");
+        assert_eq!(rows[1].glyph, REFERENCE_GLYPH_DIRECTORY);
+        assert_eq!(rows[2].label, "E:\\demo\\nokind");
+        assert_eq!(
+            rows[2].detail, "文件",
+            "缺 `kind` 落三元 `? :` 的另一支 = **照画**，不是丢条（桩 `--refs=5` 的靶）"
+        );
+        for not_array in [json!(null), json!({}), json!("x"), json!(3)] {
+            assert!(
+                parse_reference_files(&catalog, &not_array).is_empty(),
+                "非数组当空：{not_array}"
+            );
+        }
+
+        let sessions = json!([
+            { "mention": "@[甲](dsh-session:QQ==)", "sessionId": "s-1", "label": "甲",
+              "cwd": "毒", "createdAt": 1, "displayTitle": "毒", "sameWorkspace": true },
+            { "mention": "@[乙](dsh-session:Qg==)", "sessionId": "s-2", "label": "",
+              "sameWorkspace": false, "cwd": "毒" },
+            { "mention": "@[丙](dsh-session:Qw==)", "sessionId": "s-3", "label": "丙",
+              "sameWorkspace": "true" },
+            { "mention": "", "sessionId": "s-4", "label": "空 mention 丢该条" },
+            { "sessionId": "s-5", "label": "缺 mention 丢该条" },
+        ]);
+        let rows = parse_reference_sessions(&catalog, &sessions);
+        assert_eq!(rows.len(), 3, "空 / 缺 `mention` ⇒ 各丢一条");
+        assert_eq!(rows[0].label, "甲");
+        assert_eq!(rows[0].detail, "会话 · 同工作区", "中点是**半角** `·` + 两侧空格");
+        assert_eq!(
+            rows[0].insert, "@[甲](dsh-session:QQ==)",
+            "会话路 `insert` = 内核给的 mention 原文（不自行拼装 `dsh-session:`）"
+        );
+        assert_eq!(rows[0].glyph, REFERENCE_GLYPH_SESSION);
+        assert_eq!(rows[1].label, "s-2", "`label` 空串 ⇒ 回落 `sessionId`（`MW:18341`）");
+        assert_eq!(rows[1].detail, "会话");
+        assert_eq!(
+            rows[2].detail, "会话",
+            "`sameWorkspace` 是字符串「true」⇒ 非 `True` 一律 false（`MW:18337`）"
+        );
+        assert_eq!(rows[2].label, "丙");
+        for not_array in [json!(null), json!([]), json!({ "mention": "x" })] {
+            assert!(
+                parse_reference_sessions(&catalog, &not_array).is_empty(),
+                "非数组当空：{not_array}"
+            );
+        }
+
+        // 追加序（D2）：文件块**在前**、会话块**在后**，两路各自内部不重排、不截断（无 `Take(N)`）。
+        let mut merged = parse_reference_files(&catalog, &files);
+        merged.extend(parse_reference_sessions(&catalog, &sessions));
+        assert_eq!(merged.len(), 6, "六条 = 3 + 3，一条不截");
+        assert_eq!(merged[0].glyph, REFERENCE_GLYPH_FILE, "文件块在前");
+        assert_eq!(merged[3].glyph, REFERENCE_GLYPH_SESSION, "会话块在后");
+    }
+
+    /// 三枚字形字面串与 `tokens.rs` 那两枚同码（防漂），会话那枚逐字节对主干 `MW:18340`。
+    #[test]
+    fn the_reference_row_glyphs_match_the_token_codes() {
+        assert_eq!(
+            REFERENCE_GLYPH_DIRECTORY.chars().next().unwrap(),
+            glyph::FOLDER,
+            "目录那枚 = `MW:18311` 的 `\\uE8B7`"
+        );
+        assert_eq!(
+            REFERENCE_GLYPH_FILE.chars().next().unwrap(),
+            glyph::FILE,
+            "文件那枚 = `MW:18311` 的 `\\uE8A5`"
+        );
+        assert_eq!(REFERENCE_GLYPH_SESSION, "\u{e8bd}", "会话固定 `\\uE8BD`（`MW:18340`）");
+    }
+
+    /// **D6**：标题那五档逐字节，zh / en 两档都钉（en 那侧全走 `i18n.rs` 现成键 ⇒ 本刀净新增 0）。
+    /// ⚠ 两处方向最易抄反：T2 是「列表收、浮层照上屏 + 失败原因摊在标题上」，T3 才是整层收
+    ///   （标题回那句 XAML 静态默认，主干此刻**根本没写标题**）；空查询档尾巴那半截 `" · "` +
+    ///   notes 是**纯拼接**（`MW:18385`），不进 i18n 表；**有查询**那一档**不带** notes（`MW:18386`）。
+    #[test]
+    fn the_reference_header_walks_the_five_tiers() {
+        let zh = Catalog::load("zh", None);
+        let en = Catalog::load("en", None);
+
+        // 档一：XAML 静态默认（现测 `MX:881-884`）= 收起态 / T3 那一刻。
+        let idle = ReferenceState::idle();
+        assert_eq!(idle.header(&zh), "引用（↑↓ 选择，Enter 插入，Esc 关闭）");
+        assert_eq!(
+            idle.header(&en),
+            "References (↑↓ select, Enter insert, Esc close)"
+        );
+
+        // 档二 = T2：零候选 + notes ⇒ 原因摊在浮层上，连接符是**全角分号 `；`**（`MW:18369`）。
+        let mut failed = ReferenceState::idle();
+        let generation = failed.arm("看 @ma", true).unwrap().0;
+        failed.apply(generation, Ok((Vec::new(), vec!["甲".to_string(), "乙".to_string()])));
+        assert!(failed.showing && !failed.list_visible, "T2 的方向：列表收、浮层开");
+        assert_eq!(failed.header(&zh), "引用不可用：甲；乙");
+        assert_eq!(failed.header(&en), "Reference unavailable: 甲；乙");
+
+        // 档三 = T3：零候选 + 无 notes ⇒ 整层收 ⇒ 标题就是那句静态默认（不自造「无匹配」占位）。
+        let mut empty = ReferenceState::idle();
+        let generation = empty.arm("看 @ma", true).unwrap().0;
+        empty.apply(generation, Ok((Vec::new(), Vec::new())));
+        assert!(!empty.showing);
+        assert_eq!(empty.header(&zh), "引用（↑↓ 选择，Enter 插入，Esc 关闭）");
+
+        // 档四 = T4 空查询（只打了个 `@`）。
+        let mut listed = ReferenceState::idle();
+        let generation = listed.arm("看 @", true).unwrap().0;
+        listed.apply(
+            generation,
+            Ok((vec![reference("E:\\a"), reference("E:\\b")], Vec::new())),
+        );
+        assert_eq!(
+            listed.header(&zh),
+            "引用 2 条（@ 后输入可过滤；↑↓ 选择，Enter 插入，Esc 关闭）"
+        );
+        assert_eq!(
+            listed.header(&en),
+            "2 references (@ to filter; ↑↓ select, Enter insert, Esc close)"
+        );
+
+        // 档四之二 = T4 空查询 **+ notes**：尾巴是 `" · "`（空格 + 半角中点 + 空格）纯拼接。
+        let generation = listed.arm("看 @", true).unwrap().0;
+        listed.apply(
+            generation,
+            Ok((
+                vec![reference("E:\\a"), reference("E:\\b")],
+                vec!["文件引用不可用（x）".to_string()],
+            )),
+        );
+        assert_eq!(
+            listed.header(&zh),
+            "引用 2 条（@ 后输入可过滤；↑↓ 选择，Enter 插入，Esc 关闭） · 文件引用不可用（x）"
+        );
+
+        // 档五 = T4 有查询：两参顺序**先 query 后条数**（`i18n.rs:734` 的测锁同一条），
+        // 且这一档**不追加** notes（主干 `:18386` 那一支没有那半截）。
+        let generation = listed.arm("看 @ma", true).unwrap().0;
+        listed.apply(
+            generation,
+            Ok((vec![reference("E:\\a")], vec!["这一发不进标题".to_string()])),
+        );
+        assert_eq!(listed.header(&zh), "“@ma” 匹配 1 条（↑↓ 选择，Enter 插入，Esc 关闭）");
+        assert_eq!(
+            listed.header(&en),
+            "\"@ma\" matched 1 (↑↓ select, Enter insert, Esc close)"
+        );
+    }
+
+    /// notes 那两枚串走 **A 道**（`i18n.rs:724` / `:727` 在册 ⇒ 本刀 `i18n.rs` 净新增 0 行），
+    /// 三列 `Detail` 也全在册（`目录` / `文件` / `会话` / `会话 · 同工作区`）。
+    #[test]
+    fn the_reference_strings_all_live_on_the_a_lane() {
+        let en = Catalog::load("en", None);
+        assert_eq!(
+            en.lf("文件引用不可用（{0}）", &["boom".to_string()]),
+            "File reference unavailable (boom)"
+        );
+        assert_eq!(
+            en.lf("会话引用不可用（{0}）", &["boom".to_string()]),
+            "Session reference unavailable (boom)"
+        );
+        assert_eq!(en.l("目录"), "Directory");
+        // 主干 `MW:18313` 那三元另一支的 EN 面值是**复数** `Files`（`MainWindow.xaml.cs:822` 同值）
+        // ⇒ 不许新起一枚「File」当缺陷修（RPB §5 串 8）。
+        assert_eq!(en.l("文件"), "Files");
+        assert_eq!(en.l("会话"), "Session");
+        assert_eq!(en.l("会话 · 同工作区"), "Session · same workspace");
+    }
+
+    /// **D4** 的铺点全集锁：主干 `OnInputTextChanged`（现测 `MW:18195-18203`）把
+    /// `UpdateCommandPalette` 与 `UpdateReferencePalette` **并列**挂在每一次文本改写 ⇒
+    /// 分叉每一处**产品码**改写 `self.input` 都得手工补一发 `refresh_reference`
+    /// （缺铺 = 那条路径不重判 = **少弹**，不是弹错）。
+    /// 判据 = 逐行走查：凡「整行就是那次改写」的行，其后**八行之内**必有一行整行是那一发重判。
+    /// ⚠ 串一律 `concat!` 词内拆开 ⇒ 本 mod 自己的源码（以及 `:32051` 那把测试锁里那句
+    ///   `guard.find("self.input.clear();")`）都不会把这把尺**撑绿**（口径照 #58 M2 那把收口锁）。
+    #[test]
+    fn every_product_code_input_rewrite_reshapes_the_reference() {
+        let source = include_str!("main.rs");
+        let assign = concat!("self.in", "put = ");
+        let clear = concat!("self.in", "put.c", "lear();");
+        let wired = concat!("self.refresh_re", "ference(context);");
+        let lines: Vec<&str> = source.lines().map(str::trim).collect();
+        let mut hits = 0;
+        for (index, line) in lines.iter().enumerate() {
+            if !line.starts_with(assign) && !line.starts_with(clear) {
+                continue;
+            }
+            hits += 1;
+            let tail = &lines[index + 1..(index + 9).min(lines.len())];
+            assert!(
+                tail.iter().any(|next| *next == wired),
+                "第 {} 行改了输入框却没有重判 @：{line}",
+                index + 1
+            );
+        }
+        assert_eq!(hits, 7, "§2 那七处产品码改写点，一处不落（测试串已被 `concat!` 隔开）");
+        // 反向半边（备案，不是本刀的范围）：命令面板那侧仍只有**两处**产品码调用点 ⇒
+        // `refresh_palette` 该不该铺满七处属 #52 既有范围，本刀一字不动。
+        let palette_refresh = concat!("self.refresh_palette(", "context);");
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| **line == palette_refresh)
+                .count(),
+            2,
+            "铺点没被本刀动过（少铺属 #52，不是本刀的范围）"
+        );
     }
 }

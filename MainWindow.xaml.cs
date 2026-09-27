@@ -1835,7 +1835,7 @@ public sealed partial class MainWindow : Window
         ["内核版本"] = "Kernel version",
         ["随包发行的 dsh 内核版本"] = "Bundled dsh kernel version",
         ["内核加载"] = "Kernel boot",
-        ["本次启动内核引导里程碑（阶段 · 累计耗时）"] = "Boot milestones of this launch (stage · elapsed)",
+        ["本次启动内核引导里程碑（阶段 · 进度百分比）"] = "Boot milestones of this launch (stage · progress %)",
         ["默认插件就绪"] = "Default plugins ready",
         ["默认插件安装"] = "Installing default plugins",
         ["默认插件就绪（检查失败，裸启动）"] = "Default plugins ready (check failed, bare boot)",

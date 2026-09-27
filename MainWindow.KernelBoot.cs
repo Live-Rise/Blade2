@@ -30,12 +30,17 @@ public sealed partial class MainWindow
 
     // ---------------- 内核引导里程碑（设置页「关于」的「内核加载」行） ----------------
 
-    /// <summary>本次启动的引导里程碑表：阶段文案 + 累计耗时。阶段文案在记录时按当前语言
+    /// <summary>引导里程碑表：阶段文案 + 整链进度百分比。阶段文案在记录时按当前语言
     /// 定稿（语言切换不回溯改写历史行）。锁保护：引导链大多在 UI 线程续跑，但认证重试、
     /// 插件进度回调来自线程池。</summary>
     private readonly object _bootTrailLock = new();
     private readonly List<string> _kernelBootTrail = new();
     private System.Diagnostics.Stopwatch? _kernelBootClock;
+
+    /// <summary>引导链的阶段总数（默认插件就绪 → 认证完成 → 事件通道就绪 →
+    /// 工作区清单就绪 → 会话与模型就绪 → 引导完成）：里程碑行上的百分比 = 第 N 段/总数。
+    /// 秒数不进界面——实时进度看百分比就够，精确耗时留给诊断日志的 (t=N.Ns)。</summary>
+    private const int BootStageTotal = 6;
 
     /// <summary>瞬态行（如「默认插件安装 3/9」）：渲染时排在里程碑表末尾，不进历史。</summary>
     private string? _bootTransientLine;
@@ -52,14 +57,18 @@ public sealed partial class MainWindow
         RefreshAboutKernelBootText();
     }
 
-    /// <summary>记录一个引导里程碑：落诊断日志 + 进里程碑表 + 刷新「关于」页内核加载行。</summary>
+    /// <summary>记录一个引导里程碑：落诊断日志（带耗时）+ 进里程碑表（带进度百分比）+
+    /// 刷新「关于」页内核加载行。界面上「· N%」= 第 N 段/共六段的整链进度，
+    /// 与实际耗时无关（「工作区清单就绪」一段常占大头，百分比不反映时间占比）。</summary>
     private void BootMilestone(string label)
     {
         double seconds;
         lock (_bootTrailLock)
         {
             seconds = _kernelBootClock?.Elapsed.TotalSeconds ?? 0;
-            _kernelBootTrail.Add($"{label} · {seconds.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}s");
+            var stage = _kernelBootTrail.Count + 1;
+            var pct = (int)Math.Round(stage * 100.0 / BootStageTotal);
+            _kernelBootTrail.Add($"{label} · {pct}%");
         }
         DshKernelHost.DiagLine($"[boot] {label} (t={seconds:0.0}s)");
         RefreshAboutKernelBootText();
@@ -109,12 +118,13 @@ public sealed partial class MainWindow
         _kernelBootFailure = (reasonKey, detail ?? "");
         var message = L(reasonKey);
         var full = string.IsNullOrEmpty(detail) ? message : $"{message}：{detail}";
-        // 里程碑表补失败行：设置页「内核加载」能看出停在哪一步、走到多少秒
+        // 里程碑表补失败行：设置页「内核加载」能看出停在哪一段、走到百分之几
         double seconds;
         lock (_bootTrailLock)
         {
             seconds = _kernelBootClock?.Elapsed.TotalSeconds ?? 0;
-            _kernelBootTrail.Add($"{L("失败")}：{message} · {seconds.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}s");
+            var pct = (int)Math.Round(_kernelBootTrail.Count * 100.0 / BootStageTotal);
+            _kernelBootTrail.Add($"{L("失败")}：{message} · {pct}%");
         }
         DshKernelHost.DiagLine($"[boot] FAILED {reasonKey} (t={seconds:0.0}s)");
         RefreshAboutKernelBootText();

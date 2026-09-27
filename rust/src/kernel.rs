@@ -853,18 +853,22 @@ pub struct PermissionsProjection {
     pub current_value: Option<String>,
 }
 
-/// 权限预设的中文可读名 —— 主干 `PermissionPresetZh`（`MainWindow.xaml.cs:16001-16009`）的
+/// 权限预设的中文可读名 —— 主干 `PermissionPresetZh`（`MainWindow.xaml.cs:16738-16747`，2026-09-28 现测）的
 /// 同一张表。**硬约束**：内核 projection 里的 `name` 是英文 id，不能直接显示
 /// （主干 15957 的注释「内核 projection 的 name 是英文 id，必须过 PermissionPresetZh」；
 /// `dsh-permission-presets` 的 `optionOf()` 出的就是 `value = name = spec.name`）。
 /// 所以翻译属于视图层侧的最后一道，但表放在数据层这里，`i18n.rs` 只有键没有这张映射。
 /// 键 = 内核表键 + 派生的 `custom`；认不得的 id 原样回显（主干的 `_ => value`）。
+/// `"auto"` 是 0.1.7 内核保留的**活集成预设 id**（`dsh-approval-gate` 注册后出现在 `options` 里），
+/// 与配置表里的 `auto-approve` 并存 —— 主干 `MainWindow.xaml.cs:16735-16747` 给它单开一臂、
+/// 两者同译「自动审批」；分叉缺这一臂时中文界面直出裸 `auto`。
 pub fn permission_preset_zh(catalog: &Catalog, value: &str) -> String {
     match value {
         "read-only" => catalog.l("仅可查看"),
         "workspace-write" => catalog.l("工作区内修改"),
         "danger-full-access" => catalog.l("完全权限"),
         "auto-approve" => catalog.l("自动审批"),
+        "auto" => catalog.l("自动审批"),
         "custom" => catalog.l("自定义"),
         _ => value.to_string(),
     }
@@ -4296,7 +4300,7 @@ mod tests {
         assert_eq!(
             permission_preset_zh(&zh, "danger-full-access"),
             "完全权限",
-            "主干表里的五个档一个都不许漏"
+            "主干表里的六个档一个都不许漏（含 0.1.7 保留的活 auto 预设，另见 the_reserved_auto_preset_*）"
         );
         assert_eq!(permission_preset_zh(&zh, "read-only"), "仅可查看");
         assert_eq!(permission_preset_zh(&zh, "auto-approve"), "自动审批");
@@ -4333,6 +4337,42 @@ mod tests {
         assert!(Projections::from_block(&json!(null)).is_empty());
         assert!(Projections::from_block(&json!({ "asOfSeq": 5 })).is_empty());
         assert!(!parsed.is_empty());
+    }
+
+    /// 内核 0.1.7 保留的活集成预设 id `"auto"`（`dsh-approval-gate` 注册后出现在 `options` 里）。
+    /// 主干 `MainWindow.xaml.cs:16735-16747` 给它单开一臂、与配置表的 `auto-approve` 同译「自动审批」；
+    /// 分叉补臂前少这一臂 ⇒ 中文界面直出裸 `auto`。两条硬判据：
+    /// ① 两档都走 `catalog.l`（A 道）—— 下拉/表体不过 i18n 表就是 #62 那类缺陷，英文界面会露中文；
+    /// ② `"auto"` **不落**表尾那条回落臂（落进去 = 原样露机器值，补臂白补）；回落臂本身对表外 id 还在。
+    #[test]
+    fn the_reserved_auto_preset_shares_the_auto_approve_label_and_stays_on_the_i18n_path() {
+        let zh = Catalog::load("zh", None);
+        let en = Catalog::load("en", None);
+        assert_eq!(permission_preset_zh(&zh, "auto"), "自动审批");
+        assert_eq!(permission_preset_zh(&en, "auto"), "Auto approval");
+        assert_eq!(
+            permission_preset_zh(&zh, "auto"),
+            permission_preset_zh(&zh, "auto-approve"),
+            "内核保留的活 auto 预设与配置表的 auto-approve 同译（主干 16735-16737 的注释）"
+        );
+        assert_eq!(
+            permission_preset_zh(&en, "auto"),
+            permission_preset_zh(&en, "auto-approve"),
+            "英文侧同样同译"
+        );
+        for value in ["auto", "auto-approve"] {
+            let zh_label = permission_preset_zh(&zh, value);
+            let en_label = permission_preset_zh(&en, value);
+            assert_ne!(zh_label, value, "{value} 落了回落臂，中文界面直出裸 id");
+            assert_ne!(en_label, value, "{value} 落了回落臂，英文界面直出裸 id");
+            assert!(
+                en_label.is_ascii(),
+                "{value} 的英文档没进 i18n 表（英文界面会露中文）：{en_label}"
+            );
+        }
+        // 回落臂没被补臂挤掉：表外 id 依旧原样回显（主干的表尾一臂）。
+        assert_eq!(permission_preset_zh(&zh, "auto-ish"), "auto-ish");
+        assert_eq!(permission_preset_zh(&en, "some-future-preset"), "some-future-preset");
     }
 
     /// `session/control` 的四型帧各自落在哪张表上；未知 `type` 与坏 sessionId 一律不动状态。
