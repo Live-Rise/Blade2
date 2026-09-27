@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -41,6 +41,8 @@ public sealed class SessionVm
     public string SessionId { get; set; } = "";
     public string Title { get; set; } = "";
     public string Subtitle { get; set; } = "";
+    /// <summary>对话轮数（Subtitle 的原始数据；快照缓存存它，语言切换时重算文案）。</summary>
+    public int Turns { get; set; }
     public string Cwd { get; set; } = "";
     /// <summary>内核 session/list 的 updatedAt（epoch 毫秒）：侧栏相对时间的唯一数据源。</summary>
     public long UpdatedAt { get; set; }
@@ -53,6 +55,12 @@ public sealed class SessionVm
 
     /// <summary>子代理会话（内核 origin 位）。侧栏标记、只读 composer、会话头回跳都按它判。</summary>
     public bool IsSubagent => Origin == "subagent";
+
+    /// <summary>有活动定时任务（schedule 投影 active 非空）。列表旁闹钟标记（P1-15）。</summary>
+    public bool HasActiveSchedule { get; set; }
+
+    /// <summary>待交互类型：plan-review | question | approval（官方 pendingInteraction）。</summary>
+    public string? PendingKind { get; set; }
 }
 
 /// <summary>工作区（会话的文件夹分类）。</summary>
@@ -268,18 +276,25 @@ public sealed class JobVm
     public long StartedAt { get; init; }
     public long FinishedAt { get; init; }
 
+    /// <summary>壳侧已点停止（session/cancel 已发、内核 jobs 帧尚未回 stopping）：行内显示「正在停止」。</summary>
+    public bool StopRequested { get; set; }
+
     /// <summary>内核口径的"存活"作业：运行中/停止中。官方 JobListAction 的 isLive 同判据。</summary>
     public bool IsLive => Status is "running" or "stopping";
 
+    /// <summary>官方 JobListAction statusLabel 口径（zh 源词，显示点过 L()）。</summary>
     public string StatusLabel => Status switch
     {
         "running" => "运行中",
-        "stopping" => "停止中",
+        "stopping" => "正在停止",
         "completed" => "已完成",
-        "killed" => "已终止",
-        "failed" => "失败",
+        "killed" => "已取消",
+        "failed" => "已失败",
         _ => Status,
     };
+
+    /// <summary>行内状态词：本地已请求停止时覆盖为「正在停止」（官方 status.stopping）。</summary>
+    public string DisplayStatusText => StopRequested && Status is "running" ? "正在停止" : StatusLabel;
 
     /// <summary>官方口径时长（至多两个相邻单位，小时为最宽单位）：live = now − startedAt，
     /// 已结束 = finishedAt − startedAt。缺 startedAt（或已结束但缺 finishedAt）返回 null。</summary>
@@ -609,6 +624,8 @@ public sealed partial class MainWindow : Window
         ["配置和查看本部署已安装的插件。"] = "Configure and inspect plugins installed in this deployment.",
         ["内核 Loader 实际加载的插件条目（pluginInventory/list 只读快照），以及各 Agent 预设的组装行。"] = "Plugins loaded by the kernel (a read-only pluginInventory/list snapshot), and the composition of each agent preset.",
         ["预设即一个会话的 Agent 所运行的插件组装——它的工具、提示词与能力。"] = "A preset defines the plugins an agent runs: its tools, prompts and capabilities.",
+        ["预设即一个会话的 Agent 所运行的插件组装——它的工具、提示词与能力。复制一份既有预设改成自己的，或用「创造模式」让 Agent 帮你创建。"] =
+            "A preset is the plugin composition one session's agent runs — its tools, prompt, and capabilities. Duplicate an existing one and make it yours, or let the agent draft one for you in Creator mode.",
         ["权限"] = "Permissions",
         ["选择新会话的默认访问模式"] = "Choose the default access mode for new conversations",
         ["默认权限"] = "Default permissions",
@@ -617,6 +634,14 @@ public sealed partial class MainWindow : Window
         ["仅可查看"] = "Read only",
         ["工作区内修改"] = "Workspace write",
         ["完全权限"] = "Full access",
+        // ---- P0-5：完全权限风险确认（对标 dsh-client-ui-permission-presets confirm.*） ----
+        ["确认启用完全权限？"] = "Enable Full access?",
+        ["启用完全权限后，新会话将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任后续任务时使用。"] =
+            "Full access lets new sessions reduce confirmation steps and perform more actions directly, including sensitive operations, file changes, or external commands. Only use it when you trust subsequent tasks.",
+        ["启用完全权限后，智能体将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任当前任务时使用。"] =
+            "Full access reduces confirmation steps and lets the agent perform more actions directly, including sensitive operations, file changes, or external commands. Only use it when you trust the current task.",
+        ["我已了解风险，并愿意继续"] = "I understand the risks and want to continue",
+        ["启用完全权限"] = "Enable Full access",
         ["外观"] = "Appearance",
         ["主题与会话正文字号"] = "Theme and conversation font size",
         ["主题"] = "Theme",
@@ -624,6 +649,53 @@ public sealed partial class MainWindow : Window
         ["浅色"] = "Light",
         ["深色"] = "Dark",
         ["跟随系统"] = "System",
+        // ---- T28 插件设置 ns 1:1（官方 settings-plugins / settings-plugin-inventory 文案） ----
+        ["已覆盖"] = "Overridden",
+        ["恢复默认"] = "Reset to default",
+        ["恢复 {0} 的默认值"] = "Reset {0} to its default",
+        ["清除本字段的用户覆盖，回到内核默认值。"] = "Clear the user override for this field and restore the kernel default.",
+        ["恢复默认失败：{0}"] = "Reset failed: {0}",
+        ["请填数字；留空表示使用默认值。"] = "Enter a number, or leave blank to use the default.",
+        ["已配置密钥。"] = "A key is configured.",
+        ["未配置密钥；配置之前搜索不可用。"] = "No key is configured; search is unavailable until one is.",
+        ["由 settings/describe 泛化渲染的附加插件设置。"] = "Additional plugin settings rendered generically from settings/describe.",
+        ["由 settings/describe 泛化渲染；字段语义以内核 schema 为准。"] =
+            "Rendered generically from settings/describe; field semantics follow the kernel schema.",
+        ["搜索插件"] = "Search plugins",
+        ["暂无插件。"] = "No plugins are available.",
+        ["没有匹配的插件。"] = "No matching plugins.",
+        ["已停用"] = "Disabled",
+        ["运行中"] = "Running",
+        ["加载中"] = "Loading",
+        ["等待依赖"] = "Waiting for dependencies",
+        ["卸载中"] = "Unloading",
+        ["未运行"] = "Not running",
+        ["启动失败"] = "Failed to start",
+        ["开启后，Agent 可以从下方授权模型中，为每个 Subagent 选择提供方、模型和推理强度。仅影响新会话。"] =
+            "When enabled, agents can choose a provider, model, and reasoning effort for each subagent from the authorized models below. Applies only to new sessions.",
+        // ---- T28 HTML / PDF 预览降级 UX ----
+        ["标签结构"] = "Tag outline",
+        ["标题"] = "Title",
+        ["一级标题"] = "H1",
+        ["链接"] = "Links",
+        ["图片"] = "Images",
+        ["（无）"] = "(none)",
+        ["打开附属资源"] = "Open related resource",
+        ["打开附属资源 {0}"] = "Open related resource {0}",
+        ["标签结构 · 标题：{0} · 一级标题 {1} · 链接 {2} · 图片 {3}"] =
+            "Tag outline · Title: {0} · H1 ×{1} · Links ×{2} · Images ×{3}",
+        ["DOM 预览 · 标题：{0} · 一级标题 {1} · 链接 {2} · 图片 {3}（脚本已禁用）"] =
+            "DOM preview · Title: {0} · H1 ×{1} · Links ×{2} · Images ×{3} (scripts disabled)",
+        ["附属资源：{0} 项（已内联进 DOM）"] = "Related resources: {0} (inlined into DOM)",
+        ["源码"] = "Source",
+        ["切换 HTML 源码视图"] = "Toggle HTML source view",
+        ["加密 PDF"] = "Password-protected PDF",
+        ["加密 PDF：Windows.Data.Pdf 无解锁 API，壳内无法解密渲染。可用「用系统打开」查看，或复制路径后用其它工具解锁。"] =
+            "Password-protected PDF: Windows.Data.Pdf has no unlock API, so the shell cannot decrypt it. Use Open with system, or copy the path and unlock it elsewhere.",
+        ["文件已损坏或平台不支持渲染。"] = "The file is corrupt, or rendering is unsupported on this platform.",
+        ["复制路径"] = "Copy path",
+        ["路径已复制"] = "Path copied",
+        ["复制路径失败：{0}"] = "Copy path failed: {0}",
         ["字号大小"] = "Font size",
         ["仅影响会话内容的字号"] = "Applies only to conversation content",
         ["对话"] = "Conversation",
@@ -721,8 +793,10 @@ public sealed partial class MainWindow : Window
         ["发现模型"] = "Discover models",
         ["刷新"] = "Refresh",
         ["等待审批"] = "Awaiting approval",
-        ["拒绝"] = "Reject",
+        // 官方 action.decline = "Decline"（dsh-client-ui-cordis）；Cordis/审批钮共用
+        ["拒绝"] = "Decline",
         ["允许一次"] = "Allow once",
+        ["允许此插件的后续版本"] = "Allow future versions of this plugin",
         ["计划评审"] = "Plan review",
         ["内核提问"] = "Question from the agent",
         ["补充说明"] = "Additional details",
@@ -730,6 +804,20 @@ public sealed partial class MainWindow : Window
         ["跳过（不回答）"] = "Skip (do not answer)",
         ["提交"] = "Submit",
         ["提交答案"] = "Submit answer",
+        // ---- P0-4：ask_user_question 多题导航（对标 dsh-client-ui-user-questions question.*） ----
+        ["上一题"] = "Previous question",
+        ["下一题"] = "Next question",
+        ["跳过本题"] = "Skip this question",
+        ["放弃整组问题"] = "Dismiss all questions",
+        ["去聊天里说"] = "Chat about it",
+        ["推荐"] = "Recommended",
+        ["请先完成这道问题。"] = "Please complete this question first.",
+        ["请选择一个选项或填写自定义答案。"] = "Please select an option or enter a custom answer.",
+        ["确认执行"] = "Approve",
+        ["输入你的答案"] = "Type your answer",
+        ["已放弃该组问题。"] = "The question set was dismissed.",
+        ["放弃提问失败，请重试：{0}"] = "Failed to dismiss the questions: {0}",
+        ["第 {0} / {1} 题"] = "Question {0} of {1}",
         ["模型与推理等级"] = "Model and reasoning effort",
         ["文件"] = "Files",
         ["工作区文件"] = "Workspace files",
@@ -843,6 +931,13 @@ public sealed partial class MainWindow : Window
         ["可从提供方端点发现（见上方 API 密钥卡的「发现模型」）"] = "Discoverable from provider endpoints (see Discover models in the API key card above)",
         ["推理等级"] = "Reasoning effort",
         ["off / low / high / max；留空跟随模型默认"] = "off / low / high / max; empty follows the model default",
+        ["快速、高效、经济"] = "Fast, efficient, economical",
+        ["更强自主编码/复杂推理（成本更高）"] = "Stronger autonomous coding / complex reasoning (higher cost)",
+        ["{0}（上次使用）"] = "{0} (last used)",
+        ["模型：{0}，上次使用"] = "Model: {0}, last used",
+        ["预览版 · DSH 本地构建 · 当前为内测阶段（完整内测声明见首次启动欢迎页）"] =
+            "Preview · DSH local build · currently in internal testing (see the first-run welcome notice for the full statement)",
+        ["推理等级：{0}。{1}"] = "Reasoning effort: {0}. {1}",
         ["发现的模型"] = "Discovered models",
         ["用作默认模型"] = "Use as default model",
         ["关闭"] = "Close",
@@ -891,6 +986,26 @@ public sealed partial class MainWindow : Window
         ["已自定义模型目录"] = "Customized model catalog",
         ["恢复默认模型"] = "Restore defaults",
         ["获取可用模型"] = "Fetch available models",
+        // ---- P2-2/3/4/6：两档说明 · 模型记忆 · 一键恢复 · 品牌/内测 ----
+        ["快速、高效且经济；适合目标明确、常规或并行任务。"] =
+            "Fast, efficient, and economical; suited to focused, routine, or parallel tasks.",
+        ["更强的自主编码、知识与复杂推理能力；适合复杂或质量优先的任务，但成本更高。"] =
+            "Stronger agentic coding, knowledge, and difficult reasoning; suited to complex or quality-critical tasks at higher cost.",
+        ["上次使用"] = "Last used",
+        ["上次使用：{0}"] = "Last used: {0}",
+        ["恢复上次使用的模型：{0}"] = "Restore the last-used model: {0}",
+        ["模型切换失败"] = "Model switch failed",
+        ["未能切换到 {0}：{1}"] = "Failed to switch to {0}: {1}",
+        ["未能切换到 {0}：目录中未找到该模型。"] = "Failed to switch to {0}: the model is not in the catalog.",
+        ["一键恢复适配器默认模型目录与内核默认模型。自定义提供方的模型列表不受影响。"] =
+            "One-click restore of the adapter default catalog and kernel default model. Custom provider model lists are left alone.",
+        ["将默认模型与模型目录恢复为内核默认。"] = "Restore the default model and model catalog to kernel defaults.",
+        ["已恢复默认模型。"] = "Default models restored.",
+        ["恢复默认模型失败：{0}"] = "Failed to restore default models: {0}",
+        ["预览版"] = "Preview",
+        ["DSH 本地构建"] = "DSH Local Build",
+        ["品牌与声明"] = "Brand & notices",
+        ["版本通道"] = "Release channel",
         ["模型选择器中将不显示任何模型；目录外 ID 仍可直接发送。"] = "No models will be shown in the selector. Unlisted IDs can still be sent directly.",
         ["模型 ID"] = "Model ID",
         ["模型 ID 不能为空。"] = "The model ID cannot be empty.",
@@ -977,6 +1092,34 @@ public sealed partial class MainWindow : Window
         ["已复制"] = "Copied",
         ["思考"] = "Think",
         ["工具调用"] = "Tool call",
+        // —— P0-3 工具定制卡 ——
+        ["复制参数 JSON"] = "Copy parameters JSON",
+        ["复制结果 JSON"] = "Copy result JSON",
+        ["复制属性路径"] = "Copy property path",
+        ["展开详情"] = "Expand details",
+        ["收起详情"] = "Collapse details",
+        ["展开其余 {0} 行"] = "Expand {0} more lines",
+        ["收起差异"] = "Collapse diff",
+        ["展开差异"] = "Expand diff",
+        ["差异"] = "Diff",
+        ["命令"] = "Command",
+        ["退出码 {0}"] = "Exit code {0}",
+        ["信号 {0}"] = "Signal {0}",
+        ["已超时"] = "Timed out",
+        ["标准输出"] = "stdout",
+        ["标准错误"] = "stderr",
+        ["无输出"] = "(no output)",
+        ["参数"] = "Input",
+        ["结果"] = "Output",
+        ["执行中"] = "Running",
+        ["调用技能"] = "Use skill",
+        ["技能 {0}"] = "Skill {0}",
+        ["待办"] = "Todos",
+        ["待办 {0}/{1}"] = "Todos {0}/{1}",
+        ["进行中 {0}"] = "In progress {0}",
+        ["子代理 {0}"] = "Subagent {0}",
+        ["工作流"] = "Workflow",
+        ["工作流 {0}"] = "Workflow {0}",
         ["读取"] = "Read",
         ["读取图片"] = "Read image",
         ["网页获取"] = "Fetch",
@@ -1045,16 +1188,8 @@ public sealed partial class MainWindow : Window
         ["{0}：{1} tokens"] = "{0}: {1} tokens",
         ["{0} 失败"] = "{0} failed",
         ["内核启动失败"] = "Kernel failed to start",
-        // ---- 内核异步引导：主页加载卡的阶段文案（壳先亮相，内核在后台起） ----
-        ["正在准备内核组件…"] = "Preparing kernel components…",
-        ["正在启动内核…"] = "Starting the kernel…",
-        ["正在连接内核…"] = "Connecting to the kernel…",
-        ["正在加载工作区与会话…"] = "Loading workspaces and conversations…",
-        ["内核加载已进行 {0} 秒"] = "Kernel loading for {0} seconds",
-        ["第 {0} 步，共 {1} 步 · {2}%"] = "Step {0} of {1} · {2}%",
-        ["正在安装插件 {0}/{1}"] = "Installing plugins {0}/{1}",
+        // ---- 内核引导失败卡（引导全程静默，失败才上屏：原因 + 重试钮） ----
         ["重试"] = "Retry",
-        ["内核还在加载中，请稍候再发。"] = "The kernel is still loading; please try sending again shortly.",
         ["未找到内置内核；请安装 npm 版 dsh 或重新安装 Blade²"] = "Bundled kernel not found; install the npm version of dsh or reinstall Blade²",
         ["打开 Blade²"] = "Open Blade²",
         ["退出"] = "Exit",
@@ -1249,6 +1384,7 @@ public sealed partial class MainWindow : Window
         ["排队中 · {0} 条"] = "Queued · {0} items",
         ["作业 · {0} 个"] = "Jobs · {0}",
         ["{0} 个运行中"] = "{0} running",
+        ["{0} 个作业运行中"] = "{0} background jobs running",
         ["计划模式（切换中…）"] = "Plan mode (switching…)",
         ["计划模式已开启"] = "Plan mode is on",
         ["访问模式，当前：{0}"] = "Access mode, currently: {0}",
@@ -1412,6 +1548,40 @@ public sealed partial class MainWindow : Window
         ["不是 UTF-8 文本，无法预览。"] = "Not UTF-8 text; cannot preview.",
         ["该会话没有活跃 agent（会话未打开或已归档）。"] = "The session has no active agent (not opened or archived).",
         ["大小未知"] = "Size unknown",
+        // —— P0-1/2 六形态预览与预览辅助 ——
+        ["自动换行"] = "Word wrap",
+        ["取消换行"] = "Disable word wrap",
+        ["加载更多"] = "Load more",
+        ["加载更多失败"] = "Load more failed",
+        ["重新读取"] = "Reload",
+        ["重新读取文件"] = "Reload file",
+        ["复制全文"] = "Copy all",
+        ["复制选中"] = "Copy selection",
+        ["没有选中的文本。"] = "No text is selected.",
+        ["文件已更新，当前显示为旧内容。"] = "The file has changed; the preview is showing the previous content.",
+        ["重新载入"] = "Reload now",
+        ["上一页"] = "Previous page",
+        ["下一页"] = "Next page",
+        ["用系统打开"] = "Open with system",
+        ["用系统打开失败：{0}"] = "Failed to open with the system: {0}",
+        ["第 {0} / {1} 页"] = "Page {0} of {1}",
+        ["无页面"] = "No pages",
+        ["无法在壳内渲染"] = "Cannot render in the shell",
+        ["PDF 预览降级：文件已读取，但页渲染失败（可能加密或损坏）。可用「用系统打开」查看。"] =
+            "PDF preview degraded: the file was read but page rendering failed (it may be encrypted or corrupted). Use \"Open with system\" instead.",
+        ["{0} · 版本 {1}"] = "{0} · version {1}",
+        ["空文件"] = "Empty file",
+        ["文件大小为 0，没有可显示的图像。"] = "The file is 0 bytes; there is no image to show.",
+        ["无法解码图像"] = "Cannot decode image",
+        ["已读取 {0} 字节，但系统位图解码器无法识别该格式（SVG 等矢量图不在壳内渲染）。"] =
+            "Read {0} bytes, but the system bitmap decoder cannot recognize the format (vector images such as SVG are not rendered in the shell).",
+        ["附属资源：无（未发现相对路径的 script/link/img 引用）。"] =
+            "Related assets: none (no relative script/link/img references found).",
+        ["附属资源读取中…"] = "Loading related assets…",
+        ["附属资源（readRelated）：{0}"] = "Related assets (readRelated): {0}",
+        ["{0}（{1}）"] = "{0} ({1})",
+        ["{0}（不可读）"] = "{0} (unreadable)",
+        ["…共 {0} 项"] = "… {0} total",
         ["交付物"] = "Deliverable",
         ["打开"] = "Open",
         ["显示"] = "Reveal",
@@ -1432,9 +1602,27 @@ public sealed partial class MainWindow : Window
         ["排队"] = "Queued",
         ["运行中"] = "Running",
         ["停止中"] = "Stopping",
+        ["正在停止"] = "stopping",
         ["已完成"] = "Completed",
         ["已终止"] = "Terminated",
+        ["已取消"] = "cancelled",
         ["失败"] = "Failed",
+        ["已失败"] = "failed",
+        // P1-B 会话状态域（官方 dsh-client-ui-workspace / jobs / goal / conversation 口径）
+        ["计划待审"] = "Plan awaiting review",
+        ["等待回答"] = "Awaiting answer",
+        ["有活动定时任务"] = "Has active scheduled task",
+        ["清除目标"] = "Clear goal",
+        ["当前目标进行中。可输入 edit 修改 / pause 暂停 / resume 继续 / clear 清除"] =
+            "goal active — edit / pause / resume / clear",
+        ["任务"] = "To-dos",
+        ["{0} 已完成"] = "{0} completed",
+        ["{0} 进行中"] = "{0} in progress",
+        ["{0} 待处理"] = "{0} pending",
+        ["待处理"] = "Pending",
+        ["进行中"] = "In progress",
+        ["停止（会话级取消：将停止本会话当前运行）"] =
+            "Stop (session-level cancel: stops the current run of this session)",
         // 命令面板内置命令描述（LocalizeHostCommand 的中文侧键）
         ["压缩以上对话内容"] = "Compress earlier conversation history",
         ["将当前会话内容导出为 ZIP"] = "Export this session as a ZIP archive",
@@ -1701,6 +1889,31 @@ public sealed partial class MainWindow : Window
         ["子代理会话为只读：可查看其工作过程，消息请在父会话中发送。"] =
             "Subagent sessions are read-only: you can watch the work, but send messages in the parent session.",
         ["返回父会话"] = "Back to parent session",
+        // ---- P0-7：子代理目录 + 续跑 + 打断（subagents/list|prompt|interruptByParent） ----
+        ["子代理目录"] = "Subagent catalog",
+        ["续跑"] = "Continue",
+        ["打断"] = "Interrupt",
+        ["可继续"] = "Continuable",
+        ["正在运行"] = "Running",
+        ["当前未运行"] = "Not running",
+        ["正在加载子代理…"] = "Loading subagents…",
+        ["当前会话没有子代理"] = "This session has no subagents",
+        ["无法加载子代理：{0}"] = "Unable to load subagents: {0}",
+        ["会话记录损坏"] = "Corrupted session record",
+        ["子代理记录版本不受支持"] = "Unsupported subagent record version",
+        ["会话记录暂不可用"] = "Session record temporarily unavailable",
+        ["续跑消息"] = "Follow-up message",
+        ["续跑：{0}"] = "Continue: {0}",
+        ["续跑失败：{0}"] = "Continue failed: {0}",
+        ["打断子代理"] = "Interrupt subagent",
+        ["确认打断子代理「{0}」的当前运行？"] = "Interrupt the current run of subagent \"{0}\"?",
+        ["打断失败：{0}"] = "Interrupt failed: {0}",
+        ["打开子代理会话 {0}"] = "Open subagent session {0}",
+        ["续跑子代理 {0}"] = "Continue subagent {0}",
+        ["打断子代理 {0}"] = "Interrupt subagent {0}",
+        ["展开 {0} 的下级子代理"] = "Expand descendants of {0}",
+        ["父会话"] = "Parent session",
+        ["展开"] = "Expand",
         ["目标进行中"] = "Goal active",
         ["目标待命"] = "Goal armed off",
         ["目标已暂停"] = "Goal paused",
@@ -1718,6 +1931,75 @@ public sealed partial class MainWindow : Window
         ["{0}天"] = "{0}d",
         ["{0}小时"] = "{0}h",
         ["{0}分钟"] = "{0}m",
+        // ---- P1-21 文件操作菜单（对齐 dsh-client-ui-deliverables presented.*） ----
+        ["文件操作"] = "File actions",
+        ["更多文件操作"] = "More file actions",
+        ["用默认应用打开"] = "Open in default app",
+        ["打开所在文件夹"] = "Open containing folder",
+        ["在侧边栏预览"] = "Preview in sidebar",
+        ["在文件资源管理器中显示"] = "Show in File Explorer",
+        // ---- P1-25/P1-26 布局把手与右栏分栏（dsh-client-ui-layout / sidebar-right） ----
+        ["调整侧栏宽度"] = "Resize sidebar",
+        ["调整右栏宽度"] = "Resize right pane",
+        ["调整分栏比例"] = "Resize split",
+        ["右栏标签栏"] = "Right pane tabs",
+        ["右栏分栏宿主"] = "Right pane dock",
+        ["右栏第一格"] = "Right pane cell 1",
+        ["右栏第二格"] = "Right pane cell 2",
+        ["右栏第二格文件面板"] = "Right pane file panel",
+        ["新标签页"] = "New tab",
+        ["左右分栏"] = "Split left/right",
+        ["上下分栏"] = "Split top/bottom",
+        ["分栏已满（最多两格）"] = "Split full (two cells max)",
+        ["移到这里"] = "Move here",
+        ["全屏"] = "Fullscreen",
+        ["退出全屏"] = "Exit fullscreen",
+        ["文件 {0}"] = "File {0}",
+        // ---- P1-C 设置域（settings-general / agent-preset / skill / onboarding） ----
+        ["查看"] = "View",
+        ["组装（agent.cordis.yml）"] = "Composition (agent.cordis.yml)",
+        ["组装（agent.cordis.yml）· {0}"] = "Composition (agent.cordis.yml) · {0}",
+        ["查看预设 {0} 的组装"] = "View composition of preset {0}",
+        ["无法读取预设组装：{0}"] = "Unable to read preset composition: {0}",
+        ["用「创造模式」创作自定义预设"] = "Draft a custom preset with Creator mode",
+        ["切到创造模式并开始新会话，让 Agent 帮你创建自定义预设。"] =
+            "Switch to Creator mode and start a new session so the agent can draft a custom preset for you.",
+        ["已进入创造模式。告诉 Agent 你想要的工具、提示词与能力，它会帮你写出自定义预设的 agent.cordis.yml。"] =
+            "Creator mode is ready. Tell the agent which tools, prompts and capabilities you want; it will draft your custom agent.cordis.yml.",
+        ["无法开始创造模式：{0}"] = "Unable to start Creator mode: {0}",
+        ["内测声明"] = "Internal Testing Notice",
+        ["继续"] = "Continue",
+        ["DeepSeek Harness 目前的 0.1 版本仍处在面向 Harness 开发者进行测试的阶段，还有许多地方需要持续改进和打磨，希望听取广大开发者的反馈建议。预计 DeepSeek Harness 的核心插件以及基础 API 都会在接下来的一段时间内快速迭代、持续演化。\n\n我们期待与全球开发者一起，在开源、开放、可复用、可组合的基础设施之上，共同探索智能上限。欢迎全球 Harness 开发者加入 DSH 插件生态。"] =
+            "DeepSeek Harness 0.1 remains in testing for Harness developers. Many areas need further improvement, and we welcome feedback from the developer community. DeepSeek Harness's core plugins and foundational APIs will continue to evolve rapidly over the coming months.\n\nWe look forward to exploring the limits of intelligence with developers around the world, building on open-source, open, reusable, and composable infrastructure. We welcome Harness developers everywhere to join the DSH plugin ecosystem.",
+        ["暂时无法保存确认状态，请重试。"] = "The acknowledgement could not be saved. Please try again.",
+        ["添加一个 API Key 开始使用"] = "Add an API key to get started",
+        ["配置 DeepSeek 官方模型，即可开始使用。"] = "Configure the official DeepSeek provider to start building.",
+        ["稍后配置"] = "Configure later",
+        ["保存并继续"] = "Save and continue",
+        ["请输入 API 密钥。"] = "Enter an API key.",
+        ["连接状态"] = "Connection status",
+        ["连接异常"] = "Disconnected",
+        ["自动重连中"] = "Reconnecting",
+        ["立即重连"] = "Reconnect now",
+        ["连接异常，点击立即重连"] = "Disconnected, reconnect now",
+        ["连接中断，正在自动重试，点击立即重连"] = "Reconnecting automatically, reconnect now",
+        ["即时生效"] = "Applies live",
+        ["需重启生效"] = "Applies after restart",
+        ["保存后即时生效"] = "Takes effect immediately after save",
+        ["保存后需重启内核才完全生效"] = "Needs a kernel restart to fully apply",
+        ["点开技能说明"] = "Open skill details",
+        ["技能 {0}（已被遮蔽，不生效）"] = "Skill {0} (shadowed, inactive)",
+        ["没有找到技能「{0}」。"] = "Skill \"{0}\" was not found.",
+        ["（这个技能没有指令正文。）"] = "(this skill has no instruction body.)",
+        ["输入框键入 /名称 可调用；模型也可能自行调用。"] =
+            "Type /name in the input box to invoke it; the model may also call it on its own.",
+        ["指令"] = "Instructions",
+        ["打开技能说明失败：{0}"] = "Unable to open skill details: {0}",
+        ["Agent 可选择的模型"] = "Models agents may choose",
+        ["开启后，Agent 可以从下方授权模型中，为每个 Subagent 选择提供方、模型和推理强度。仅影响新会话。"] =
+            "When enabled, agents can choose a provider, model, and reasoning effort for each subagent from the authorized models below. Applies only to new sessions.",
+        ["当前没有模型提供方公布模型。"] = "No model provider currently advertises a model.",
+        ["保存前请至少选择一个模型。"] = "Select at least one model before saving.",
     };
     private string L(string key)
     {
@@ -1861,9 +2143,17 @@ public sealed partial class MainWindow : Window
             LocalizeProperty(pending, TextBlock.TextProperty);
         }
         else if (node is Button btn &&
-                 AutomationProperties.GetAutomationId(btn) is "PresentedFileOpenButton" or "PresentedFileRevealButton")
+                 AutomationProperties.GetAutomationId(btn) is "PresentedFileOpenButton" or "FileActionMenu")
         {
-            LocalizeProperty(btn, ContentControl.ContentProperty);
+            if (AutomationProperties.GetAutomationId(btn) == "PresentedFileOpenButton")
+            {
+                LocalizeProperty(btn, ContentControl.ContentProperty);
+            }
+            else
+            {
+                AutomationProperties.SetName(btn, L("更多文件操作"));
+                ToolTipService.SetToolTip(btn, L("更多文件操作"));
+            }
         }
         else
         {
@@ -1998,12 +2288,23 @@ public sealed partial class MainWindow : Window
     private (string Id, string Title)? _pendingWorkspace;
     /// <summary>新会话待用的 Agent 预设（composer 模式选择器；默认 = 内核 standard/标准模式）。</summary>
     private (string Id, string Name)? _pendingPreset = ("standard", "标准模式");
+    /// <summary>dsh agentPresets 内置四档（id → 壳中文文案键）：模式菜单与设置页预设列表共用。
+    /// 内核 list 回帧的 name 已改发英文 id 形态（standard/ptc/…），中文显示名只认壳侧这张表。</summary>
+    private static readonly (string Id, string Name)[] BuiltInAgentPresets =
+    {
+        ("standard", "标准模式"),
+        ("ptc", "PTC 模式"),
+        ("minimal", "极简模式"),
+        ("cordis", "创造模式"),
+    };
     /// <summary>当前选中模型的显示名（模型+推理档触发器文案左半部分）。</summary>
     private string _selectedModelName = "";
     /// <summary>当前选中模型的 id + provider（selectModel 参数；显示名可能 ≠ id，不能混用）。
     /// 发送路径也用它，避免用显示名重设模型被内核拒绝后静默回落默认。</summary>
     private string _selectedModelId = "";
     private string? _selectedModelProvider;
+    /// <summary>P2-3：modelSelection.lastUsed 的 model id——模型菜单里打「上次使用」标记。</summary>
+    private string _lastUsedModelId = "";
     /// <summary>模型触发器菜单里的模型项（catalog groups 展开，点击时重建菜单用）。
     /// 只在 UI 线程改写，但发送路径（后台线程）要按 id 查档位能力，读写都走这把锁。</summary>
     private readonly List<(string Name, string Provider, JsonElement Model)> _modelOptions = new();
@@ -2288,6 +2589,7 @@ public sealed partial class MainWindow : Window
                 _turnMutations.Clear();
                 // 换会话/清空：逐字增量状态属于旧会话，整表作废（旧流也会被取消）
                 ForgetLiveAttempts();
+                ResetMessageDomainState(); // P1 聊天域旁路表（Details/重试/压缩/workflow-run）随会话作废
                 _pendingBubble = null;
                 // 占位气泡已随旧会话作废：按钮忙碌态要按新会话重算，否则会停在停止键。
                 UpdateComposerRunningState();
@@ -2320,6 +2622,7 @@ public sealed partial class MainWindow : Window
         // 「+」菜单里的「在应用中打开」子菜单：展开外层菜单时才拉内核应用清单
         // （内核侧有懒解析与失败重试，缓存反而会锁住早期失败结果）。
         ComposerAddFlyout.Opening += (_, _) => _ = LoadOpenInAppMenuAsync();
+        EnsureCapabilityUiEntries(); // Cordis/技能/计划入口尽早挂上（不必等开会话）
 
         // 输入区上方两个选择器：展开时按最新工作区/预设清单重建（工作区可增删，预设目录可写）
         WorkspacePickerFlyout.Opening += (_, _) => UpdateComposerSelectors();
@@ -2336,6 +2639,9 @@ public sealed partial class MainWindow : Window
         Nav.ItemInvoked += OnNavItemInvoked;
         // Ctrl+S 加速键与点击同路（KeyboardAccelerator 走 Invoked，不等 Tapped）
         SettingsItem.KeyboardAccelerators[0].Invoked += (_, _) => ToggleSettingsPage();
+        // UIA SelectionItem / 触控：SelectsOnInvoked=False 的设置项不进 ItemInvoked，
+        // Tapped 补一路（与 ItemInvoked 用 _settingsToggleStamp 防抖，避免鼠标双开）。
+        SettingsItem.Tapped += (_, _) => ToggleSettingsPageFromUi();
         Nav.SelectionChanged += OnNavSelectionChanged;
         SearchBox.TextChanged += OnSearchBoxChanged;
         SearchBox.QuerySubmitted += OnSearchBoxQuerySubmitted;
@@ -2386,7 +2692,15 @@ public sealed partial class MainWindow : Window
             catch (Exception) { } // 事件入口兜底
         };
 
-        // 内核不再先于界面启动：壳先亮相，内核在后台起，进度摆在主页加载卡上。
+        // P1-25/P1-26 布局壳（拖拽把手 + 右栏 dock）不依赖内核：首帧后装配，
+        // 否则内核启动失败时仍缺把手与分栏宿主。PostUi 排在构造之后，视觉树已就绪
+        // （直接在构造中调用会撞 0xC000027B：FilesPanel/ChatPage 尚未完成首次布局）。
+        PostUi(InitLayoutColumns);
+
+        // 内核不再先于界面启动：壳直接进界面，内核在后台静默引导（无任何加载显示，
+        // 见 MainWindow.KernelBoot.cs），引导期间发送静默排队、就绪后自动补发。
+        // 工作区优先：上次运行的侧栏清单先从本地快照上屏（不等内核），内核基线到达后整表替换。
+        LoadWorkspaceSnapshot();
         StartKernelBoot();
         ScheduleUpdateCheck(); // 启动静默检查更新：有新版本且未提醒过 → 系统通知一次
         if (!string.IsNullOrEmpty(coldStartToastArgument))
@@ -2434,7 +2748,7 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// 内核异步引导的入口（壳亮相后由 <see cref="StartKernelBoot"/> 调起）：
-    /// 取消静默返回，其余任何异常都收敛成加载卡上的失败态 + 重试钮
+    /// 取消静默返回，其余任何异常都收敛成主页失败卡上的原因与重试钮 + 系统通知
     /// （绝不沿 async void/无人观察的 Task 上抛成进程级未处理异常）。
     /// </summary>
     private async Task RunKernelBootAsync(CancellationToken ct)
@@ -2454,8 +2768,8 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 内核异步引导本体：分阶段往主页加载卡上报进度，任一步失败都停在加载卡上给原因与重试入口，
-    /// 绝不用全屏加载层把界面挡住。ct 是硬取消（重试/关窗）：中途 await 被取消即刻返回，
+    /// 内核异步引导本体：全程静默（无进度上报、无加载显示），任一步失败都收敛到主页失败卡
+    /// （原因 + 重试钮）+ 系统通知。ct 是硬取消（重试/关窗）：中途 await 被取消即刻返回，
     /// 内核进程由 <see cref="_kernel"/> 的处置权收回（重试时新建宿主，关窗时 Dispose）。
     /// </summary>
     private async Task RunKernelBootCoreAsync(CancellationToken ct)
@@ -2472,15 +2786,14 @@ public sealed partial class MainWindow : Window
 
         // 默认插件引导（幂等）：缺失的包走内核 CLI 安装、挂载条目写入 profile patch 层。
         // 必须先于内核启动——patch 引用的包不就绪会让内核加载失败；失败只记诊断不阻塞裸启动。
-        // 首次启动要拉十几个包（pnpm 直跑，可能几分钟），这段时间界面全可用，只有加载卡在转。
-        ReportKernelBootStage("正在准备内核组件…");
+        // 首次启动要拉十几个包（pnpm 直跑，可能几分钟）：这段时间界面全可用且无任何加载显示，
+        // 用户此时发送的消息会静默排队（见 SendAsync），引导完成后自动补发。
         try
         {
             var node = DshKernelHost.BundledNode;
             if (node is not null)
             {
-                var bootDiag = await DshPluginBootstrap.EnsureAsync(
-                    dshHome, node, DshKernelHost.BundledBinDir, CreatePluginProgress(), ct);
+                var bootDiag = await DshPluginBootstrap.EnsureAsync(dshHome, node, DshKernelHost.BundledBinDir, null, ct);
                 if (bootDiag.Length > 0)
                 {
                     System.Diagnostics.Debug.WriteLine($"[plugin-bootstrap] {bootDiag.TrimEnd()}");
@@ -2492,10 +2805,13 @@ public sealed partial class MainWindow : Window
             // 引导失败不阻塞内核裸启动；诊断已落 DSH_HOME\logs\plugin-bootstrap.log
         }
 
-        ReportKernelBootStage("正在启动内核…");
         // 先收上次异常退出残留的内核：它还占着会话目录的写租约，新一轮 resume 同一条会话
         // 会撞 SessionAlreadyOwnedError——闪退后重进会话"发送失败"的根因就在这里。
         // 只杀父进程链上没有活 Blade² 的本安装内核（见 SweepOrphanKernels），不动别的 node。
+        // 必须串行在内核 spawn 之前完成：清扫的进程快照是时点数据，spawn 后才出现的进程
+        // 不在快照里——0.8.3.2 曾把清扫与内核拉起重叠，慢机器上清扫拖到 URL 打印之后才
+        // 枚举到新内核，凭"祖先链未知"误杀（首发日"Unable to connect"失败卡的根因）；
+        // HasLiveAppAncestor 的"祖先未知不判死"是第二道保险，这道时序是第一道。
         var sweptKernels = DshKernelHost.SweepOrphanKernels();
         if (sweptKernels > 0)
         {
@@ -2512,19 +2828,79 @@ public sealed partial class MainWindow : Window
 
         var baseUri = new Uri(url.Split('?')[0]);
         _rpc = new DshRpcClient(baseUri);
-        await _rpc.AuthenticateAsync(url, ct);
+        // 渐进内核（dsh-web-app 提前播报补丁）：URL 到手时静态路由/网关可能仍在注册
+        // （连接拒绝/404 窗口）。认证带 500ms 退避重试兜住该窗口（~15s 封顶）；
+        // 取消异常不受 when 影响，直接沿 Task.Delay 上抛。
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                DshKernelHost.DiagLine($"[auth] attempt {attempt} -> {new Uri(url).Authority}");
+                await _rpc.AuthenticateAsync(url, ct);
+                DshKernelHost.DiagLine($"[auth] attempt {attempt} OK");
+                break;
+            }
+            catch (Exception ex) when (attempt < 30)
+            {
+                DshKernelHost.DiagLine($"[auth] attempt {attempt} FAIL: {ex.Message} | inner: {ex.InnerException?.Message}");
+                await Task.Delay(500, ct);
+            }
+        }
 
-        ReportKernelBootStage("正在连接内核…");
-        // 桌面宠物：内核 dsh-pet 插件的状态轮询 + 窗口内精灵层（插件没装时只探 404，
-        // 不影响任何其它功能）。设置分区由「宠物」入口渲染。
-        StartPetRuntime();
+        // 流恢复挂接先于任何长驻流开启（原顺序即如此；工作区流提前后这条不变式依旧成立）
+        RegisterStreamRecovery();
+        DshKernelHost.DiagLine("[boot] stream-recovery wired");
 
-        // 工作区文件右栏：会话 id + 该会话的工作区根（session/list 的 cwd —— 内核
-        // workspaceFileScope lookup 正是用 header.cwd 解工作区根）。
-        FilesPanelView.Attach(
-            _rpc,
-            () => Volatile.Read(ref _activeSessionId),
-            () => _sessions.FirstOrDefault(s => s.SessionId == Volatile.Read(ref _activeSessionId))?.Cwd);
+        // 工作区优先：连接一就绪先拉工作区，输入区上方的工作区选择器最早可用；宠物、
+        // 文件右栏、模型目录等都排在其后。时序（0.7.1）：workspace 域必须最先订阅/触碰，
+        // 让 WorkspaceRegistry 的服务初始化（含 cwd 自动归组 bootstrap）先于 $events 流
+        // 完成——若 $events 先牵动各服务初始化，workspace 域可能把 initialized 落成
+        // "空表已初始化"，bootstrap 从此永久跳过（曾致全部会话平铺无文件夹）。
+        // ConnectMuxEventsDeferredAsync 只建连接，$events 订阅仍在 RefreshWorkspacesAsync
+        // 之后（下面 SubscribeEventsAsync 处）补上。
+        // mux 连接带单轮超时 + 重试：URL 提前播报后，/api/remote.mux 的属主（网关）可能
+        // 尚未挂载完成——升级请求落在 webserver 的 404 兜底席位上没有 WebSocket 应答，
+        // ClientWebSocket 握手会无限等待（0.8.3.3"还是失败"的根因）。单轮 2s 弃连重试，
+        // 网关挂载完成即成功；总窗口 60s 封顶，取消不受影响。
+        var muxDeadline = System.Diagnostics.Stopwatch.StartNew();
+        while (true)
+        {
+            try
+            {
+                using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                attemptCts.CancelAfter(TimeSpan.FromSeconds(2));
+                await _rpc.ConnectMuxEventsDeferredAsync(attemptCts.Token);
+                DshKernelHost.DiagLine($"[boot] mux connected at +{muxDeadline.ElapsedMilliseconds}ms");
+                break;
+            }
+            catch (Exception) when (!ct.IsCancellationRequested && muxDeadline.Elapsed < TimeSpan.FromSeconds(60))
+            {
+                await Task.Delay(250, ct);
+            }
+        }
+        // 渐进内核：URL 就绪 ≠ workspace 域已挂载（各控制器随装载风暴陆续就位）。
+        // 轮询开工作区流直到基线帧到达，基线没到绝不前进——0.7.1 不变式
+        // （workspace 域必须先于 $events 被触碰）在渐进装载下依然成立：
+        // 若 $events 先牵动各服务初始化，workspace 域可能把 initialized 落成
+        // "空表已初始化"，bootstrap 从此永久跳过（曾致全部会话平铺无文件夹）。
+        // 100ms × 600 次（60s）封顶：仍未到按内核启动失败收敛（失败卡 + 通知）。
+        // RefreshWorkspacesAsync 内部吞错并复位 _workspaceStreamOpen，可安全重试；
+        // 流已开但基线未到时它按 _workspaceStreamOpen 短路，不重复开流。
+        for (var attempt = 0; !_workspaceBaselineArrived; attempt++)
+        {
+            if (attempt >= 600)
+            {
+                FailKernelBoot("内核启动失败", "工作区服务未就绪（基线超时）");
+                return;
+            }
+            await RefreshWorkspacesAsync();
+            if (_workspaceBaselineArrived)
+            {
+                DshKernelHost.DiagLine($"[boot] workspace baseline at poll {attempt}");
+                break;
+            }
+            await Task.Delay(100, ct);
+        }
 
         // commands/change：命令注册表变化（插件装/卸、agent 预设切换）时作废目录缓存。
         // 该事件在内核 $events 转发白名单里（dsh-api-remotes API_REMOTE_FORWARDED_EVENTS）。
@@ -2537,20 +2913,84 @@ public sealed partial class MainWindow : Window
         });
 
         // 启动即空态：品牌标 + 输入区选择器 + 默认权限选择器（不等待会话列表）。
-        // 内核就绪前 ChatHero 让位给加载卡（见 UpdateEmptyState），这一步先把其余部件配齐。
+        // 引导期静默：空态照常显示，发送被静默排队（见 SendAsync）；只有引导失败时
+        // 失败卡在正中、空态标题让位（见 UpdateEmptyState）。
         PostUi(UpdateEmptyState);
 
-        // 时序（0.7.1）：workspace 域必须最先订阅/触碰，让 WorkspaceRegistry 的服务
-        // 初始化（含 cwd 自动归组 bootstrap）先于 $events 流完成——若 $events 先牵动
-        // 各服务初始化，workspace 域可能把 initialized 落成"空表已初始化"，bootstrap
-        // 从此永久跳过（曾致全部会话平铺无文件夹）。ConnectMuxAsync 只建连接，
-        // $events 订阅移到 RefreshWorkspacesAsync 之后。
-        await _rpc.ConnectMuxEventsDeferredAsync(ct);
+        _rpc.OnWaterfall("approval/request", frame =>
+        {
+            TrackInteractivePending(frame, "approval");
+            return OnApprovalRequestAsync(frame);
+        });
+        _rpc.EventCancelled += OnEventCancelled;
+        _rpc.OnEvent("api-session/added", OnSessionAddedAsync);
+        _rpc.OnEvent("api-session/removed", OnSessionRemovedAsync);
+        _rpc.OnEvent("api-session/status", OnSessionStatusAsync);
+        // 提问（user-questions/request）走的是 **waterfall** 而不是 emit：
+        // 内核在 $events 上推 {type:"waterfall",event,eventId,agentId,request} 并挂起等待，
+        // 必须回传 $events/result {outcome:{kind:"result",value:{answers:[…]}}} 才解挂。
+        // 该事件同样在 API_REMOTE_FORWARDED_EVENTS 白名单里（mode: "waterfall"）。
+        _rpc.OnWaterfall("user-questions/request", frame =>
+        {
+            TrackInteractivePending(frame, "question");
+            return OnUserQuestionAsync(frame);
+        });
+        // P0-6 Cordis：动态插件审批 + run/stop 面板（事件订阅唯一上下文补丁）
+        AttachCordisEvents();
 
-        // 模型目录：默认模型/provider + 默认档位菜单（不再硬编码 deepseek-V4-Pro/high）
+        // 工作区基线已在上面对话刚建立时拉过（0.7.1 时序注释）；$events 订阅、
+        // 会话清单与会话控制面（排队项 + 任务）放在其后，避免影响 workspace
+        // 域的初始化次序。
+        await _rpc.SubscribeEventsAsync(ct);
+
+        // 渐进并行：会话清单（侧栏）、模型目录（发送区模型钮/档位）、主题字号偏好
+        // 互不依赖，并行拉取——各自独立 HTTP 往返（CallOkAsync 走 POST，逐请求响应），
+        // 串行等三趟不如一趟等最慢的。
+        await Task.WhenAll(
+            RefreshSessionsAsync(),
+            LoadModelCatalogDefaultsAsync(),
+            ApplyKernelThemeFromSettingsAsync());
+        DshKernelHost.DiagLine("[boot] parallel batch done (sessions/catalog/theme)");
+
+        // 尾部装配：宠物轮询、文件右栏、分栏兜底——都不挡侧栏/聊天主路径，排在
+        // 会话清单之后。设置分区由「宠物」入口渲染；插件没装时宠物只探 404 不影响其它。
+        StartPetRuntime();
+
+        // 工作区文件右栏：会话 id + 该会话的工作区根（session/list 的 cwd —— 内核
+        // workspaceFileScope lookup 正是用 header.cwd 解工作区根）。
+        FilesPanelView.Attach(
+            _rpc,
+            () => Volatile.Read(ref _activeSessionId),
+            () => _sessions.FirstOrDefault(s => s.SessionId == Volatile.Read(ref _activeSessionId))?.Cwd);
+        FilesPanelView.HostOpenRequested = (path, reveal) => _ = OpenProducedPathAsync(path, reveal);
+
+        // P1-25/P1-26：三栏拖拽把手 + 右栏分栏宿主（MainWindow.LayoutColumns.cs）
+        // 构造期已 InitLayoutColumns（幂等）；此处仅在冷启动竞态下兜底。
+        InitLayoutColumns();
+
+        await OpenSessionControlStreamAsync();
+        DshKernelHost.DiagLine("[boot] complete (control stream open)");
+
+        // 引导完成：界面早已在用，这里只补尾部装配 + 补发引导期间排队的发送。
+        PostUi(UpdateEmptyState); // 再刷一次空态：会话清单此刻已到位
+        // P1-23 连接状态条：设置页头常驻（异常/自动重连中/立即重连；连接正常不显字）
+        PostUi(MountConnectionStatusBar);
+        // 冷启动来自更新通知时，此刻才补跳设置页的「关于」分区（此前内核没连上，跳不了）。
+        PostUi(FlushPendingUpdateDeepLink);
+        FlushSendQueuedWhileBooting();
+        // P1-12/24 版本化 welcome + 首次 API Key 向导（settings.onboarding）
+        _ = MaybeShowOnboardingAsync();
+    }
+
+    /// <summary>
+    /// 模型目录：默认模型/provider + 默认档位菜单（不再硬编码 deepseek-V4-Pro/high）。
+    /// 引导并行批次的一员（见 RunKernelBootCoreAsync）：失败保持 UI 默认值，发送时再试。
+    /// </summary>
+    private async Task LoadModelCatalogDefaultsAsync()
+    {
         try
         {
-            var catalog = await _rpc.CallOkAsync("session/modelCatalog", new { });
+            var catalog = await _rpc!.CallOkAsync("session/modelCatalog", new { });
             if (catalog.TryGetProperty("default", out var def) && def.ValueKind == JsonValueKind.Object)
             {
                 var provider = def.TryGetProperty("provider", out var p) ? p.GetString() ?? "deepseek-official" : "deepseek-official";
@@ -2594,21 +3034,14 @@ public sealed partial class MainWindow : Window
             }
         }
         catch (Exception) { } // 目录失败：保持 UI 默认值，发送时再试
+    }
 
-        _rpc.OnWaterfall("approval/request", OnApprovalRequestAsync);
-        _rpc.EventCancelled += OnEventCancelled;
-        _rpc.OnEvent("api-session/added", OnSessionAddedAsync);
-        _rpc.OnEvent("api-session/removed", OnSessionRemovedAsync);
-        _rpc.OnEvent("api-session/status", OnSessionStatusAsync);
-        // 提问（user-questions/request）走的是 **waterfall** 而不是 emit：
-        // 内核在 $events 上推 {type:"waterfall",event,eventId,agentId,request} 并挂起等待，
-        // 必须回传 $events/result {outcome:{kind:"result",value:{answers:[…]}}} 才解挂。
-        // 该事件同样在 API_REMOTE_FORWARDED_EVENTS 白名单里（mode: "waterfall"）。
-        _rpc.OnWaterfall("user-questions/request", OnUserQuestionAsync);
-
-        RegisterStreamRecovery();
-
-        // 启动换肤：恢复内核保存的 ui-theme.preference（壳跟随 dsh 设置，与原版一致）
+    /// <summary>
+    /// 启动换肤：恢复内核保存的 ui-theme.preference（壳跟随 dsh 设置，与原版一致）。
+    /// 引导并行批次的一员（见 RunKernelBootCoreAsync）：失败保持系统默认，不阻塞启动。
+    /// </summary>
+    private async Task ApplyKernelThemeFromSettingsAsync()
+    {
         try
         {
             var snapshot = await EnsureSettingsSnapshotAsync();
@@ -2626,34 +3059,12 @@ public sealed partial class MainWindow : Window
                     if (v.TryGetProperty("fontSize", out var f) && f.ValueKind == JsonValueKind.Number &&
                         f.GetDouble() is >= 12 and <= 17)
                     {
-                        ChatList.FontSize = f.GetDouble();
+                        PostUi(() => ChatList.FontSize = f.GetDouble());
                     }
                 }
             }
         }
         catch (Exception) { } // 设置读取失败：保持系统默认，不阻塞启动
-
-        ReportKernelBootStage("正在加载工作区与会话…");
-        // 时序（0.7.1）：workspace 域必须最先订阅/触碰，让 WorkspaceRegistry 的服务
-        // 初始化（含 cwd 自动归组 bootstrap）先于 $events 流完成——若 $events 先牵动
-        // 各服务初始化，workspace 域可能把 initialized 落成"空表已初始化"，bootstrap
-        // 从此永久跳过（曾致全部会话平铺无文件夹）。$events 订阅在两步之后补上。
-        await RefreshWorkspacesAsync();
-        await _rpc.SubscribeEventsAsync(ct);
-        await RefreshSessionsAsync();
-        // 会话控制面（排队项 + 任务）：长驻流的启动时机放在 workspace/$events 之后，
-        // 避免影响 workspace 域的初始化次序（见上面 0.7.1 时序注释）。
-        await OpenSessionControlStreamAsync();
-
-        // 内核就绪、加载卡撤下后再刷一次空态：上面那次 UpdateEmptyState（连接阶段）被加载卡
-        // 挡住了品牌标，这里补上；会话清单此时也已到位。
-        // 目标值先推满，等条子动画爬到 100% 再撤卡——不然用户只看到条子半路消失。
-        CompleteKernelBootProgress();
-        await Task.Delay(TimeSpan.FromMilliseconds(350), ct);
-        HideKernelBootPanel();
-        PostUi(UpdateEmptyState);
-        // 冷启动来自更新通知时，此刻才补跳设置页的「关于」分区（此前内核没连上，跳不了）。
-        PostUi(FlushPendingUpdateDeepLink);
     }
 
     private Task OnSessionAddedAsync(JsonElement _) => RefreshAllListsAsync();
@@ -2859,12 +3270,15 @@ public sealed partial class MainWindow : Window
                 if (projValues.ValueKind == JsonValueKind.Object)
                 {
                     _sessionProjections[id] = projValues.Clone();
+                    // I-1：schedule 投影 → 列表「有活动定时任务」（wire = active[] 数组）
+                    IngestSessionListProjection(id, projValues);
                 }
                 vms.Add(new SessionVm
                 {
                     SessionId = id,
                     Title = SessionDisplayTitle(projValues, blank, cwd, id),
                     Subtitle = turns > 0 ? LF("{0} 轮对话", turns) : "",
+                    Turns = turns,
                     Cwd = cwd,
                     // updatedAt 是 SessionSummary 的字段（内核 session/list 每项都带）
                     UpdatedAt = item.TryGetProperty("updatedAt", out var ua) && ua.ValueKind == JsonValueKind.Number
@@ -2875,6 +3289,8 @@ public sealed partial class MainWindow : Window
                     // （内核 SessionSummary 契约），壳据此做侧栏标记、只读 composer 与回跳
                     Origin = item.TryGetProperty("origin", out var org) && org.ValueKind == JsonValueKind.String ? org.GetString() : null,
                     ParentSessionId = item.TryGetProperty("parentSessionId", out var psid) && psid.ValueKind == JsonValueKind.String && psid.GetString() is { Length: > 0 } parent ? parent : null,
+                    HasActiveSchedule = SessionHasActiveSchedule(id),
+                    PendingKind = PeekSessionPendingKind(id),
                 });
             }
             PostUi(() =>
@@ -2895,6 +3311,8 @@ public sealed partial class MainWindow : Window
                 // 会话状态条跟着会话清单刷新：有活动会话时就该出现（plan/permissions 值
                 // 可能稍后由投影帧补齐，但"会话反馈"入口只依赖会话是否存在）。
                 RefreshSessionStateBar();
+                // 清单实变才落快照：下次启动侧栏零等待上屏（见 MainWindow.WorkspaceSnapshot.cs）
+                PersistWorkspaceSnapshot();
             });
         }
         catch (Exception)
@@ -2924,6 +3342,8 @@ public sealed partial class MainWindow : Window
                 a.Blank != b.Blank ||
                 a.Origin != b.Origin ||
                 a.ParentSessionId != b.ParentSessionId ||
+                a.HasActiveSchedule != b.HasActiveSchedule ||
+                a.PendingKind != b.PendingKind ||
                 RelativeTimeLabel(a.UpdatedAt) != RelativeTimeLabel(b.UpdatedAt))
             {
                 return false;
@@ -3208,22 +3628,66 @@ public sealed partial class MainWindow : Window
         // 流式期间足以把逐字重绘的帧预算吃光。可读名仍由 item 上的 AutomationProperties.Name 给。
         var titleSlot = new Grid();
         titleSlot.Children.Add(titleText);
-        lock (_sessionRunningLock)
+        // P1-3/15：待交互状态点（计划待审 / 等待回答 / 等待审批）优先于运行圆点；旁侧闹钟 = 有活动定时任务
+        var pendingKind = s.PendingKind;
+        var hasSchedule = s.HasActiveSchedule;
+        if (pendingKind is { Length: > 0 })
         {
-            if (_sessionRunning.TryGetValue(s.SessionId, out var isRunning) && isRunning)
+            var pendingDot = new Microsoft.UI.Xaml.Shapes.Ellipse
             {
-                var dot = new Microsoft.UI.Xaml.Shapes.Ellipse
+                Width = StatusDot,
+                Height = StatusDot,
+                Fill = ThemeBrush("WarningBrush"),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 2, 0),
+            };
+            titleText.Margin = new Thickness(0, 0, StatusDot + 6, 0);
+            titleSlot.Children.Add(pendingDot);
+            var pendingLabel = SessionPendingLabel(pendingKind);
+            ToolTipService.SetToolTip(pendingDot, pendingLabel);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(pendingDot, pendingLabel);
+        }
+        else
+        {
+            lock (_sessionRunningLock)
+            {
+                if (_sessionRunning.TryGetValue(s.SessionId, out var isRunning) && isRunning)
                 {
-                    Width = StatusDot,
-                    Height = StatusDot,
-                    Fill = ThemeBrush("InfoBrush"),
-                    HorizontalAlignment = HorizontalAlignment.Right,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Margin = new Thickness(0, 0, 2, 0),
-                };
-                titleText.Margin = new Thickness(0, 0, StatusDot + 6, 0);
-                titleSlot.Children.Add(dot);
-                StartStatusPulse(dot);
+                    var dot = new Microsoft.UI.Xaml.Shapes.Ellipse
+                    {
+                        Width = StatusDot,
+                        Height = StatusDot,
+                        Fill = ThemeBrush("InfoBrush"),
+                        HorizontalAlignment = HorizontalAlignment.Right,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Margin = new Thickness(0, 0, 2, 0),
+                    };
+                    titleText.Margin = new Thickness(0, 0, StatusDot + 6, 0);
+                    titleSlot.Children.Add(dot);
+                    StartStatusPulse(dot);
+                }
+            }
+        }
+        if (hasSchedule)
+        {
+            // 官方 ActiveScheduleIndicator：闹钟图标 + 「有活动定时任务」
+            var alarm = new FontIcon
+            {
+                Glyph = "\uE823", // Alarm
+                FontSize = GlyphCaption,
+                Foreground = ThemeBrush("TextTertiaryBrush"),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 2, 0),
+            };
+            var scheduleLabel = L("有活动定时任务");
+            ToolTipService.SetToolTip(alarm, scheduleLabel);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(alarm, scheduleLabel);
+            titleSlot.Children.Add(alarm);
+            if (pendingKind is null)
+            {
+                titleText.Margin = new Thickness(0, 0, GlyphCaption + 8, 0);
             }
         }
         Grid.SetColumn(titleSlot, 0);
@@ -3956,11 +4420,13 @@ public sealed partial class MainWindow : Window
                             : new List<string>();
                         PostUi(() =>
                         {
+                            _workspaceBaselineArrived = true; // 基线已到：快照垫场使命结束（LoadWorkspaceSnapshot 的应用门槛）
                             _workspaces.Clear();
                             _workspaces.AddRange(list);
                             _archivedSessions.Clear();
                             _archivedSessions.AddRange(archived);
                             RebuildNavMenu();
+                            PersistWorkspaceSnapshot();
                         });
                         break;
                     }
@@ -3989,6 +4455,7 @@ public sealed partial class MainWindow : Window
                                 _workspaces.Add(vm);
                             }
                             RebuildNavMenu();
+                            PersistWorkspaceSnapshot();
                         });
                         break;
                     }
@@ -3999,6 +4466,7 @@ public sealed partial class MainWindow : Window
                         {
                             _workspaces.RemoveAll(x => x.WorkspaceId == id);
                             RebuildNavMenu();
+                            PersistWorkspaceSnapshot();
                         });
                         break;
                     }
@@ -4009,6 +4477,7 @@ public sealed partial class MainWindow : Window
                         {
                             _workspaces.Sort((a, b) => ids.IndexOf(a.WorkspaceId) - ids.IndexOf(b.WorkspaceId));
                             RebuildNavMenu();
+                            PersistWorkspaceSnapshot();
                         });
                         break;
                     }
@@ -4020,6 +4489,7 @@ public sealed partial class MainWindow : Window
                             _archivedSessions.Clear();
                             _archivedSessions.AddRange(ids);
                             RebuildNavMenu();
+                            PersistWorkspaceSnapshot();
                         });
                         break;
                     }
@@ -4081,12 +4551,29 @@ public sealed partial class MainWindow : Window
     /// <summary>NavigationView 选中变化（含程序化/UIA 选择）：会话项加载会话。</summary>
     private async void OnNavSelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
-        if (args.SelectedItem is NavigationViewItem item && item.Tag is SessionVm vm)
+        if (args.SelectedItem is NavigationViewItem item)
         {
-            if (vm.SessionId != _activeSessionId)
+            // UIA SelectionItem.Select 到不了 ItemInvoked（NavigationViewItem 无 InvokePattern）：
+            // 设置/分区等固定项在这里补一路，否则自动化与辅助技术点不开设置页。
+            // 鼠标点击路径 SelectsOnInvoked=False 的 SettingsItem 不改 SelectedItem，不会双开。
+            switch (item.Tag)
             {
-                Volatile.Write(ref _activeSessionId, vm.SessionId);
-                await OpenSessionAsync(vm);
+                case "settings":
+                    if (SettingsPage.Visibility != Visibility.Visible)
+                    {
+                        ToggleSettingsPageFromUi();
+                    }
+                    return;
+                case SettingsSectionVm section:
+                    await ActivateSectionAsync(section.Id);
+                    return;
+                case SessionVm vm:
+                    if (vm.SessionId != _activeSessionId)
+                    {
+                        Volatile.Write(ref _activeSessionId, vm.SessionId);
+                        await OpenSessionAsync(vm);
+                    }
+                    return;
             }
         }
     }
@@ -4094,6 +4581,14 @@ public sealed partial class MainWindow : Window
     /// <summary>选中会话：清屏、拉历史、开跟随流；附属视图（文件右栏/反馈状态/命令目录）随会话切换。</summary>
     private async Task OpenSessionAsync(SessionVm vm)
     {
+        if (_rpc is null)
+        {
+            // 快照侧栏在内核就绪前就可点（工作区优先上屏）：先记住点了哪个，就绪后
+            // 由 FlushSendQueuedWhileBooting 一并打开。不清屏不清状态——历史反正拉不到，
+            // 留着空态/上一屏，引导失败时失败卡接管正中。
+            _pendingOpenSessionId = vm.SessionId;
+            return;
+        }
         Volatile.Write(ref _journalCursor, 0);
         _messages.Clear();
         // 模型标注同属会话作用域：旧会话最后一条 header 不许标到新会话的消息上，
@@ -4129,6 +4624,9 @@ public sealed partial class MainWindow : Window
             _scheduleRecords = new();
             _scheduleSeen = false;
         }
+        ResetTodosProjection(); // I-1：todos 投影同属会话作用域
+        EnsureTodosUiEntry();   // P1-17：任务入口（角标按新会话清单显隐）
+        EnsureCapabilityUiEntries(); // Cordis/技能/计划入口（BuildCapabilityMenu 旁路，保证面板可达）
         _ = RefreshGoalBarAsync(vm.SessionId);
         // 会话状态条（plan/permissions 投影）跟随会话：先清空再按新会话重取，
         // 避免上一个会话的预设标签停留在新会话上。
@@ -4401,8 +4899,8 @@ public sealed partial class MainWindow : Window
 
     private void UpdateEmptyState()
     {
-        // 内核还在后台引导时中间让位给加载卡：此刻摆"开始一段新的会话"会给人「可以开聊」的
-        // 错觉，而发送要等内核就绪（SendAsync 会给一次性提示，见 MainWindow.KernelBoot.cs）。
+        // 引导期静默：空态照常显示（发送被静默排队，见 SendAsync）；只有引导失败时
+        // 失败卡在正中、空态标题让位（见 MainWindow.KernelBoot.cs）。
         ChatHero.Visibility = IsHeroState() && KernelBootPanel.Visibility != Visibility.Visible
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -4422,15 +4920,8 @@ public sealed partial class MainWindow : Window
             return;
         }
         AgentModeFlyout.Items.Clear();
-        var builtIn = new (string Id, string Name)[]
-        {
-            ("standard", "标准模式"),
-            ("ptc", "PTC 模式"),
-            ("minimal", "极简模式"),
-            ("cordis", "创造模式"),
-        };
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var (id, name) in builtIn)
+        foreach (var (id, name) in BuiltInAgentPresets)
         {
             var item = new RadioMenuFlyoutItem
             {
@@ -4711,6 +5202,8 @@ public sealed partial class MainWindow : Window
     {
         _rpc!.StreamsReset += () => PostUi(() =>
         {
+            // P1-23：连接级断开 → 自动重连中（后台 ReconnectLoop 退避重试，可点「立即重连」）
+            SetConnectionVisual("connecting");
             _businessStreamsResetPending = true;
             _workspaceStreamOpen = false;
             _sessionStreamId = null;
@@ -5400,9 +5893,20 @@ public sealed partial class MainWindow : Window
                     await FollowSessionAsync(sessionId);
                 await OpenSessionControlStreamAsync();
             }
+            // P1-23：业务流恢复完成 → 短暂 recovered 态（界面不显字，随后回 connected）
+            SetConnectionVisual("recovered");
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(2000);
+                PostUi(() =>
+                {
+                    if (_connectionVisual == "recovered") SetConnectionVisual("connected");
+                });
+            });
         }
         catch (Exception ex)
         {
+            SetConnectionVisual("disconnected");
             AppendSystemMessage(LF("连接恢复后订阅失败：{0}", ex.Message));
         }
         finally { _restoringBusinessStreams = false; }
@@ -5579,6 +6083,9 @@ public sealed partial class MainWindow : Window
         TrackTranscriptEvent(type, data, turn);
         TrackRunStats(ev, type, data); // 运行状态条折叠（page 回放 + follow 流共用入口）
         TrackContextMeter(type, data); // 上下文容量胶囊折叠（同上共用入口，last-wins 无累计）
+        TrajectoryObserve(ev, type, data); // 轨迹账本 + 轮次计时（同上共用入口，seq 去重防回放翻倍）
+        // P1 聊天域：召回/中继/上下文注入/系统提示词/截断/重试/压缩/workflow-run（MainWindow.MessageDetails.cs）
+        if (NoteMessageDomainEvent(ev, type, data, envTime, envSeq, turn)) return;
         // 使用统计实时刷新：带用量/时长口径的事件到达即防抖重算（手动「刷新」已移除）。
         if (type is "assistant/message" or "turn/end") RequestStatsLiveRefresh();
         // 已撤回编辑的轮次/提问：journal 只增不改，补拉、轮询兜底、切会话回放都会把它们带回，
@@ -5725,6 +6232,7 @@ public sealed partial class MainWindow : Window
                     if (!string.IsNullOrEmpty(text))
                     {
                         bubble = new ChatBubble { Role = "user", Text = text, Time = envTime, Seq = envSeq };
+                        AttachPendingUserDetail(bubble);
                         // 新提问落屏：撤回候选若还挂在 turn/start 之前的窗口，到此作废——
                         // journal 按序落盘，被撤回那次 prompt 的 turn/start 若会来，早就排在这条前面。
                         _withdrawPendingTurn = false;
@@ -5905,6 +6413,8 @@ public sealed partial class MainWindow : Window
                     if (running is not null)
                     {
                         running.IsToolRunning = false;
+                        // P0-3：结果正文/JSON/meta.diffs 落到工具卡旁路状态（MainWindow.ToolCards.cs）
+                        NoteToolResult(running, data, envTime);
                         RepaintBubble(running);
                     }
                     if (!rIsError && rCallId.Length > 0 &&
@@ -7076,13 +7586,9 @@ public sealed partial class MainWindow : Window
         }
         if (_rpc is null)
         {
-            // 内核还在后台引导：消息留在输入框里，别让用户以为发出去了（只提示一次，
-            // 不弹错误级对话框——内核就绪后正常发送即可）。
-            if (!_kernelWaitHintShown)
-            {
-                _kernelWaitHintShown = true;
-                AppendSystemMessage(L("内核还在加载中，请稍候再发。"));
-            }
+            // 内核还在后台静默引导：不提示、不动输入框，只记一笔，引导完成后
+            // FlushSendQueuedWhileBooting 按输入框当前内容自动补发（期间改了字就以最新内容发）。
+            _sendQueuedWhileBooting = true;
             return;
         }
         string mode = "queue";
@@ -7551,6 +8057,7 @@ public sealed partial class MainWindow : Window
     /// <summary>取消只清对应 ID；记下墓碑以处理接收线程中取消先于请求回调的情况。</summary>
     private void OnEventCancelled(string eventId)
     {
+        ClearInteractivePending(eventId);
         RunEventUi(() =>
         {
             _seenInteractiveEventIds.Add(eventId);
@@ -7617,286 +8124,8 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    // ---------------- 用户提问（user-questions/request，$events waterfall） ----------------
-    //
-    // 协议（dsh-api-gateway startRemoteEvent + dsh-api-remotes forwardWaterfall 实测）：
-    //   内核推  {type:"waterfall", event:"user-questions/request", eventId, agentId, request}
-    //   壳回传  POST /api/$events/result {clientId, eventId, outcome:{kind:"result", value}}
-    //   value   {answers:[{id, selected:[标签…], custom?}]}   —— 与 dsh-tool-ask-user 的
-    //           output schema 完全一致（selected 是选项 label 数组，custom 是自由文本）。
-    //   若回传 {kind:"next"}，内核会走 waterfall 的 next()（即"本客户端不回答"）。
-    // request.questions[i] = {id, question, header?, options?:[{label,description?}],
-    //                         multiSelect?, intent?, detail?}
-    // 计划评审（exit_plan_mode）走的就是这条通道：questions[0].id == "plan-review"，
-    // intent.kind == "plan-review"，detail 是计划 markdown。
-
-    /// <summary>当前亮着的提问（同一时刻只亮一条，与审批卡片同策略：入队顺序处理）。</summary>
-    private readonly Queue<JsonElement> _questionQueue = new();
-    private JsonElement _activeQuestion = default;
-
-    /// <summary>waterfall 帧入口（接收线程）。只处理 user-questions/request。</summary>
-    private Task OnUserQuestionAsync(JsonElement frame)
-    {
-        var eventId = Str(frame, "eventId");
-        if (Str(frame, "event") != "user-questions/request" || eventId.Length == 0 ||
-            !frame.TryGetProperty("request", out var request) || request.ValueKind != JsonValueKind.Object ||
-            !request.TryGetProperty("questions", out var questions) || questions.ValueKind != JsonValueKind.Array ||
-            questions.GetArrayLength() == 0)
-        {
-            return Task.CompletedTask;
-        }
-        var ownedFrame = frame.Clone();
-        RunEventUi(() =>
-        {
-            if (!_seenInteractiveEventIds.Add(eventId)) return;
-            _questionQueue.Enqueue(ownedFrame);
-            // 与审批同策：提问（含 exit_plan_mode 计划评审）同样卡住任务等回答，
-            // 窗口不在前台时用户看不到卡片，补一条系统通知。
-            if (ShouldNotify() && questions.GetArrayLength() > 0)
-            {
-                var first = questions[0];
-                var header = first.TryGetProperty("header", out var h) && h.ValueKind == JsonValueKind.String
-                    ? h.GetString()
-                    : null;
-                var text = first.TryGetProperty("question", out var q) && q.ValueKind == JsonValueKind.String
-                    ? q.GetString()
-                    : null;
-                var body = text ?? string.Empty;
-                if (body.Length > 120) body = body[..120] + "…";
-                ShellToast.Show(header is { Length: > 0 } ? header : L("需要你的输入"), body);
-            }
-            ShowNextQuestion();
-        });
-        return Task.CompletedTask;
-    }
-
-    /// <summary>亮出队首提问（无待答则收起卡片）。</summary>
-    private void ShowNextQuestion()
-    {
-        if (_activeQuestion.ValueKind == JsonValueKind.Object)
-        {
-            return;
-        }
-        try
-        {
-            SetQuestionInputEnabled(true);
-            _questionSelections.Clear();
-            if (_questionQueue.Count == 0)
-            {
-                QuestionHost.Children.Clear();
-                QuestionPanel.Visibility = Visibility.Collapsed;
-                return;
-            }
-            var next = _questionQueue.Dequeue();
-            _activeQuestion = next;
-            BuildQuestionCard(next);
-            QuestionPanel.Visibility = Visibility.Visible;
-        }
-        catch (Exception)
-        {
-            // 卡片构造失败不上抛（0xc000027b 教训）
-        }
-    }
-
-    /// <summary>提问卡片：表头 + 每个问题一组选项（单选/多选）+ 自由文本 + 提交/跳过。</summary>
-    private void BuildQuestionCard(JsonElement frame)
-    {
-        QuestionHost.Children.Clear();
-        var request = frame.TryGetProperty("request", out var rq) && rq.ValueKind == JsonValueKind.Object ? rq : default;
-        var questions = request.ValueKind == JsonValueKind.Object && request.TryGetProperty("questions", out var qs) &&
-                        qs.ValueKind == JsonValueKind.Array ? qs : default;
-        if (questions.ValueKind != JsonValueKind.Array || questions.GetArrayLength() == 0)
-        {
-            return;
-        }
-
-        // 表头：plan-review 有专属文案，其余用问题自带的 header 或统一标题
-        var first = questions[0];
-        var isPlanReview = Str(first, "id") == "plan-review";
-        var header = isPlanReview ? "计划评审" : (Str(first, "header") is { Length: > 0 } h ? h : "内核提问");
-
-        var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = Sp8 };
-        head.Children.Add(new FontIcon { Glyph = isPlanReview ? "\uE9D5" : "\uE897", FontSize = GlyphBody });
-        head.Children.Add(new TextBlock { Text = header, Style = AppStyle("BodyStrongTextStyle") });
-        var agentId = Str(frame, "agentId");
-        if (agentId.Length > 0)
-        {
-            head.Children.Add(new TextBlock
-            {
-                Text = agentId,
-                Style = AppStyle("CodeTextStyle"),
-                Opacity = 0.6,
-                VerticalAlignment = VerticalAlignment.Center,
-                IsTextSelectionEnabled = true,
-            });
-        }
-        QuestionHost.Children.Add(head);
-
-        var selections = new List<(string Id, bool Multi, List<RadioButton> Radios, List<CheckBox> Checks, TextBox Custom)>();
-        foreach (var q in questions.EnumerateArray())
-        {
-            var qid = Str(q, "id");
-            var text = Str(q, "question");
-            var multi = q.TryGetProperty("multiSelect", out var ms) && ms.ValueKind == JsonValueKind.True;
-
-            QuestionHost.Children.Add(new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap });
-
-            // 计划评审的 detail 是完整计划 markdown：原样呈现（官方客户端同样展示它）
-            var detail = Str(q, "detail");
-            if (detail.Length > 0)
-            {
-                QuestionHost.Children.Add(new Border
-                {
-                    Background = ThemeBrush("CardSecondaryBrush"),
-                    CornerRadius = RadMedium,
-                    Padding = TokenThickness("CardPaddingCompact", new Thickness(12, 8, 12, 8)),
-                    MaxHeight = 260,
-                    Child = new ScrollViewer
-                    {
-                        VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                        Content = new ContentControl { Content = detail, HorizontalContentAlignment = HorizontalAlignment.Stretch },
-                    },
-                });
-            }
-
-            var options = q.TryGetProperty("options", out var opts) && opts.ValueKind == JsonValueKind.Array ? opts : default;
-            var radios = new List<RadioButton>();
-            var checks = new List<CheckBox>();
-            var group = $"q-{qid}-{Guid.NewGuid():N}";
-            if (options.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var opt in options.EnumerateArray())
-                {
-                    var label = Str(opt, "label");
-                    var desc = Str(opt, "description");
-                    var content = desc.Length > 0 ? $"{label} — {desc}" : label;
-                    if (multi)
-                    {
-                        var cb = new CheckBox { Content = content, Tag = label };
-                        Aut(cb, $"QuestionOption_{qid}_{label}", LF("选项：{0}", label));
-                        checks.Add(cb);
-                        QuestionHost.Children.Add(cb);
-                    }
-                    else
-                    {
-                        var rb = new RadioButton { Content = content, GroupName = group, Tag = label };
-                        Aut(rb, $"QuestionOption_{qid}_{label}", LF("选项：{0}", label));
-                        radios.Add(rb);
-                        QuestionHost.Children.Add(rb);
-                    }
-                }
-            }
-
-            // 自由文本：内核 answer.custom 字段，任何问题都可带（选项之外补充说明）
-            var custom = new TextBox
-            {
-                PlaceholderText = "补充说明（可选，随答案回传为 custom）",
-                TextWrapping = TextWrapping.Wrap,
-                AcceptsReturn = false,
-            };
-            Aut(custom, $"QuestionCustom_{qid}", L("补充说明"));
-            QuestionHost.Children.Add(custom);
-
-            selections.Add((qid, multi, radios, checks, custom));
-        }
-
-        var buttons = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = Sp8,
-            HorizontalAlignment = HorizontalAlignment.Right,
-        };
-        var skip = new Button { Content = "跳过（不回答）" };
-        Aut(skip, "QuestionSkipButton", L("跳过（不回答）"));
-        skip.Click += OnQuestionSkipClick;
-        buttons.Children.Add(skip);
-        var submit = Aut(new Button { Content = "提交", Style = AppStyle("AccentButtonStyle") }, "QuestionSubmitButton", L("提交答案"));
-        Aut(submit, "QuestionSubmitButton", L("提交答案"));
-        submit.Click += OnQuestionSubmitClick;
-        buttons.Children.Add(submit);
-        QuestionHost.Children.Add(buttons);
-
-        _questionSelections = selections;
-    }
-
-    /// <summary>卡片当前的作答控件（问题 id → 控件组）。</summary>
-    private List<(string Id, bool Multi, List<RadioButton> Radios, List<CheckBox> Checks, TextBox Custom)> _questionSelections = new();
-
-    private void SetQuestionInputEnabled(bool enabled)
-    {
-        foreach (var child in QuestionHost.Children)
-        {
-            if (child is Control control) control.IsEnabled = enabled;
-            if (child is StackPanel row)
-            {
-                foreach (var button in row.Children.OfType<Button>()) button.IsEnabled = enabled;
-            }
-        }
-    }
-
-    private async void OnQuestionSubmitClick(object sender, RoutedEventArgs e)
-    {
-        await ResolveQuestionAsync(skip: false);
-    }
-
-    private async void OnQuestionSkipClick(object sender, RoutedEventArgs e)
-    {
-        await ResolveQuestionAsync(skip: true);
-    }
-
-    /// <summary>提交/跳过共享提交锁；失败保留输入，成功或取消才推进队列。</summary>
-    private async Task ResolveQuestionAsync(bool skip)
-    {
-        var eventId = Str(_activeQuestion, "eventId");
-        if (_rpc is null || eventId.Length == 0 || _submittingQuestionEventId is not null)
-        {
-            return;
-        }
-        _submittingQuestionEventId = eventId;
-        SetQuestionInputEnabled(false);
-        try
-        {
-            if (skip)
-            {
-                await _rpc.SkipWaterfallAsync(eventId);
-            }
-            else
-            {
-                var answers = new List<object>();
-                foreach (var (id, _, radios, checks, custom) in _questionSelections)
-                {
-                    var selected = radios.Where(r => r.IsChecked == true)
-                        .Select(r => r.Tag as string ?? "")
-                        .Concat(checks.Where(c => c.IsChecked == true).Select(c => c.Tag as string ?? ""))
-                        .Where(s => s.Length > 0)
-                        .ToList();
-                    var answer = new Dictionary<string, object> { ["id"] = id, ["selected"] = selected };
-                    var text = (custom.Text ?? "").Trim();
-                    if (text.Length > 0) answer["custom"] = text;
-                    answers.Add(answer);
-                }
-                await _rpc.ResolveWaterfallAsync(eventId, new { answers });
-            }
-            RunEventUi(() =>
-            {
-                if (Str(_activeQuestion, "eventId") != eventId) return;
-                _activeQuestion = default;
-                _submittingQuestionEventId = null;
-                AppendSystemMessage(skip ? L("已跳过该提问（内核侧按未作答继续）。") : L("已回传提问答复。"));
-                ShowNextQuestion();
-            });
-        }
-        catch (Exception ex)
-        {
-            RunEventUi(() =>
-            {
-                if (Str(_activeQuestion, "eventId") != eventId) return;
-                _submittingQuestionEventId = null;
-                SetQuestionInputEnabled(true);
-                AppendSystemMessage(LF("提问回传失败，请重试：{0}", ex.Message));
-            });
-        }
-    }
+    // 用户提问（user-questions/request，$events waterfall）已迁至 MainWindow.UserQuestions.cs：
+    // 多题分页导航 / 跳过本题 / 放弃整组（ASK_CANCELLED）/ 去聊天里说 / 推荐标记 / 确认执行。
 
     // ---------------- 交付物（deliverables/presented） ----------------
 
@@ -7939,7 +8168,47 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            await OpenPresentedFileAsync(PresentedFileOf(sender), "open");
+            // 官方主按钮「打开」= 在侧边栏预览；默认应用打开在 FileActionMenu 里。
+            var file = PresentedFileOf(sender);
+            if (file is not null)
+            {
+                await RunFileActionAsync(file.Path, "preview", file);
+            }
+        }
+        catch (Exception) { }
+    }
+
+    private void OnPresentedFileMenuClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var file = PresentedFileOf(sender);
+            if (file is null || sender is not FrameworkElement anchor)
+            {
+                return;
+            }
+            var flyout = new MenuFlyout();
+            AutomationProperties.SetAutomationId(flyout, "FileActionMenu");
+
+            void Add(string text, string automationId, string action)
+            {
+                var item = new MenuFlyoutItem { Text = L(text), Tag = action };
+                AutomationProperties.SetAutomationId(item, automationId);
+                AutomationProperties.SetName(item, L(text));
+                item.Click += async (_, _) =>
+                {
+                    try { await RunFileActionAsync(file.Path, action, file); }
+                    catch (Exception) { }
+                };
+                flyout.Items.Add(item);
+            }
+
+            Add("打开", "FileActionMenuOpen", "open");
+            Add("用默认应用打开", "FileActionMenuDefaultApp", "defaultApp");
+            Add("打开所在文件夹", "FileActionMenuFolder", "folder");
+            Add("在侧边栏预览", "FileActionMenuPreview", "preview");
+            Add("在文件资源管理器中显示", "FileActionMenuReveal", "reveal");
+            flyout.ShowAt(anchor, new FlyoutShowOptions { Placement = FlyoutPlacementMode.BottomEdgeAlignedRight });
         }
         catch (Exception) { }
     }
@@ -8159,10 +8428,25 @@ public sealed partial class MainWindow : Window
         _ => "\uE713",
     };
 
+    private long _settingsToggleStamp;
+
+    /// <summary>设置页开关（UIA/Tapped 入口）：与 ItemInvoked 共用防抖，避免一次手势双翻。</summary>
+    private void ToggleSettingsPageFromUi()
+    {
+        var now = Environment.TickCount64;
+        if (now - Volatile.Read(ref _settingsToggleStamp) < 400)
+        {
+            return;
+        }
+        Volatile.Write(ref _settingsToggleStamp, now);
+        ToggleSettingsPage();
+    }
+
     private void ToggleSettingsPage()
     {
         try
         {
+            Volatile.Write(ref _settingsToggleStamp, Environment.TickCount64);
             if (SettingsPage.Visibility == Visibility.Visible)
             {
                 ShowChatPage();
@@ -8759,17 +9043,15 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /// <summary>打开设置页：describe 一次，默认进通用区；分区项按 SectionOrder 铺进主侧栏。</summary>
+    /// <summary>打开设置页：describe 一次，默认进通用区；分区项按 SectionOrder 铺进主侧栏。
+    /// 内核未就绪也允许进入：About/个性化/托盘/通知等壳本地分区不依赖 RPC，
+    /// 依赖内核的分区在各自渲染器里兜底（原先 _rpc==null 直接 return，离线点不开设置）。</summary>
     private async Task ShowSettingsAsync()
     {
-        if (_rpc is null)
-        {
-            return;
-        }
-        if (await EnsureSettingsSnapshotAsync() is null)
+        if (_rpc is not null && await EnsureSettingsSnapshotAsync() is null)
         {
             _ = ShowErrorAsync(L("读取设置失败：内核未返回设置描述。"));
-            return;
+            // 不再整页拒绝：壳本地分区仍可点，RPC 分区自行提示
         }
 
         _settingsSections = SectionOrder
@@ -9599,6 +9881,15 @@ public sealed partial class MainWindow : Window
     private void AddDivider(StackPanel host)
         => host.Children.Add(new Microsoft.UI.Xaml.Shapes.Rectangle { Style = AppStyle("DividerStyle") });
 
+    /// <summary>行列表分隔线（各页行列表与「插件列表」清单共用）：1px 细线、随行内容缩进。
+    /// 与 AddDivider 区分：那是设置行之间的贯通分隔（负边距抵消卡片内边距），这里是行列表节奏。</summary>
+    private void AddListDivider(StackPanel host)
+        => host.Children.Add(new Microsoft.UI.Xaml.Shapes.Rectangle
+        {
+            Height = 1,
+            Fill = ThemeBrush("StrokeSubtleBrush"),
+        });
+
     /// <summary>
     /// 设置一级页的导航卡（Windows 设置「应用」页形态）：图标 + 标题/说明 + 右侧 chevron，
     /// 整卡即一枚按钮，点它钻取进二级页（调用方给 open，通常包 OpenSettingsSubPage）。
@@ -10215,33 +10506,45 @@ public sealed partial class MainWindow : Window
         return toggle;
     }
 
-    /// <summary>外观选择（浅色/深色/跟随系统）：ComboBox 下拉。
-    /// 选择即时换肤（壳不等保存），保存时再把偏好持久化到内核；
-    /// 打开设置页时选中态 = 壳当前生效偏好（不是快照默认值）。</summary>
-    private ComboBox MakeThemeChoice(string current)
+    /// <summary>
+    /// 外观下拉（浅色/深色/跟随系统，纯文字选项）：选择即时换肤（壳不等保存）并登记草稿，
+    /// 随自动保存持久化到内核；打开设置页时选中态 = 壳当前生效偏好（不是快照默认值）。
+    /// </summary>
+    private ComboBox MakeThemeDropdown(string current)
     {
         var active = _shellPreference is "light" or "dark" or "system" ? _shellPreference : current;
-        var box = new ComboBox { MinWidth = TokenDouble("FieldMinWidth", 200) };
+        var box = new ComboBox { MinWidth = TokenDouble("FieldMinWidth", 200), MaxDropDownHeight = 320 };
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(box, "Setting_ui-theme_preference");
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(box, "主题");
-        foreach (var (id, label) in new[] { ("light", "浅色"), ("dark", "深色"), ("system", "跟随系统") })
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(box, L("外观"));
+        var options = new (string Id, string Label)[]
         {
-            box.Items.Add(new ComboBoxItem { Content = label, Tag = id });
+            ("light", "浅色"),
+            ("dark", "深色"),
+            ("system", "跟随系统"),
+        };
+        foreach (var (id, label) in options)
+        {
+            var item = new ComboBoxItem { Content = L(label), Tag = id };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(item, $"ThemeOption_{id}");
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(item, L(label));
+            box.Items.Add(item);
             if (id == active)
             {
-                box.SelectedItem = box.Items[^1];
+                box.SelectedItem = item;
             }
         }
-        // 先赋初值后挂事件：初始 SelectionChanged 不落这里
+        // 初始赋值会触发 SelectionChanged：先挂"已就绪"标记，只有用户操作后的变化才登记
+        var ready = false;
         box.SelectionChanged += (_, _) =>
         {
-            if ((box.SelectedItem as ComboBoxItem)?.Tag is not string id)
+            if (!ready) return;
+            if ((box.SelectedItem as ComboBoxItem)?.Tag is string id)
             {
-                return;
+                ApplyShellTheme(id);
+                Edit("ui-theme", "preference", () => id);
             }
-            ApplyShellTheme(id);
-            Edit("ui-theme", "preference", () => id);
         };
+        box.Loaded += (_, _) => ready = true;
         return box;
     }
 
@@ -10536,18 +10839,19 @@ public sealed partial class MainWindow : Window
                     ["danger-full-access"] = "完全权限",
                 };
                 var current = NsString("permission", "defaultPreset", "workspace-write");
-                var box = MakeChoiceField("permission", "defaultPreset", current,
-                    choices.Select(c => (c.Value, zh.GetValueOrDefault(c.Value, c.Label))).ToList(), "默认权限模式");
+                // P0-5：切到 danger-full-access 须先过风险确认（MakeDefaultPermissionChoiceField）
+                var box = MakeDefaultPermissionChoiceField(current,
+                    choices.Select(c => (c.Value, zh.GetValueOrDefault(c.Value, c.Label))).ToList());
                 box.MinWidth = TokenDouble("FieldMinWidth", 200);
                 var card = NewCard("权限", "选择新会话的默认访问模式");
                 card.Children.Add(MakeRow("默认权限", "仅可查看 / 工作区内修改 / 完全权限", box));
             }
         }
 
-        // 外观 + 字号
+        // 外观 + 字号（外观下拉三选一；字号步进器对齐 FontSizeRow）
         var uiCard = NewCard("外观", "主题与会话正文字号");
-        uiCard.Children.Add(MakeRow("主题", "浅色 / 深色 / 跟随系统",
-            MakeThemeChoice(NsString("ui-theme", "preference", "system"))));
+        uiCard.Children.Add(MakeRow("外观", "浅色 / 深色 / 跟随系统",
+            MakeThemeDropdown(NsString("ui-theme", "preference", "system"))));
         AddDivider(uiCard);
         uiCard.Children.Add(MakeRow("字号大小", "仅影响会话内容的字号", MakeFontSizeStepper(NsNumber("ui-theme", "fontSize", 14))));
 
@@ -10598,11 +10902,19 @@ public sealed partial class MainWindow : Window
     /// <summary>模型区渲染入口：行卡 + 添加块 + 默认模型卡。</summary>
     private async Task RenderModelsSectionAsync()
     {
+        SettingsHost.Children.Add(MakeSectionDesc("填入各提供方的 API 密钥即可使用其模型。"));
         if (_rpc is null)
         {
+            SettingsHost.Children.Add(new TextBlock
+            {
+                Text = L("内核未连接：提供方目录暂不可用。恢复默认模型在连接后生效。"),
+                Style = AppStyle("CaptionTextStyle"),
+                Foreground = ThemeBrush("TextSecondaryBrush"),
+                TextWrapping = TextWrapping.Wrap,
+            });
+            MakeRestoreDefaultModelCard();
             return;
         }
-        SettingsHost.Children.Add(MakeSectionDesc("填入各提供方的 API 密钥即可使用其模型。"));
 
         var rows = await LoadProviderRowsAsync();
 
@@ -10617,9 +10929,16 @@ public sealed partial class MainWindow : Window
             }, "ModelsSavedNotice", saved));
         }
 
+        // 提供方行卡收进紧排列表（Spacing=4，与插件页导航卡同款）：并列的同级入口，
+        // 间距要小于 SettingsHost 的节间距 12，否则整列散成一节节、看不出是同一张清单。
+        var providerList = new StackPanel { Spacing = Sp4 };
         foreach (var row in rows.Where(r => r.Configured))
         {
-            SettingsHost.Children.Add(MakeProviderCard(row, rows));
+            providerList.Children.Add(MakeProviderCard(row, rows));
+        }
+        if (providerList.Children.Count > 0)
+        {
+            SettingsHost.Children.Add(providerList);
         }
 
         if (_modelsEditor is { } editor && _modelsAdding)
@@ -10631,7 +10950,9 @@ public sealed partial class MainWindow : Window
             SettingsHost.Children.Add(MakeAddProviderButton(rows));
         }
         // 行卡内编辑态（_modelsEditor 非 null 且 !_modelsAdding）已内嵌在对应行卡里，不再铺添加按钮。
-        // 默认模型卡（agent-default-model）已移除：模型在会话内选择，提供方配置以本页行卡为准。
+        // P2-4：一键恢复默认模型（settings 回写；agent-default-model 重置入口按分区注释归本页）。
+        // NewCard 已把外壳挂进 SettingsHost，这里只触发建卡、不再 Add 内层 rows。
+        MakeRestoreDefaultModelCard();
     }
 
     /// <summary>联接提供方目录、设置视图与凭据状态（对照参考页 store.load）：
@@ -12396,26 +12717,47 @@ public sealed partial class MainWindow : Window
         navCards.Children.Add(MakeSettingsNavCard(
             "PluginsNav_defaults", "\uEA86", L("默认插件"), L("默认插件组合的安装与挂载状态。"),
             () => OpenSettingsSubPage(L("默认插件"), AddDefaultPluginsCard)));
+        // T28 泛化兜底：describe 里其余 writable 插件式 ns（官方 4 卡之外）
+        AppendGenericPluginNsFallback(navCards);
         SettingsHost.Children.Add(navCards);
     }
 
-    /// <summary>终端卡（shell：命令超时 + 单流输出上限——对照 BashCardController 暴露字段）。</summary>
+    /// <summary>终端卡（shell：命令超时 + 单流输出上限——对照 BashCardController + 官方 zh 文案 1:1）。</summary>
     private void AddShellCard(StackPanel host)
     {
         var card = NewCardIn(host, "终端", "限制 agent 运行的每一条命令。");
-        card.Children.Add(MakeRow("命令超时（毫秒）", "单条命令允许运行多久，超时即终止。",
-            MakeNumberBox("shell", "timeoutMs", NsNumber("shell", "timeoutMs", 120000))));
+        card.Children.Add(MakeOfficialFieldRow("shell", "timeoutMs", "命令超时（毫秒）", "单条命令允许运行多久，超时即终止。",
+            MakeNumberBox("shell", "timeoutMs", NsNumber("shell", "timeoutMs", 120000)),
+            () => _ = RenderSectionAsync("plugins")));
         AddDivider(card);
-        card.Children.Add(MakeRow("单流输出上限（字节）", "超出部分会转存到临时文件，而不是被丢弃。",
-            MakeNumberBox("shell", "maxOutputBytes", NsNumber("shell", "maxOutputBytes", 64000))));
+        card.Children.Add(MakeOfficialFieldRow("shell", "maxOutputBytes", "单流输出上限（字节）", "超出部分会转存到临时文件，而不是被丢弃。",
+            MakeNumberBox("shell", "maxOutputBytes", NsNumber("shell", "maxOutputBytes", 64000)),
+            () => _ = RenderSectionAsync("plugins")));
+        card.Children.Add(new TextBlock
+        {
+            Text = L("请填数字；留空表示使用默认值。"),
+            Style = AppStyle("CaptionTextStyle"),
+            Foreground = ThemeBrush("TextTertiaryBrush"),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, Sp4, 0, 0),
+        });
     }
 
-    /// <summary>Agent 循环卡：并行工具调用数。</summary>
+    /// <summary>Agent 循环卡：并行工具调用数（官方 agentLoopCard 1:1）。</summary>
     private void AddAgentLoopCard(StackPanel host)
     {
         var card = NewCardIn(host, "Agent 循环", "Agent 如何派发工具调用。");
-        card.Children.Add(MakeRow("并行工具调用数", "同一步内最多同时运行多少个可并行的调用。",
-            MakeNumberBox("agent-loop", "maxParallelToolCalls", NsNumber("agent-loop", "maxParallelToolCalls", 10))));
+        card.Children.Add(MakeOfficialFieldRow("agent-loop", "maxParallelToolCalls", "并行工具调用数", "同一步内最多同时运行多少个可并行的调用。",
+            MakeNumberBox("agent-loop", "maxParallelToolCalls", NsNumber("agent-loop", "maxParallelToolCalls", 10)),
+            () => _ = RenderSectionAsync("plugins")));
+        card.Children.Add(new TextBlock
+        {
+            Text = L("请填数字；留空表示使用默认值。"),
+            Style = AppStyle("CaptionTextStyle"),
+            Foreground = ThemeBrush("TextTertiaryBrush"),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, Sp4, 0, 0),
+        });
     }
 
     /// <summary>Subagent 卡（enabled 开关 + 允许模型清单；内核耦合校验见 MakeSubagentToggle 注释）。</summary>
@@ -12428,8 +12770,9 @@ public sealed partial class MainWindow : Window
             ? LF("内核要求开启时至少有一个允许模型，首次开启会自动写入当前默认模型（{0} / {1}）。", seedProvider, seedModel)
             : L("内核要求开启时至少有一个允许模型；当前读不到默认模型，开启可能被内核拒绝并在此提示。");
         var subToggle = MakeSubagentToggle();
+        // 官方 subagentModelSelectionChoose / Off 文案 1:1；种子说明追加在后（内核耦合校验提示）
         var subToggleRow = MakeRow(L("允许 Agent 为 Subagent 选择模型"),
-            L("开启后，Agent 可以为每个 Subagent 选择提供方和模型。仅影响新会话。") + seedNote,
+            L("开启后，Agent 可以从下方授权模型中，为每个 Subagent 选择提供方、模型和推理强度。仅影响新会话。") + seedNote,
             subToggle);
         // Windows 11 设置惯例：带开关的行整行可点。开关自身的命中由控件处理，
         // 行级 Tapped 里跳过来自开关子树的点击，避免双切换。
@@ -12442,6 +12785,9 @@ public sealed partial class MainWindow : Window
             subToggle.IsOn = !subToggle.IsOn;
         };
         card.Children.Add(subToggleRow);
+        // P1-11：官方 subagent-model-selection 的 allowedModels 授权清单
+        AppendSubagentAllowedModels(card);
+        AttachAppliesBadge(subToggleRow, "subagent-model-selection");
     }
 
     /// <summary>网页搜索二级页：API Key 行的「已配置 / 未配置」要问内核 credentials/describe，
@@ -12495,19 +12841,30 @@ public sealed partial class MainWindow : Window
                 MaxWidth = FieldWidth,
                 HorizontalAlignment = HorizontalAlignment.Right,
             }, $"PluginSearchKey_{searchKeyEnv}", "插件搜索 API 密钥");
+            // 官方 webSearchApiKey / Hint / Set / Unset 文案 1:1
             card.Children.Add(MakeRow(
-                configured ? "API Key" : "API Key（未配置）",
-                configured ? "已保存" : "配置之前搜索不可用",
+                "API Key",
+                configured ? "已配置密钥。" : "未配置密钥；配置之前搜索不可用。",
                 keyBox));
             // 已配置项输入了新值同样要写回（credentials/set 覆盖旧值）
             BindCredentialDraft(refName, keyBox);
         }
 
-        card.Children.Add(MakeRow("接口地址", "留空则使用提供方默认地址。",
-            MakeTextBox("web-search-deepseek", "baseURL", NsString("web-search-deepseek", "baseURL", ""), L("提供方默认"))));
+        card.Children.Add(MakeOfficialFieldRow("web-search-deepseek", "baseURL", "接口地址", "留空则使用提供方默认地址。",
+            MakeTextBox("web-search-deepseek", "baseURL", NsString("web-search-deepseek", "baseURL", ""), L("提供方默认")),
+            () => _ = RenderSectionAsync("plugins")));
         AddDivider(card);
-        card.Children.Add(MakeRow("单次请求最多搜索次数", "一次请求在必须作答前最多可以搜索多少次。",
-            MakeNumberBox("web-search-deepseek", "maxUses", NsNumber("web-search-deepseek", "maxUses", 5))));
+        card.Children.Add(MakeOfficialFieldRow("web-search-deepseek", "maxUses", "单次请求最多搜索次数", "一次请求在必须作答前最多可以搜索多少次。",
+            MakeNumberBox("web-search-deepseek", "maxUses", NsNumber("web-search-deepseek", "maxUses", 5)),
+            () => _ = RenderSectionAsync("plugins")));
+        card.Children.Add(new TextBlock
+        {
+            Text = L("请填数字；留空表示使用默认值。"),
+            Style = AppStyle("CaptionTextStyle"),
+            Foreground = ThemeBrush("TextTertiaryBrush"),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, Sp4, 0, 0),
+        });
     }
 
     /// <summary>自动审批二级页：先开页（说明 + 开关立即可见），判定模型目录是异步的，回来再补第二张卡。
@@ -12533,24 +12890,7 @@ public sealed partial class MainWindow : Window
             host,
             L("默认插件"),
             L("Blade² 随内核插件机制默认启用；安装由引导器幂等完成，失败时下次启动自动重试。"));
-        foreach (var status in DshPluginBootstrap.GetStatus(DataHome))
-        {
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = Sp6 };
-            row.Children.Add(new TextBlock
-            {
-                Text = MountDisplayName(status.Id),
-                Style = AppStyle("BodyTextStyle"),
-                VerticalAlignment = VerticalAlignment.Center,
-            });
-            row.Children.Add(Spacer());
-            row.Children.Add(new TextBlock
-            {
-                Text = MountStatusText(status),
-                Style = AppStyle("CardDescriptionTextStyle"),
-                VerticalAlignment = VerticalAlignment.Center,
-            });
-            pluginCard.Children.Add(row);
-        }
+        AddMountStatusRows(pluginCard);
     }
 
     /// <summary>
@@ -12620,10 +12960,10 @@ public sealed partial class MainWindow : Window
         var listHost = new StackPanel { Spacing = 0 };
         var filterBox = new TextBox
         {
-            PlaceholderText = "按模块名或条目 id 过滤…",
+            PlaceholderText = "搜索插件",
             Margin = new Thickness(0, Sp4, 0, Sp8),
         };
-        Aut(filterBox, "PluginInventoryFilterBox", "按模块名或条目 id 过滤");
+        Aut(filterBox, "PluginInventoryFilterBox", "搜索插件");
         summaryCard.Children.Add(filterBox);
 
         var countText = new TextBlock
@@ -12666,8 +13006,8 @@ public sealed partial class MainWindow : Window
                             || r.EntryId.Contains(query, StringComparison.OrdinalIgnoreCase))
                 .ToList();
             countText.Text = query.Length == 0
-                ? LF("Loader 条目 {0} 个", shown.Count)
-                : LF("匹配 “{0}”：{1} / {2} 个", query, shown.Count, entryRows.Count);
+                ? (shown.Count == 0 ? L("暂无插件。") : LF("Loader 条目 {0} 个", shown.Count))
+                : (shown.Count == 0 ? L("没有匹配的插件。") : LF("匹配 “{0}”：{1} / {2} 个", query, shown.Count, entryRows.Count));
             foreach (var row in shown)
             {
                 var line = new Grid { ColumnSpacing = Sp12, Padding = new Thickness(0, Sp6, 0, Sp6) };
@@ -12689,12 +13029,21 @@ public sealed partial class MainWindow : Window
 
                 var phase = new TextBlock
                 {
-                    Text = row.Phase,
+                    // 官方 settings-plugin-inventory runtime 文案 1:1
+                    Text = row.Phase switch
+                    {
+                        "active" => L("运行中"),
+                        "failed" => L("启动失败"),
+                        "loading" => L("加载中"),
+                        "pending" => L("等待依赖"),
+                        "unloading" => L("卸载中"),
+                        _ => L("未运行"),
+                    },
                     Style = AppStyle("CaptionTextStyle"),
                     VerticalAlignment = VerticalAlignment.Center,
                     Foreground = row.Phase switch
                     {
-                        "failed" => ThemeBrush("InfoBrush"),
+                        "failed" => ThemeBrush("ErrorBrush"),
                         "active" => ThemeBrush("TextSecondaryBrush"),
                         _ => ThemeBrush("TextTertiaryBrush"),
                     },
@@ -12704,7 +13053,7 @@ public sealed partial class MainWindow : Window
 
                 var flag = new TextBlock
                 {
-                    Text = row.Enabled ? L("已启用") : L("已禁用"),
+                    Text = row.Enabled ? L("已启用") : L("已停用"),
                     Style = AppStyle("CaptionTextStyle"),
                     VerticalAlignment = VerticalAlignment.Center,
                     Foreground = row.Enabled ? ThemeBrush("TextSecondaryBrush") : ThemeBrush("TextTertiaryBrush"),
@@ -12713,11 +13062,7 @@ public sealed partial class MainWindow : Window
                 line.Children.Add(flag);
 
                 listHost.Children.Add(line);
-                listHost.Children.Add(new Microsoft.UI.Xaml.Shapes.Rectangle
-                {
-                    Height = 1,
-                    Fill = ThemeBrush("StrokeSubtleBrush"),
-                });
+                AddListDivider(listHost);
             }
         }
 
@@ -12786,14 +13131,12 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
-        SettingsHost.Children.Add(MakeSectionDesc("预设即一个会话的 Agent 所运行的插件组装——它的工具、提示词与能力。"));
+        SettingsHost.Children.Add(MakeSectionDesc("预设即一个会话的 Agent 所运行的插件组装——它的工具、提示词与能力。可用「创造模式」让 Agent 帮你创建，或直接在预设目录放置文件。"));
 
         var roster = default(JsonElement);
-        var authorable = false;
         try
         {
             roster = await _rpc.CallOkAsync("agentPresets/list", new { });
-            authorable = roster.TryGetProperty("authorable", out var au) && au.ValueKind == JsonValueKind.True;
         }
         catch (DshRpcException ex)
         {
@@ -12806,22 +13149,16 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        // 预设目录是否可由内核原生打开（settings/canOpenAgentPresetDirectory：无参数 → bool）
-        var canOpenDirectory = false;
-        try
-        {
-            var v = await _rpc.CallOkAsync("settings/canOpenAgentPresetDirectory", new { });
-            canOpenDirectory = v.ValueKind == JsonValueKind.True;
-        }
-        catch (Exception)
-        {
-            // 判定失败按不可用处理（按钮禁用 + 说明）
-        }
+        // 预设目录可否打开：settings/canOpenAgentPresetDirectory 与 openAgentPresetDirectory
+        // 自内核 0.1.7 起移除，「打开目录」入口随之撤除（对齐内核，不做壳侧替代）。
 
         var activeSession = Volatile.Read(ref _activeSessionId);
 
         if (roster.TryGetProperty("presets", out var presets) && presets.ValueKind == JsonValueKind.Array)
         {
+            // 预设卡收进紧排列表（Spacing=4，与插件页导航卡同款）：并列的同级入口，
+            // 间距小于 SettingsHost 的节间距 12，否则整列散成一节节、看不出是同一张清单。
+            var presetList = new StackPanel { Spacing = Sp4 };
             foreach (var preset in presets.EnumerateArray())
             {
                 var id = preset.GetProperty("id").GetString() ?? "";
@@ -12834,9 +13171,12 @@ public sealed partial class MainWindow : Window
 
                 var card = CardShell();
                 card.BorderBrush = isDefault ? ThemeBrush("AccentBrush") : ThemeBrush("StrokeBrush");
-                card.Margin = new Thickness(0, Sp2, 0, Sp2);
-                // 内置预设名是壳字典键（标准模式…）；用户自定义名不在键集，原样显示。
-                var shownName = ShellEnglish.ContainsKey(name) ? L(name) : name;
+                // 内置四档按 id 认名（内核回帧的 name 已是英文 id 形态，中文显示名只认壳侧表）；
+                // 壳字典键次之（内核中文名兼容）；用户自定义名不在键集，原样显示。
+                var builtInName = BuiltInAgentPresets.FirstOrDefault(p => p.Id == id).Name;
+                var shownName = builtInName is { Length: > 0 } ? L(builtInName)
+                    : ShellEnglish.ContainsKey(name) ? L(name)
+                    : name;
                 var layout = new Grid { ColumnSpacing = Sp16 };
                 layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
                 layout.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -12864,13 +13204,12 @@ public sealed partial class MainWindow : Window
                 Grid.SetColumn(left, 0);
                 layout.Children.Add(left);
 
-                // 操作列：复制 / 删除 / 当前会话使用 / 设为默认 / 打开目录
+                // 操作列：删除与打开目录已撤（agentPresets/copy|deletePreset、
+                // settings/canOpenAgentPresetDirectory|openAgentPresetDirectory 自内核 0.1.7 起移除）。
                 var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = Sp6, VerticalAlignment = VerticalAlignment.Center };
 
-                var copy = new Button { Content = "复制为…", Style = AppStyle("CompactButtonStyle") };
-                Aut(copy, $"CopyPreset_{id}", LF("复制预设 {0}", shownName));
-                copy.Click += (_, _) => _ = CopyPresetAsync(id, name);
-                actions.Children.Add(copy);
+                // P1-9：查看组装 yml（agentPresets/read 只读）
+                actions.Children.Add(MakePresetViewButton(id, shownName));
 
                 var useForSession = new Button
                 {
@@ -12884,7 +13223,7 @@ public sealed partial class MainWindow : Window
                     ? "先在左侧选择一个会话"
                     : "agentPresets/select 应用到当前会话；内核只允许在会话的 agent 启动前切换（已开始会回 agent-preset/locked）");
                 Aut(useForSession, $"UsePresetForSession_{id}", LF("当前会话使用预设 {0}", shownName));
-                useForSession.Click += (_, _) => _ = SelectPresetAsync(id, name);
+                useForSession.Click += (_, _) => _ = SelectPresetAsync(id, shownName);
                 actions.Children.Add(useForSession);
 
                 if (!isDefault && broken is null)
@@ -12906,131 +13245,22 @@ public sealed partial class MainWindow : Window
                     actions.Children.Add(btn);
                 }
 
-                if (isUser)
-                {
-                    var openDir = new Button
-                    {
-                        Content = "打开目录",
-                        Style = AppStyle("CompactButtonStyle"),
-                        IsEnabled = canOpenDirectory,
-                    };
-                    ToolTipService.SetToolTip(openDir, canOpenDirectory
-                        ? "在内核主机上打开该预设所在目录"
-                        : "本部署无法原生打开目录（settings/canOpenAgentPresetDirectory=false）");
-                    Aut(openDir, $"OpenPresetDirectory_{id}", LF("打开预设 {0} 的目录", shownName));
-                    openDir.Click += (_, _) => _ = OpenPresetDirectoryAsync(id);
-                    actions.Children.Add(openDir);
-
-                    var del = Aut(new Button { Content = "删除", Style = AppStyle("CompactButtonStyle") }, $"DeletePreset_{id}", LF("删除预设 {0}", shownName));
-                    del.Click += (_, _) => _ = DeletePresetAsync(id, name);
-                    actions.Children.Add(del);
-                }
-
                 Grid.SetColumn(actions, 1);
                 layout.Children.Add(actions);
                 card.Child = layout;
-                SettingsHost.Children.Add(card);
+                presetList.Children.Add(card);
+            }
+            if (presetList.Children.Count > 0)
+            {
+                SettingsHost.Children.Add(presetList);
             }
         }
 
-        // 预设目录能力与作者位（authorable=false 表示部署不允许新增自定义预设）
+        // 作者位（authorable=false 表示部署不允许新增自定义预设）。
+        // 「新增自定义预设」行已撤：agentPresets/copy 自内核 0.1.7 起移除，派生路径不存在。
         var footer = NewCard("预设目录");
-        if (!canOpenDirectory)
-        {
-            footer.Children.Add(new TextBlock
-            {
-                Text = "本部署无法原生打开预设目录（settings/canOpenAgentPresetDirectory 返回 false）。",
-                Style = AppStyle("CaptionTextStyle"),
-                Foreground = ThemeBrush("TextSecondaryBrush"),
-                TextWrapping = TextWrapping.Wrap,
-            });
-        }
-        footer.Children.Add(MakeRow(
-            "新增自定义预设",
-            authorable ? "用「复制为…」从任一预设派生一份用户预设，再用「打开目录」编辑其定义。" : "本部署声明不可创作预设（agentPresets/list 的 authorable=false）。",
-            new TextBlock
-            {
-                Text = authorable ? "可用" : "不可用",
-                Style = AppStyle("CaptionTextStyle"),
-                Foreground = ThemeBrush("TextTertiaryBrush"),
-            }));
-    }
-
-    /// <summary>复制为新预设（agentPresets/copy：from/id/name → void）。</summary>
-    private async Task CopyPresetAsync(string fromId, string fromName)
-    {
-        if (_rpc is null)
-        {
-            return;
-        }
-        var idBox = Aut(new TextBox { Header = L("新预设 id"), PlaceholderText = L("小写字母/数字/短横线，如 my-agent") }, "NewPresetIdTextBox", "新预设 id");
-        var nameBox = Aut(new TextBox { Header = L("显示名"), Text = LF("{0} 副本", fromName) }, "NewPresetNameTextBox", "显示名");
-        var host = new StackPanel { Spacing = Sp10, MinWidth = TokenDouble("DialogMinWidthCompact", 360) };
-        host.Children.Add(idBox);
-        host.Children.Add(nameBox);
-        var dialog = new ContentDialog
-        {
-            Title = LF("复制预设（来源：{0}）", fromName),
-            Content = host,
-            PrimaryButtonText = L("复制"),
-            CloseButtonText = L("取消"),
-            DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = Content.XamlRoot,
-        };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
-        {
-            return;
-        }
-        var newId = idBox.Text.Trim();
-        if (newId.Length == 0)
-        {
-            _ = ShowErrorAsync(L("新预设 id 不能为空。"));
-            return;
-        }
-        try
-        {
-            await _rpc.CallOkAsync("agentPresets/copy", new { from = fromId, id = newId, name = nameBox.Text.Trim() });
-            await RenderSectionAsync("agent-presets");
-        }
-        catch (DshRpcException ex)
-        {
-            _ = ShowErrorAsync(LF("复制失败：{0}", ex.Message));
-        }
-    }
-
-    /// <summary>删除用户预设（agentPresets/deletePreset：id → void），二次确认。</summary>
-    private async Task DeletePresetAsync(string id, string name)
-    {
-        if (_rpc is null)
-        {
-            return;
-        }
-        var dialog = new ContentDialog
-        {
-            Title = L("删除预设"),
-            Content = new TextBlock
-            {
-                Text = LF("确定删除自定义预设「{0}」（id: {1}）吗？该预设的目录会被移除，此操作不可撤销。", name, id),
-                TextWrapping = TextWrapping.Wrap,
-            },
-            PrimaryButtonText = L("删除"),
-            CloseButtonText = L("取消"),
-            DefaultButton = ContentDialogButton.Close,
-            XamlRoot = Content.XamlRoot,
-        };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
-        {
-            return;
-        }
-        try
-        {
-            await _rpc.CallOkAsync("agentPresets/deletePreset", new { id });
-            await RenderSectionAsync("agent-presets");
-        }
-        catch (DshRpcException ex)
-        {
-            _ = ShowErrorAsync(LF("删除失败：{0}", ex.Message));
-        }
+        // P1-8：创造模式创作向导（对标 dsh-client-ui-agent-preset 的 creatorDraft）
+        footer.Children.Add(MakeCreatorDraftButton());
     }
 
     /// <summary>选择当前会话使用的预设（agentPresets/select：agentId=会话 id + agentPreset → 生效的预设 id）。</summary>
@@ -13055,30 +13285,6 @@ public sealed partial class MainWindow : Window
         {
             // 常见内核拒绝：agent-preset/locked（会话的 agent 已启动，预设随之固定）
             _ = ShowErrorAsync(LF("切换预设失败：{0}", ex.Message));
-        }
-    }
-
-    /// <summary>打开用户预设目录（settings/openAgentPresetDirectory：agentPreset → {opened} 或 {opened:false,path}）。</summary>
-    private async Task OpenPresetDirectoryAsync(string id)
-    {
-        if (_rpc is null)
-        {
-            return;
-        }
-        try
-        {
-            var value = await _rpc.CallOkAsync("settings/openAgentPresetDirectory", new { agentPreset = id });
-            var opened = value.TryGetProperty("opened", out var o) && o.ValueKind == JsonValueKind.True;
-            if (!opened)
-            {
-                // 内核无法原生打开时回传路径：壳把它显示出来，让用户自己打开
-                var p = value.TryGetProperty("path", out var path) ? path.GetString() : null;
-                _ = ShowErrorAsync(LF("内核无法直接打开目录，路径：{0}", p));
-            }
-        }
-        catch (DshRpcException ex)
-        {
-            _ = ShowErrorAsync(LF("打开预设目录失败：{0}", ex.Message));
         }
     }
 
@@ -13261,22 +13467,38 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /// <summary>重建模型触发器菜单：模型区 + 分隔线 + 推理等级区）。</summary>
+    /// <summary>重建模型触发器菜单：模型区 + 分隔线 + 推理等级区（P2-2 两档附说明 + P2-3 上次使用）。</summary>
     private void RebuildModelFlyout()
     {
         ModelFlyout.Items.Clear();
         ModelFlyout.Items.Add(new MenuFlyoutItem { Text = L("模型"), IsEnabled = false });
         foreach (var (name, provider, model) in _modelOptions)
         {
-            var item = new MenuFlyoutItem { Text = name, Tag = name };
-            Aut(item, $"ModelOption_{name}", LF("模型：{0}", name));
+            var modelId = ModelIdOf(model);
+            // P2-3：modelSelection.lastUsed → 菜单项「上次使用」标记
+            var isLastUsed = _lastUsedModelId.Length > 0 && modelId == _lastUsedModelId;
+            var text = isLastUsed ? LF("{0}（上次使用）", name) : name;
+            var item = new MenuFlyoutItem { Text = text, Tag = name };
+            Aut(item, $"ModelOption_{name}", isLastUsed ? LF("模型：{0}，上次使用", name) : LF("模型：{0}", name));
+            AttachModelOptionDescription(item, provider, model);
             item.Click += (_, _) => _ = SelectModelAsync(model, provider, name);
             ModelFlyout.Items.Add(item);
         }
+        AppendLastUsedMenuItems();
         ModelFlyout.Items.Add(new MenuFlyoutSeparator());
         ModelFlyout.Items.Add(new MenuFlyoutItem { Text = L("推理等级"), IsEnabled = false });
+        // P2-2：两档营销说明（快速高效经济 / 更强自主编码成本更高），按档位归组插入
+        string? tierBlurb = null;
         foreach (var (id, label) in _effortOptions)
         {
+            var blurb = EffortTierBlurb(id);
+            if (blurb.Length > 0 && blurb != tierBlurb)
+            {
+                tierBlurb = blurb;
+                var blurbItem = new MenuFlyoutItem { Text = blurb, IsEnabled = false };
+                Aut(blurbItem, $"EffortTierBlurb_{id}", blurb);
+                ModelFlyout.Items.Add(blurbItem);
+            }
             // 推理等级是单选：用官方 RadioMenuFlyoutItem（同组自动互斥、UIA 读作单选），
             // 不再用 Toggle 菜单项 + 手写取消选中来模拟。
             var item = new RadioMenuFlyoutItem
@@ -13287,11 +13509,25 @@ public sealed partial class MainWindow : Window
                 IsChecked = id == _reasoningEffort,
             };
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(item, $"EffortOption_{id}");
-            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(item, LF("推理等级：{0}", label));
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(item,
+                blurb.Length > 0 ? LF("推理等级：{0}。{1}", label, blurb) : LF("推理等级：{0}", label));
+            if (blurb.Length > 0)
+            {
+                ToolTipService.SetToolTip(item, blurb);
+            }
             item.Click += OnEffortMenuClick;
             ModelFlyout.Items.Add(item);
         }
     }
+
+    /// <summary>P2-2：两档说明文案（官方 option.deepseekV4Flash/Pro.description 全文）。
+    /// 挂在推理等级区作分组说明；模型项上的同款全文见 ModelOptionDescription。</summary>
+    private string EffortTierBlurb(string id) => id switch
+    {
+        "off" or "low" => L("快速、高效且经济；适合目标明确、常规或并行任务。"),
+        "high" or "max" => L("更强的自主编码、知识与复杂推理能力；适合复杂或质量优先的任务，但成本更高。"),
+        _ => "",
+    };
 
     /// <summary>触发器文案（也用作无障碍名称）：模型 + 推理等级（如"DeepSeek-V4-Pro High"）。</summary>
     private void UpdateModelEffortLabel()
@@ -13303,8 +13539,9 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>把模型选择应用到当前会话（selectModel），无活动会话时只更新触发器显示。
-    /// 若 catalog 给了该模型的推荐推理等级，同步推理档（触发器显示 = 实际将应用的档）。</summary>
-    private async Task SelectModelAsync(JsonElement model, string provider, string? displayName = null)
+    /// 若 catalog 给了该模型的推荐推理等级，同步推理档（触发器显示 = 实际将应用的档）。
+    /// preferredEffort：P2-3 恢复 lastUsed 时带上记忆档位；null = 跟模型推荐档。</summary>
+    private async Task SelectModelAsync(JsonElement model, string provider, string? displayName = null, string? preferredEffort = null)
     {
         var id = model.GetProperty("id").GetString() ?? "";
         var name = displayName ?? (model.TryGetProperty("name", out var n) ? n.GetString() ?? id : id);
@@ -13312,10 +13549,11 @@ public sealed partial class MainWindow : Window
         _selectedModelId = id;
         _selectedModelProvider = provider;
 
-        // 推理等级默认取 catalog 里该模型的推荐档（defaultEffort，没有则 efforts 最后一档）
-        string? recommendedEffort = null;
+        // 推理等级：显式 preferred（恢复 lastUsed）优先，否则 catalog 推荐档（defaultEffort / 最后一档）
+        string? recommendedEffort = preferredEffort;
         SetEffortMenuFromModel(model);
-        if (model.TryGetProperty("reasoning", out var r) && r.ValueKind == JsonValueKind.Object)
+        if (recommendedEffort is null &&
+            model.TryGetProperty("reasoning", out var r) && r.ValueKind == JsonValueKind.Object)
         {
             if (r.TryGetProperty("defaultEffort", out var de) && de.ValueKind == JsonValueKind.String)
             {
@@ -13413,13 +13651,20 @@ public sealed partial class MainWindow : Window
     private void ApplyModelSelectionProjection(JsonElement view)
     {
         // 调用方持 _projectionLock
-        if (view.ValueKind != JsonValueKind.Object ||
-            !view.TryGetProperty("next", out var next) || next.ValueKind != JsonValueKind.Object)
+        if (view.ValueKind != JsonValueKind.Object)
         {
             return;
         }
+        // P2-3：lastUsed 记忆（全量 + 菜单「上次使用」恢复行）——即使 next 未变也要消费。
+        // CaptureModelLastUsed 内部已同步 _lastUsedModelId 并 PostUi 重铺菜单。
+        var hasLastUsedChange = CaptureModelLastUsed(view);
+
+        if (!view.TryGetProperty("next", out var next) || next.ValueKind != JsonValueKind.Object)
+        {
+            return; // lastUsed 变化已由 CaptureModelLastUsed 触发菜单重铺
+        }
         var model = Str(next, "model");
-        if (model.Length == 0 || model == _selectedModelId)
+        if (model.Length == 0 || (model == _selectedModelId && !hasLastUsedChange))
         {
             return;
         }
@@ -13969,6 +14214,37 @@ public sealed partial class MainWindow : Window
         (false, _, _) => L("未安装（离线？启动后自动重试）"),
     };
 
+    /// <summary>挂载状态行列表（「插件列表」清单同节奏：行上下 6 内边距 + 行间 1px 细分隔线）。
+    /// mountIdPrefix 为空 = 全部条目（默认插件二级页），给前缀 = 该能力分区的条目（挂载状态卡）。</summary>
+    private void AddMountStatusRows(StackPanel host, string? mountIdPrefix = null)
+    {
+        foreach (var status in DshPluginBootstrap.GetStatus(DataHome)
+            .Where(s => mountIdPrefix is null || s.Id.StartsWith(mountIdPrefix, StringComparison.Ordinal)))
+        {
+            var row = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = Sp6,
+                Padding = new Thickness(0, Sp6, 0, Sp6),
+            };
+            row.Children.Add(new TextBlock
+            {
+                Text = MountDisplayName(status.Id),
+                Style = AppStyle("BodyTextStyle"),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            row.Children.Add(Spacer());
+            row.Children.Add(new TextBlock
+            {
+                Text = MountStatusText(status),
+                Style = AppStyle("CardDescriptionTextStyle"),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            host.Children.Add(row);
+            AddListDivider(host);
+        }
+    }
+
     // ---------------- 电脑控制 / 浏览器控制（壳内建分区 · 默认插件挂载开关） ----------------
 
     /// <summary>壳内建分区「电脑控制」：Blade² 默认插件组合里 computer-use 注册表与
@@ -14296,25 +14572,7 @@ public sealed partial class MainWindow : Window
         var card = NewCard(
             L("挂载状态"),
             L("Blade² 随内核插件机制默认启用；安装由引导器幂等完成，失败时下次启动自动重试。"));
-        foreach (var status in DshPluginBootstrap.GetStatus(DataHome)
-            .Where(s => s.Id.StartsWith(mountIdPrefix, StringComparison.Ordinal)))
-        {
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = Sp6 };
-            row.Children.Add(new TextBlock
-            {
-                Text = MountDisplayName(status.Id),
-                Style = AppStyle("BodyTextStyle"),
-                VerticalAlignment = VerticalAlignment.Center,
-            });
-            row.Children.Add(Spacer());
-            row.Children.Add(new TextBlock
-            {
-                Text = MountStatusText(status),
-                Style = AppStyle("CardDescriptionTextStyle"),
-                VerticalAlignment = VerticalAlignment.Center,
-            });
-            card.Children.Add(row);
-        }
+        AddMountStatusRows(card, mountIdPrefix);
     }
 
     /// <summary>挂载条目 id → 设置页展示名（id 本身是 patch 定位标记，保持诊断可追）。</summary>
@@ -15511,7 +15769,7 @@ public sealed partial class MainWindow : Window
     //   baseline   {value:{queues:{sessionId:[item…]}, jobs:{sessionId:[job…]}, projections:{…}}}
     //   queue      {sessionId, items:[…]}      —— 该会话队列的完整替换
     //   jobs       {sessionId, jobs:[…]}       —— 该会话任务的完整替换
-    //   projection {sessionId, key, value, seq} —— 投影增量（title/goal/todos…，壳已有别的事件源）
+    //   projection {sessionId, key, value, seq} —— 投影增量（title/goal/todos…，壳按域分发）
     // item = {id, placement:"queued"|"steering"|"context", rpcId?, message:{id, content:[…]}}
     // （0.7.x 实测：排队项可能只出现在 baseline 里，其后无变化就不再推 queue 帧。）
 
@@ -15609,8 +15867,8 @@ public sealed partial class MainWindow : Window
                     break;
                 case "projection":
                     // 投影增量：{sessionId, key, value, seq}。壳关心当前会话的
-                    // plan / permissions / schedule / goal / turnOutline / modelSelection 六键；
-                    // 其余（title/todos/inbox…）与本面板无关。
+                    // plan / permissions / schedule / goal / todos / turnOutline / modelSelection 七键；
+                    // 其余（title/inbox…）与本面板无关。
                     if (frame.TryGetProperty("sessionId", out var psid) && psid.ValueKind == JsonValueKind.String &&
                         psid.GetString() == Volatile.Read(ref _activeSessionId) &&
                         frame.TryGetProperty("key", out var pkey) && pkey.ValueKind == JsonValueKind.String)
@@ -15636,6 +15894,16 @@ public sealed partial class MainWindow : Window
                             lock (_projectionLock)
                             {
                                 ApplyModelSelectionProjection(pv);
+                            }
+                            return;
+                        }
+                        else if (key == "todos")
+                        {
+                            // I-1：todos 投影补消费（Todo 清单 + 会话头角标）
+                            var pv = frame.TryGetProperty("value", out var pval) ? pval : default;
+                            lock (_projectionLock)
+                            {
+                                ApplyTodosProjection(pv);
                             }
                             return;
                         }
@@ -15737,6 +16005,11 @@ public sealed partial class MainWindow : Window
         if (values.TryGetProperty("modelSelection", out var modelSelection))
         {
             ApplyModelSelectionProjection(modelSelection);
+        }
+        // I-1：todos 投影（Todo 清单面板 / 会话头角标）
+        if (values.TryGetProperty("todos", out var todos))
+        {
+            ApplyTodosProjection(todos);
         }
         // turnOutline（右侧历史快速定位）：键名与解析在 MainWindow.TurnRail.cs。
         // 调用方作用域即当前活动会话（baseline 帧已按会话解析；session/list 补齐只对当前会话生效）。
@@ -15895,6 +16168,8 @@ public sealed partial class MainWindow : Window
             }
             _activeJobs.Clear();
             _activeJobs.AddRange(OrderJobs(jobs));
+            // P1-16：清理本地停止标记（内核帧已给出终态/停止中）
+            PruneJobStopRequested(_activeJobs);
 
             // 触发器显隐只取决于当前会话有无作业（会话头是独立行，与聊天区是否空态无关：
             // 空会话也可能已有后台作业在跑，官方端同样在无消息时显示作业入口）
@@ -16007,6 +16282,7 @@ public sealed partial class MainWindow : Window
                 SubagentReadOnlyHint.Text = L("子代理会话为只读：可查看其工作过程，消息请在父会话中发送。");
             }
             ApplySubagentReadOnly(vm.IsSubagent);
+            RefreshSubagentHeaderActions(vm); // P0-7：目录/续跑/打断钮（MainWindow.Subagents.cs）
         }
         catch (Exception)
         {
@@ -16126,6 +16402,7 @@ public sealed partial class MainWindow : Window
             if (g is not { } goal)
             {
                 GoalBar.Visibility = Visibility.Collapsed;
+                ApplyGoalCommandHint();
                 return;
             }
             GoalBar.Visibility = Visibility.Visible;
@@ -16134,6 +16411,8 @@ public sealed partial class MainWindow : Window
             GoalBarObjective.Text = goal.Objective;
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
                 GoalBar, L("目标") + "：" + phaseLabel + " · " + goal.Objective);
+            // P1-13：composer 目标指令提示行（edit / pause / resume / clear）
+            ApplyGoalCommandHint();
         }
         catch (Exception)
         {
@@ -16198,36 +16477,13 @@ public sealed partial class MainWindow : Window
         PostUi(ApplyGoalBar);
     }
 
-    /// <summary>投影 schedule 键 → 计划记录缓存（只读）。值 = {inheritedEventCount, active:[record],
-    /// seenIds}（dsh-schedule）；record = {id, kind:"at"|"every", prompt, scheduledAt(RFC3339),
-    /// everySeconds?}。调用方持 _projectionLock。</summary>
+    /// <summary>投影 schedule 键 → 计划记录缓存（只读）+ 列表「有活动定时任务」。
+    /// wire（dsh-schedule wire.view）= state.active 数组；旧路径可能给 state 对象。
+    /// record = {id, kind:"at"|"every", prompt, scheduledAt(RFC3339), everySeconds?}。
+    /// 调用方持 _projectionLock。</summary>
     private void ApplyScheduleProjection(JsonElement value)
     {
-        var records = new List<(string Id, string Kind, string Prompt, string ScheduledAt, long EverySeconds)>();
-        if (value.ValueKind == JsonValueKind.Object
-            && value.TryGetProperty("active", out var active) && active.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var record in active.EnumerateArray())
-            {
-                var id = record.TryGetProperty("id", out var i) && i.ValueKind == JsonValueKind.String ? i.GetString() ?? "" : "";
-                var prompt = record.TryGetProperty("prompt", out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() ?? "" : "";
-                if (id.Length == 0 && prompt.Length == 0)
-                {
-                    continue;
-                }
-                records.Add((
-                    id,
-                    record.TryGetProperty("kind", out var k) && k.ValueKind == JsonValueKind.String ? k.GetString() ?? "" : "",
-                    prompt,
-                    record.TryGetProperty("scheduledAt", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString() ?? "" : "",
-                    record.TryGetProperty("everySeconds", out var es) && es.ValueKind == JsonValueKind.Number ? (long)es.GetDouble() : 0));
-            }
-        }
-        lock (_scheduleLock)
-        {
-            _scheduleRecords = records;
-            _scheduleSeen = true;
-        }
+        ApplyScheduleProjectionWire(value);
     }
 
     /// <summary>
@@ -16268,6 +16524,7 @@ public sealed partial class MainWindow : Window
 
             // ---- 计划模式 ----
             // 只在开启中/切换中时出现；关闭态不占输入区（用户反馈：新会话多出「计划模式已关闭」chip）
+            // P1-3：plan-review 交互进行中时状态文案用官方「计划待审」
             var planOn = planActive == true || planPending == true;
             if (planActive is null || !planOn)
             {
@@ -16276,10 +16533,18 @@ public sealed partial class MainWindow : Window
             else
             {
                 PlanChip.Visibility = Visibility.Visible;
-                PlanChipText.Text = planPending == true
-                    ? L("计划模式（切换中…）")
-                    : L("计划模式已开启");
+                var pendingKind = PeekSessionPendingKind(sid);
+                PlanChipText.Text = pendingKind == "plan-review"
+                    ? L("计划待审")
+                    : planPending == true
+                        ? L("计划模式（切换中…）")
+                        : L("计划模式已开启");
                 PlanChipExit.Visibility = planActive == true ? Visibility.Visible : Visibility.Collapsed;
+                if (pendingKind == "plan-review")
+                {
+                    ToolTipService.SetToolTip(PlanChip, L("计划待审"));
+                    Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(PlanChip, L("计划待审"));
+                }
             }
 
             // ---- 权限预设 ----
@@ -16475,6 +16740,11 @@ public sealed partial class MainWindow : Window
     private async Task SetDefaultPermissionAsync(string value, string label)
     {
         if (_rpc is null)
+        {
+            return;
+        }
+        // P0-5：切到完全权限须先确认；取消则不写回
+        if (IsDangerFullAccessPreset(value) && !await ConfirmDangerFullAccessAsync(forNewSessionDefault: true))
         {
             return;
         }
@@ -16759,8 +17029,9 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>作业下拉行（对标官方 JobListAction 的行）：状态点 | kind 徽章 | 标签（等宽、
-    /// 省略）| 右侧 状态/时长（detail 优先于状态词，同官方 status 列口径）。时长由调用方
-    /// 传入当前时钟现算，live 行随 1s tick 走时。</summary>
+    /// 省略）| 右侧 状态/时长（detail 优先于状态词，同官方 status 列口径）| 停止钮。
+    /// 时长由调用方传入当前时钟现算，live 行随 1s tick 走时。P1-16：live 行附停止钮
+    /// （无 jobs 专用 RPC → session/cancel 会话级，ToolTip/UIA 已标明）。</summary>
     private FrameworkElement MakeJobRow(JobVm job, long nowEpochMs)
     {
         var grid = new Grid { ColumnSpacing = Sp6, Padding = new Thickness(0, 3, 0, 3) };
@@ -16768,6 +17039,7 @@ public sealed partial class MainWindow : Window
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });                          // 1 kind 徽章
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });     // 2 标签
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });                          // 3 状态/时长
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });                          // 4 停止
 
         var dot = new Microsoft.UI.Xaml.Shapes.Ellipse
         {
@@ -16822,7 +17094,7 @@ public sealed partial class MainWindow : Window
         grid.Children.Add(label);
 
         var duration = job.DurationText(nowEpochMs);
-        var statusText = job.Detail is { Length: > 0 } ? L(job.StatusLabel) : L(job.StatusLabel);
+        var statusText = job.Detail is { Length: > 0 } ? L(job.DisplayStatusText) : L(job.DisplayStatusText);
         var right = new StackPanel { Orientation = Orientation.Horizontal, Spacing = Sp6, VerticalAlignment = VerticalAlignment.Center };
         right.Children.Add(new TextBlock
         {
@@ -16843,6 +17115,14 @@ public sealed partial class MainWindow : Window
         }
         Grid.SetColumn(right, 3);
         grid.Children.Add(right);
+
+        // P1-16：live 行停止钮（会话级取消，已标明）
+        if (job.IsLive)
+        {
+            var stop = MakeJobStopButton(job);
+            Grid.SetColumn(stop, 4);
+            grid.Children.Add(stop);
+        }
         return grid;
     }
 
@@ -16987,7 +17267,7 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            SetFilesPanelOpen(FilesPanelView.Visibility != Visibility.Visible);
+            SetFilesPanelOpen(RightPaneHost.Visibility != Visibility.Visible);
         }
         catch (Exception) { } // 事件入口兜底（0xc000027b 教训）
     }
@@ -16995,8 +17275,19 @@ public sealed partial class MainWindow : Window
     /// <summary>右栏开合的唯一入口（菜单项与右栏自身的关闭钮同路）。</summary>
     private void SetFilesPanelOpen(bool open)
     {
-        FilesPanelView.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        RightPaneHost.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        FilesPanelView.Visibility = Visibility.Visible;
         FilesPanelView.OnVisibilityChanged(open);
+        _rightPane1?.OnVisibilityChanged(open && _rightSplitMode != RightSplitMode.None);
+        if (open && _rightbarWidthPreference <= 0)
+        {
+            _rightbarWidthPreference = Math.Max(RightbarMinWidth, CurrentRightbarWidth());
+        }
+        if (open && !_rightFullscreen)
+        {
+            RightPaneHost.Width = CurrentRightbarWidth();
+        }
+        SyncLayoutSplitters();
     }
 
     // ---------------- 消息反馈（messageFeedback/*） ----------------
@@ -17072,9 +17363,11 @@ public sealed partial class MainWindow : Window
             _feedbackRows[bubble.MessageId] = row;
         }
 
-        // 操作组：复制 / 分支 / 时间戳 / 本轮用时（官方 TurnTailNodeView 的动作排序）
+        // 操作组：复制 / 详情 / 分支 / 时间戳 / 本轮用时（官方 TurnTailNodeView 的动作排序）
         row.Copy = MakeCopyButton(bubble.Text);
         row.Root.Children.Add(row.Copy);
+        // P1-1：消息 Details 面板（元数据/附加块/系统提示词/上下文注入清单）
+        row.Root.Children.Add(MakeMessageDetailsButton(bubble));
         // 分支只挂在该轮答案气泡上（官方：仅已完成轮次的最后一条消息可分支）
         var isTurnAnswer = _transcriptAnswers.TryGetValue(bubble.Turn, out var answer) && ReferenceEquals(answer, bubble);
         if (isTurnAnswer && bubble.Seq > 0)
@@ -18202,9 +18495,14 @@ public sealed partial class MainWindow : Window
         _commandSubmitting = true;
         var submittedText = fromComposer ? InputBox.Text : null;
         var attachments = fromComposer ? _pendingAttachments.ToList() : new List<AttachmentVm>();
-        AppendSystemMessage($"> {line}");
         try
         {
+            // P0-5：/permission danger-full-access 须先过风险确认；取消则不发 commands/execute
+            if (IsDangerFullAccessCommand(line) && !await ConfirmDangerFullAccessAsync(forNewSessionDefault: false))
+            {
+                return;
+            }
+            AppendSystemMessage($"> {line}");
             var submittedAttachments = new List<object>();
             foreach (var att in attachments)
             {

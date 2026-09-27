@@ -174,16 +174,19 @@ public sealed partial class MainWindow
             foreach (var skill in root.Entries)
             {
                 card.Children.Add(MakeSkillRow(skill, status, roots));
+                // 行列表节奏与插件页「插件列表」一致：行上下 6 内边距 + 1px 细分隔线（AddListDivider）
+                AddListDivider(card);
             }
         }
     }
 
-    /// <summary>一行技能：名称/说明/适用场景在左，删除按钮与开关在右（开关贴最右缘）。</summary>
+    /// <summary>一行技能：名称/说明/适用场景在左，删除按钮与开关在右（开关贴最右缘）。
+    /// 行距对齐插件页「插件列表」的行列表节奏（上下 6 内边距，分隔线由调用方补）。</summary>
     private Grid MakeSkillRow(SkillEntry skill, TextBlock status, List<SkillRoot> roots)
     {
         var row = new Grid
         {
-            Padding = new Thickness(0, Sp8, 0, Sp8),
+            Padding = new Thickness(0, Sp6, 0, Sp6),
             ColumnSpacing = Sp12,
         };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -191,12 +194,8 @@ public sealed partial class MainWindow
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         var left = new StackPanel { Spacing = Sp2, VerticalAlignment = VerticalAlignment.Center };
-        left.Children.Add(new TextBlock
-        {
-            Text = "/" + skill.Name + (skill.Shadowed ? L("（已被遮蔽，不生效）") : ""),
-            Style = AppStyle("BodyTextStyle"),
-            TextWrapping = TextWrapping.Wrap,
-        });
+        // P1-10：技能名做成可点 chip，点开技能说明面板（消息里的 skill 引用同用 MakeSkillReferenceChip）
+        left.Children.Add(MakeSkillReferenceChip(skill.Name, shadowed: skill.Shadowed));
         if (skill.Description.Length > 0)
         {
             left.Children.Add(new TextBlock
@@ -260,6 +259,160 @@ public sealed partial class MainWindow
         row.Children.Add(remove);
 
         return row;
+    }
+
+    // ---------------- P1-10 Skill 引用 chip + 技能说明面板 ----------------
+
+    /// <summary>
+    /// 消息 / 设置里的 skill 引用 chip（对标 @deepseek-ai/dsh-client-ui-skill 的引用与 inspect）。
+    /// 点击打开技能说明面板；P1-A 专用工具行可复用本工厂。
+    /// </summary>
+    private Button MakeSkillReferenceChip(string skillName, bool shadowed = false)
+    {
+        var label = shadowed
+            ? LF("技能 {0}（已被遮蔽，不生效）", skillName)
+            : LF("技能 {0}", skillName);
+        var chip = Aut(new Button
+        {
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = Sp4,
+                Children =
+                {
+                    new FontIcon { Glyph = "\uE734", FontSize = GlyphCaption, Foreground = ThemeBrush("TextTertiaryBrush") },
+                    new TextBlock
+                    {
+                        Text = "/" + skillName + (shadowed ? L("（已被遮蔽，不生效）") : ""),
+                        Style = AppStyle("CaptionTextStyle"),
+                        Foreground = ThemeBrush("TextSecondaryBrush"),
+                    },
+                },
+            },
+            Style = AppStyle("CompactButtonStyle"),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Padding = new Thickness(Sp6, 2, Sp6, 2),
+            CornerRadius = new CornerRadius(TokenDouble("RadiusPill", 24)),
+            Background = SoftBrushFrom(ThemeBrush("TextTertiaryBrush"), 0.12),
+            BorderThickness = new Thickness(0),
+        }, $"SkillRefChip_{skillName}", label);
+        ToolTipService.SetToolTip(chip, L("点开技能说明"));
+        chip.Click += (_, _) => _ = ShowSkillExplanationAsync(skillName);
+        return chip;
+    }
+
+    /// <summary>
+    /// 技能说明面板（官方 SkillRow 的 instructions disclosure + inspect）：
+    /// 名称 / 说明 / 适用场景 / 调用限制 / 指令正文（frontmatter 之后的 body，只读）。
+    /// </summary>
+    private async Task ShowSkillExplanationAsync(string skillName)
+    {
+        try
+        {
+            var roots = ScanSkillRoots();
+            var skill = roots.SelectMany(r => r.Entries)
+                .FirstOrDefault(e => string.Equals(e.Name, skillName, StringComparison.Ordinal));
+            if (skill is null)
+            {
+                await ShowErrorAsync(LF("没有找到技能「{0}」。", skillName));
+                return;
+            }
+            var body = L("（这个技能没有指令正文。）");
+            try
+            {
+                var text = await File.ReadAllTextAsync(skill.FilePath);
+                if (SkillFrontmatter.Split(text, out _, out var rawBody) && rawBody.Trim().Length > 0)
+                {
+                    body = rawBody.Trim();
+                }
+            }
+            catch (Exception) { }
+
+            var host = new StackPanel { Spacing = Sp8, MinWidth = TokenDouble("DialogMinWidth", 420) };
+            host.Children.Add(new TextBlock
+            {
+                Text = "/" + skill.Name,
+                Style = AppStyle("BodyStrongTextStyle"),
+            });
+            if (skill.Description.Length > 0)
+            {
+                host.Children.Add(new TextBlock
+                {
+                    Text = skill.Description,
+                    Style = AppStyle("BodyTextStyle"),
+                    TextWrapping = TextWrapping.Wrap,
+                });
+            }
+            if (skill.WhenToUse.Length > 0)
+            {
+                host.Children.Add(new TextBlock
+                {
+                    Text = LF("适用场景：{0}", skill.WhenToUse),
+                    Style = AppStyle("CaptionTextStyle"),
+                    Foreground = ThemeBrush("TextSecondaryBrush"),
+                    TextWrapping = TextWrapping.Wrap,
+                });
+            }
+            host.Children.Add(new TextBlock
+            {
+                Text = skill.ModelInvocable
+                    ? L("输入框键入 /名称 可调用；模型也可能自行调用。")
+                    : L("模型不可自行调用（仅你能调用）"),
+                Style = AppStyle("CaptionTextStyle"),
+                Foreground = ThemeBrush("TextTertiaryBrush"),
+                TextWrapping = TextWrapping.Wrap,
+            });
+
+            var instructionsCard = new Border
+            {
+                Background = SoftBrushFrom(ThemeBrush("TextTertiaryBrush"), 0.08),
+                BorderBrush = ThemeBrush("StrokeBrush"),
+                BorderThickness = Stroke1,
+                CornerRadius = new CornerRadius(TokenDouble("RadiusMedium", 8)),
+                Padding = new Thickness(Sp12, Sp8, Sp12, Sp12),
+            };
+            var instructionsHost = new StackPanel { Spacing = Sp4 };
+            instructionsHost.Children.Add(new TextBlock
+            {
+                Text = L("指令").ToUpperInvariant(),
+                Style = AppStyle("CaptionTextStyle"),
+                Foreground = ThemeBrush("TextTertiaryBrush"),
+            });
+            instructionsHost.Children.Add(new TextBlock
+            {
+                Text = body,
+                Style = AppStyle("CodeTextStyle"),
+                TextWrapping = TextWrapping.Wrap,
+                IsTextSelectionEnabled = true,
+            });
+            instructionsCard.Child = instructionsHost;
+            host.Children.Add(instructionsCard);
+
+            if (skill.FilePath.Length > 0)
+            {
+                host.Children.Add(new TextBlock
+                {
+                    Text = skill.FilePath,
+                    Style = AppStyle("CaptionTextStyle"),
+                    Foreground = ThemeBrush("TextTertiaryBrush"),
+                    TextWrapping = TextWrapping.Wrap,
+                    IsTextSelectionEnabled = true,
+                });
+            }
+
+            var dialog = new ContentDialog
+            {
+                Title = LF("技能 {0}", skill.Name),
+                Content = host,
+                CloseButtonText = L("关闭"),
+                XamlRoot = Content.XamlRoot,
+            };
+            _ = await dialog.ShowAsync();
+        }
+        catch (Exception ex)
+        {
+            await ShowErrorAsync(LF("打开技能说明失败：{0}", ex.Message));
+        }
     }
 
     // ---------------- 根目录枚举（镜像内核 dsh-skill-filesystem） ----------------

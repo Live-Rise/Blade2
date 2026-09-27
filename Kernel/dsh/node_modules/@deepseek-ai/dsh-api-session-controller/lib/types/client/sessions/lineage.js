@@ -6,10 +6,9 @@
  * follows the established input order; this projection never re-sorts a
  * hydrated list from mutable timestamps.
  * @param summaries - the host's session.list items.
- * @param completed - sessions with a pending completion reminder (manager-owned live fact; absent = false).
  * @returns display rows in render order.
  */
-export function flattenLineage(summaries, completed) {
+export function flattenLineage(summaries) {
     const byId = new Map();
     for (const s of summaries)
         byId.set(s.sessionId, s);
@@ -33,9 +32,9 @@ export function flattenLineage(summaries, completed) {
             return;
         }
         visited.add(s.sessionId);
+        const { agentAvailable: _agentAvailable, ...row } = s;
         out.push({
-            ...s,
-            completed: completed?.has(s.sessionId) ?? false,
+            ...row,
             depth,
         });
         const kids = children.get(s.sessionId);

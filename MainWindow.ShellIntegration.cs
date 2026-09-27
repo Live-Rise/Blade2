@@ -202,9 +202,10 @@ public partial class MainWindow
         catch (Exception) { }
     }
 
-    /// <summary>定长 ByValTStr 字段要留给尾部的 \0：截到缓冲区容量减一。</summary>
+    /// <summary>定长 ByValTStr 字段要留给尾部的 \0：截到缓冲区容量减一，并补省略号，
+    /// 避免像 toast 硬裁那样在半字处断开（托盘气球同样是「索引/计划预览」的一条出口）。</summary>
     private static string TruncateForBalloon(string text, int bufferSize)
-        => text.Length < bufferSize ? text : text[..(bufferSize - 1)];
+        => text.Length < bufferSize ? text : text[..(bufferSize - 2)] + "…";
 
     /// <summary>托盘右键菜单：原生 Win32 菜单（托盘场景没有 XamlRoot，WinUI 弹层不可用）。</summary>
     private void ShowTrayMenu()
@@ -488,8 +489,10 @@ internal static class ShellToast
                 BalloonFallback?.Invoke(title, body); // dev 无包身份：退化托盘气球
                 return;
             }
+            // 简介/正文完整换行展示：不做 maxLines 硬裁，也不预截断。
+            // 系统横幅高度有限时点击进应用看全文，通知里至少是完整行而非半字切断。
             var builder = new Microsoft.Windows.AppNotifications.Builder.AppNotificationBuilder()
-                .AddText(title, new Microsoft.Windows.AppNotifications.Builder.AppNotificationTextProperties().SetMaxLines(1))
+                .AddText(title)
                 .AddText(body);
             if (!string.IsNullOrEmpty(action))
             {

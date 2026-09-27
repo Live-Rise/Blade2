@@ -441,7 +441,6 @@ public sealed partial class MainWindow
                 Style = AppStyle("CaptionTextStyle"),
                 Foreground = ThemeBrush("TextTertiaryBrush"),
                 TextWrapping = TextWrapping.Wrap,
-                MaxLines = 2,
             });
         }
         Grid.SetColumn(text, 1);

@@ -1,6 +1,7 @@
 /** Client owner for forwarded Remote Event subscriptions and deliveries. */
+import { isRemoteJsonValue, isTypertOwnedValue } from '@deepseek-ai/dsh-typert-protocol';
 import { randomUUID } from '@deepseek-ai/dsh-util-crypto';
-import { REMOTE_EVENT_RESULT_ENDPOINT, REMOTE_EVENT_STREAM_ENDPOINT, REMOTE_EVENT_STREAM_PAYLOAD, isRemoteEventAgentId, isRemoteEventClientId, isRemoteEventId, isRemoteJsonValue, projectRemoteEventRejection, } from "../stream-protocol.js";
+import { REMOTE_EVENT_RESULT_ENDPOINT, REMOTE_EVENT_STREAM_ENDPOINT, REMOTE_EVENT_STREAM_PAYLOAD, isRemoteEventAgentId, isRemoteEventClientId, isRemoteEventId, projectRemoteEventRejection, } from "../stream-protocol.js";
 /** Private end-of-chain marker that cannot collide with a JSON listener result. */
 const REMOTE_EVENT_NEXT = Symbol('api-gateway.remote-event.next');
 /** Own Cordis registrations, generation pumping, waterfall dispatch, and HTTP replies. */
@@ -116,36 +117,43 @@ export class ClientRemoteEvents {
     }
     async answer(frame, clientId, signal) {
         const adapter = this.ownerCtx.typert.contexts.getClient('agent');
-        let target;
+        let resolved;
         try {
-            target = adapter?.resolve(frame.agentId);
+            resolved = adapter?.resolve(frame.agentId);
         }
         catch (error) {
             this.reportError(frame.event, error);
         }
-        let outcome = { kind: 'next' };
-        if (target !== undefined) {
-            try {
-                outcome = await this.dispatchWaterfall(target, frame, signal);
+        const owned = isTypertOwnedValue(resolved) ? resolved : undefined;
+        try {
+            const target = isTypertOwnedValue(resolved) ? resolved.value : resolved;
+            let outcome = { kind: 'next' };
+            if (target !== undefined) {
+                try {
+                    outcome = await this.dispatchWaterfall(target, frame, signal);
+                }
+                catch (error) {
+                    if (signal.aborted)
+                        return;
+                    outcome = { kind: 'rejected', error: projectRemoteEventRejection(error) };
+                }
             }
-            catch (error) {
-                if (signal.aborted)
-                    return;
-                outcome = { kind: 'rejected', error: projectRemoteEventRejection(error) };
-            }
+            if (signal.aborted)
+                return;
+            const result = {
+                clientId,
+                eventId: frame.eventId,
+                outcome: outcome.kind === 'result' && outcome.value === undefined
+                    ? { kind: 'result' }
+                    : outcome,
+            };
+            const response = await this.connection.rpc.call('/api', REMOTE_EVENT_RESULT_ENDPOINT, { args: result }, signal);
+            if (!response.ok)
+                throw new Error(response.error.message);
         }
-        if (signal.aborted)
-            return;
-        const result = {
-            clientId,
-            eventId: frame.eventId,
-            outcome: outcome.kind === 'result' && outcome.value === undefined
-                ? { kind: 'result' }
-                : outcome,
-        };
-        const response = await this.connection.rpc.call('/api', REMOTE_EVENT_RESULT_ENDPOINT, { args: result }, signal);
-        if (!response.ok)
-            throw new Error(response.error.message);
+        finally {
+            owned?.[Symbol.dispose]();
+        }
     }
     async dispatchWaterfall(target, frame, signal) {
         const request = {
@@ -153,7 +161,8 @@ export class ClientRemoteEvents {
             agent: target,
             signal,
         };
-        const value = await abortable(Promise.resolve(privateEvents(target).waterfall(target, this.eventKey(frame.event), request, () => Promise.resolve(REMOTE_EVENT_NEXT))), signal);
+        // Cancellation reaches the handler, whose Context remains owned until it settles.
+        const value = await privateEvents(target).waterfall(target, this.eventKey(frame.event), request, () => Promise.resolve(REMOTE_EVENT_NEXT));
         if (value !== REMOTE_EVENT_NEXT && value !== undefined && !isRemoteJsonValue(value)) {
             throw new TypeError('Remote event listener result is not lossless JSON data');
         }
@@ -231,20 +240,6 @@ function validRemoteEventName(value) {
 }
 function invalidRemoteEventFrame() {
     throw new TypeError('client api: invalid forwarded Remote event frame');
-}
-/** Race listener completion against its delivery lifetime. */
-async function abortable(value, signal) {
-    signal.throwIfAborted();
-    let rejectAbort;
-    const aborted = new Promise((_resolve, reject) => { rejectAbort = reject; });
-    const onAbort = () => { rejectAbort?.(signal.reason); };
-    signal.addEventListener('abort', onAbort, { once: true });
-    try {
-        return await Promise.race([Promise.resolve(value), aborted]);
-    }
-    finally {
-        signal.removeEventListener('abort', onAbort);
-    }
 }
 function privateEvents(ctx) {
     return ctx;

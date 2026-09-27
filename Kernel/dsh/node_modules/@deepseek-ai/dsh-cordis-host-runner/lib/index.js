@@ -922,7 +922,7 @@ async function startHostHalf(group, plugin, reportGuardFailure) {
 	} catch (error) {
 		await fiber.dispose();
 		const message = error instanceof Error ? error.message : String(error);
-		if (message.includes("already registered")) throw new Error(`${message} — to REPLACE something an earlier dynamic package registered, first cordis_stop that package's id (find it with cordis_runtime_inspect what:"temporary"), then run the new version.`);
+		if (message.includes("already registered")) throw new Error(`${message} — to REPLACE something an earlier dynamic package registered, first stop that package through its runner or the Cordis panel before running the new version.`);
 		throw error instanceof Error ? error : new Error(message);
 	}
 	return fiber;
@@ -1079,53 +1079,6 @@ var DynamicCordisRegistry = class {
 * closure, with its own facade.
 * @module @deepseek-ai/dsh-cordis-host-runner/sandbox
 */
-/** Exact Host closure symbols exposed by the sandbox and guarded Context. */
-const HOST_BUILTIN_INSPECTION = [
-	{
-		name: "ctx",
-		description: "Restricted Cordis Context. Prefer ctx.get(name) with an undefined check; use inject for hard dependencies.",
-		signatures: [
-			"ctx.get(name: string): unknown | undefined",
-			"ctx.on(name: string, listener: Function): () => void",
-			"ctx.provide(name: string, value: unknown): () => void",
-			"ctx.effect(callback: Function, label?: string): () => void"
-		]
-	},
-	{
-		name: "harness",
-		description: "Host helpers for Package-private Client RPC and model-visible dynamic Tools.",
-		signatures: [
-			"harness.handle(method: string, handler: (args: JsonValue) => JsonValue | Promise<JsonValue>): () => void",
-			"harness.defineTool(definition: ToolDefinition): ToolDefinition",
-			"harness.registerTool(ctx: Context, tool: ToolDefinition): () => void"
-		]
-	},
-	{
-		name: "console",
-		description: "Package-tagged Host logging.",
-		signatures: ["console.log(...values): void", "console.error(...values): void"]
-	},
-	{
-		name: "btoa",
-		description: "Encode UTF-8 text as base64.",
-		signatures: ["btoa(value: string): string"]
-	},
-	{
-		name: "atob",
-		description: "Decode base64 as UTF-8 text.",
-		signatures: ["atob(value: string): string"]
-	},
-	{
-		name: "TextEncoder",
-		description: "Standard UTF-8 encoder constructor.",
-		signatures: ["new TextEncoder()"]
-	},
-	{
-		name: "TextDecoder",
-		description: "Standard text decoder constructor.",
-		signatures: ["new TextDecoder(label?: string)"]
-	}
-];
 /**
 * A write-through console for one package, tagging every line with the package
 * id. Write-through (host stdout/stderr), NOT buffered into the tool result:
@@ -2392,29 +2345,23 @@ let DynamicCordisRunnerService = (() => {
 			else if (settled.reason === "rejected") text = `The user rejected Cordis ${pending.mode} ${identity}. Do not request the same activation again unless the user asks.`;
 			else {
 				const returnedStatus = pending.requiresApproval ? "awaiting-approval" : "starting";
-				text = `Cordis ${pending.mode} ${identity} failed after cordis_run returned ${returnedStatus}: ${settled.reason}\n${formatErrorDetails(settled)}\ncurrentPackageId: ${plugin?.currentPackageId ?? "none"}\nnextPackageId: ${plugin?.nextPackageId ?? pending.packageId}\nInspect the failed Package, correct it on the same Plugin when needed, and retry the activation autonomously.`;
+				text = `Cordis ${pending.mode} ${identity} failed after the runner returned ${returnedStatus}: ${settled.reason}\n${formatErrorDetails(settled)}\ncurrentPackageId: ${plugin?.currentPackageId ?? "none"}\nnextPackageId: ${plugin?.nextPackageId ?? pending.packageId}\nReport the failure to the user; the definition can be managed through the Cordis panel.`;
 			}
 			agent.steer(createUserMessage({
 				content: [{
 					type: "text",
 					text
 				}],
-				source: {
-					kind: "plugin",
-					plugin: "cordis-host-runner"
-				}
+				source: { kind: "cordis-host-runner" }
 			}));
 		}
 		steerRenderFailure(agent, plugin, definition, pluginRunId, failure) {
 			agent.steer(createUserMessage({
 				content: [{
 					type: "text",
-					text: `Cordis Client UI ${plugin.pluginId}/${definition.packageId} (${pluginRunId}) failed while rendering Slot "${failure.slot}" after activation.\n${formatErrorDetails(failure)}\nentryAbdicated: ${failure.abdicated}\nInspect the failed Package, fix the Client code by defining a new Package on the same Plugin, and activate that Package autonomously with cordis_run mode:"update".`
+					text: `Cordis Client UI ${plugin.pluginId}/${definition.packageId} (${pluginRunId}) failed while rendering Slot "${failure.slot}" after activation.\n${formatErrorDetails(failure)}\nentryAbdicated: ${failure.abdicated}\nReport the Client render failure to the user; the definition can be stopped through the Cordis panel.`
 				}],
-				source: {
-					kind: "plugin",
-					plugin: "cordis-host-runner"
-				}
+				source: { kind: "cordis-host-runner" }
 			}));
 		}
 		steerHostHandlerFailure(plugin, run, method, failure) {
@@ -2425,12 +2372,9 @@ let DynamicCordisRunnerService = (() => {
 			agent.steer(createUserMessage({
 				content: [{
 					type: "text",
-					text: `Cordis Host handler ${plugin.pluginId}/${run.packageId} (${run.pluginRunId}) failed when the Client called host.call(${JSON.stringify(method)}).\n${formatErrorDetails(failure)}\nThe Plugin remains running. Inspect this Package, correct the Host code on the same Plugin, and activate the new Package autonomously with cordis_run mode:"update". If the handler needs a Service, either declare that Service in the returned Plugin inject list or read it with ctx.get(name) and handle undefined.`
+					text: `Cordis Host handler ${plugin.pluginId}/${run.packageId} (${run.pluginRunId}) failed when the Client called host.call(${JSON.stringify(method)}).\n${formatErrorDetails(failure)}\nThe Plugin remains running. Report the Host handler failure to the user. If the handler needs a Service, either declare that Service in the returned Plugin inject list or read it with ctx.get(name) and handle undefined.`
 				}],
-				source: {
-					kind: "plugin",
-					plugin: "cordis-host-runner"
-				}
+				source: { kind: "cordis-host-runner" }
 			}));
 		}
 		steerGuardFailure(plugin, run, platform, failure) {
@@ -2441,12 +2385,9 @@ let DynamicCordisRunnerService = (() => {
 			agent.steer(createUserMessage({
 				content: [{
 					type: "text",
-					text: `Cordis ${platform} guard rejected runtime code in ${plugin.pluginId}/${run.packageId} (${run.pluginRunId}) after activation.\n${formatErrorDetails(failure)}\nThe Plugin remains running. Inspect this Package, define a corrected Package on the same Plugin, and activate it autonomously with cordis_run mode:"update".`
+					text: `Cordis ${platform} guard rejected runtime code in ${plugin.pluginId}/${run.packageId} (${run.pluginRunId}) after activation.\n${formatErrorDetails(failure)}\nThe Plugin remains running. Report the guard rejection to the user; it can be stopped through the Cordis panel.`
 				}],
-				source: {
-					kind: "plugin",
-					plugin: "cordis-host-runner"
-				}
+				source: { kind: "cordis-host-runner" }
 			}));
 		}
 		claimRuntimeFailure(plugin, run, key) {
@@ -2473,10 +2414,7 @@ let DynamicCordisRunnerService = (() => {
 					type: "text",
 					text
 				}],
-				source: {
-					kind: "plugin",
-					plugin: "cordis-host-runner"
-				}
+				source: { kind: "cordis-host-runner" }
 			}));
 		}
 		cancelPending(pluginId, message) {
@@ -2593,4 +2531,4 @@ function cloneAttempt(attempt) {
 	};
 }
 //#endregion
-export { ApprovalRequestId, CordisDynamicPackageId, CordisDynamicPluginId, CordisDynamicPluginRunId, CordisInspectRegistryService, DynamicCordisRunnerService, DynamicCordisRunnerService as default, HOST_BUILTIN_INSPECTION };
+export { ApprovalRequestId, CordisDynamicPackageId, CordisDynamicPluginId, CordisDynamicPluginRunId, CordisInspectRegistryService, DynamicCordisRunnerService, DynamicCordisRunnerService as default };

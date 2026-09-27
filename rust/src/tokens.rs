@@ -67,6 +67,13 @@ pub mod pad {
     pub const NAV_CARD: [f64; 4] = [16.0, 12.0, 16.0, 12.0];
     /// SelectorBar（插件页 Tab）上下各 Space8。
     pub const TAB_BAR: [f64; 4] = [0.0, 8.0, 0.0, 8.0];
+    /// 轮次轨 host：主干 `MainWindow.xaml:618` 的 `Margin="0,0,4,0"`（右边留 4 DIP 给窗口缘）。
+    pub const RAIL_HOST: [f64; 4] = [0.0, 0.0, 4.0, 0.0];
+    /// 刻度列表内衬：主干 `MainWindow.xaml:625` `TurnRailMarks Padding="0,2"`。
+    /// 这两个 DIP 就是 `turnrail::LIST_INSET`（host 高度公式里的 `inset*2`），同一个数两处写死。
+    pub const RAIL_LIST: [f64; 4] = [0.0, 2.0, 0.0, 2.0];
+    /// 轮次轨预览卡内边距：主干 `MainWindow.xaml:672` `Padding="12,10"`。
+    pub const RAIL_PREVIEW: [f64; 4] = [12.0, 10.0, 12.0, 10.0];
 }
 
 pub mod size {
@@ -106,15 +113,27 @@ pub mod size {
     pub const SEARCH_MIN_WIDTH: f64 = 120.0;
     pub const SEARCH_MAX_WIDTH: f64 = 420.0;
     pub const FILES_PANEL_WIDTH: f64 = 340.0;
-    pub const TURN_RAIL_WIDTH: f64 = 44.0;
+    /// 轮次轨 host 宽 = 主干 `MainWindow.xaml:618` 那颗 `TurnRailHost` 的 `Width="48"`。
+    /// 本槽位曾经是 **44**（#51 之前抄的旧值，改之前全仓零引用），48 才是主干现值 ⇒ 别再往回改。
+    /// `turnrail::HOST_WIDTH` 独立又写了一遍，两边对不上就是有人在偷改（钉法同
+    /// `scroll::tests::palette_geometry_quantiser_agrees_with_the_shipped_constants`）。
+    pub const TURN_RAIL_WIDTH: f64 = 48.0;
     pub const STROKE: f64 = 1.0;
     pub const SESSION_PREVIEW_LIMIT: usize = 5;
     /// 主干 `FieldMinWidth`：设置页 ComboBox 的下拉框最小宽。
     pub const FIELD_MIN_WIDTH: f64 = 200.0;
     /// 主干 `FieldWidth`：NumberBox / PasswordBox 的 MinWidth=MaxWidth。
     pub const FIELD_WIDTH: f64 = 320.0;
+    /// 主干 `MakeThemeCubes` 每颗方块的 `MinWidth=108 MinHeight=64`（**DIP**，
+    /// `MainWindow.xaml.cs:10441-10442`；本机 200% DPI ⇒ UIA 矩形 216×128 px）。
+    pub const THEME_CUBE_MIN_WIDTH: f64 = 108.0;
+    pub const THEME_CUBE_MIN_HEIGHT: f64 = 64.0;
     /// 字号步进器中间的读数块 `MinWidth`，以及会话正文字号的取值区间。
     pub const STEPPER_VALUE_MIN_WIDTH: f64 = 44.0;
+    /// 主干气泡不透明度读数的 `MinWidth`（`MainWindow.Personalization.cs:171`）是 **48**，
+    /// 皮肤透明度那处（`MainWindow.Personalization.cs:442`）是 **44**：主干就是两个不同的值，
+    /// 不要合并成一颗 token（上面的 `STEPPER_VALUE_MIN_WIDTH` 继续服务 44 的那三处）。
+    pub const BUBBLE_VALUE_MIN_WIDTH: f64 = 48.0;
     pub const FONT_SIZE_MIN: f64 = 12.0;
     pub const FONT_SIZE_MAX: f64 = 17.0;
     /// pending 行里的 ProgressRing 是 14×14，不是默认 32。
@@ -133,6 +152,10 @@ pub mod size {
     pub const PET_CELL_MAX: f64 = 320.0;
     pub const PET_CELL_STEP: f64 = 8.0;
     pub const PET_CELL_DEFAULT: f64 = 128.0;
+    /// 宠物大小读数的 `MinWidth`（`MainWindow.Pet.cs:313`）＝ **48**，与上面那颗气泡的 48
+    /// 同值但不同名：主干这两处各写各的字面量，分叉按页命名，别挪 `BUBBLE_VALUE_MIN_WIDTH`
+    /// 过来（缺口 #72 就是把这处从 44 修回 48 的）。
+    pub const PET_VALUE_MIN_WIDTH: f64 = 48.0;
     /// `RenderMemoryContentCard`：JSONL 编辑框 320–560。
     pub const MEMORY_MIN_HEIGHT: f64 = 320.0;
     pub const MEMORY_MAX_HEIGHT: f64 = 560.0;
@@ -253,11 +276,22 @@ pub mod glyph {
     pub const PERMISSION_WORKSPACE: char = '\u{e70f}';
     pub const PERMISSION_FULL: char = '\u{e7ba}';
     pub const PERMISSION_AUTO: char = '\u{f1ba}';
+    /// `PermissionPresetGlyph` 的 `custom` 一档（主干 `MainWindow.xaml.cs:16673` 的 `"\uE713"`）。
+    /// 与 `SETTINGS`（同文件 `:244`）同码位是主干现状：那颗是「齿轮=设置」，这一档借用同枚字形表意
+    /// 「自定义」⇒ 码位可重复，`every_glyph_exists_in_mainline_set` 只查「有没有主干出处」。
+    pub const PERMISSION_CUSTOM: char = '\u{e713}';
     pub const FOLDER: char = '\u{e8b7}';
     pub const FILE: char = '\u{e8a5}';
     pub const OPEN_IN_APP: char = '\u{e8a7}';
     pub const FEEDBACK: char = '\u{e939}';
     pub const FOLDER_EMPTY: char = '\u{e7c3}';
+    /// 主干 `MakeThemeCubes` 三面的字形，码位照抄 `MainWindow.xaml.cs:10426-10431`
+    /// （light=E706、dark=E708、system=E770）。
+    pub const THEME_LIGHT: char = '\u{e706}';
+    pub const THEME_DARK: char = '\u{e708}';
+    pub const THEME_SYSTEM: char = '\u{e770}';
+    /// 侧栏「有活动定时任务」的闹钟（主干 `MainWindow.xaml.cs:3591` 的 `Glyph="\uE823"`）。
+    pub const ALARM: char = '\u{e823}';
 }
 
 /// 主干字阶：FontSize / LineHeight / Weight。
@@ -379,7 +413,7 @@ pub const DESC_COMPUTER_CONTROL: &str = "电脑控制由内核 dsh-computer-use 
 pub const DESC_BROWSER_CONTROL: &str = "浏览器控制由内核 dsh-browser-use 注册表与 Playwright provider（@deepseek-ai/dsh-experimental-browser-use-playwright-mcp）提供：模型可打开浏览器完成网页任务。开关编辑内核 profile patch 的 disabled 标志，由内核热重载即时生效。";
 pub const DESC_PET: &str = "桌面宠物由内核插件 @linxin666/dsh-pet 提供（Codex Pet 兼容）：聊天窗口里常驻一只宠物，模型干活时它跟着动，点它可以逗一逗。宠物素材装在 $DSH_HOME/pets，重启内核后收录。";
 
-/// `ToolTable`（`MainWindow.MessageActions.cs:635-648`）：(内核名, 字形, 标题, 摘要变体)。
+/// `ToolTable`（`MainWindow.MessageActions.cs:611-629`）：(内核名, 字形, 标题, 摘要变体)。
 pub const TOOL_TABLE: &[(&str, char, &str, &str)] = &[
     ("bash", '\u{e756}', "Bash", "bash"),
     ("pwsh", '\u{e756}', "Pwsh", "bash"),
@@ -391,10 +425,27 @@ pub const TOOL_TABLE: &[(&str, char, &str, &str)] = &[
     ("glob", '\u{e721}', "Glob", "search"),
     ("write", '\u{e70f}', "写入", "write"),
     ("edit", '\u{e70f}', "编辑", "edit"),
+    ("str_replace_editor", '\u{e70f}', "编辑", "edit"),
     ("run_code", '\u{e943}', "代码", "code"),
+    ("skill", '\u{e8bc}', "调用技能", "others"),
+    ("todo_write", '\u{e73e}', "待办", "others"),
+    ("subagent", '\u{e716}', "子代理", "others"),
+    ("workflow", '\u{e945}', "工作流", "others"),
 ];
 
-/// 使用统计 KPI 行：(标题, 字形, automation_id, 无数据提示)。序同主干 `StatsKpiRow` 五列。
+/// 使用统计 KPI 行：`(标题, 字形, automation_id, 无数据档 hint)`。序同主干 `StatsKpiRow` 五列
+/// （`MainWindow.xaml:1474` 那一行，逐列出处：标题与字形 = `xaml:1494/1498`、`1521/1525`、
+/// `1548/1552`、`1575/1579`、`1602/1606`；id = 值行 `TextBlock` 上的
+/// `AutomationProperties.AutomationId`，即 `xaml:1504/1531/1558/1585/1612`）。
+///
+/// 第四列的逐字出处 = 主干 `MainWindow.xaml.cs:15284-15325` 里那五发
+/// `StatsKpi*Hint.Text = … > 0 ? … : L("…")` 的 **false 分支**。注意**第 1、2 两枚同串**
+/// （总量与峰值共用「内核没回过用量」那一档），后面三枚才各不相同：
+/// `暂无用量记录` / `暂无用量记录` / `无完整 turn 记录` / `今日暂无记录` / `暂无活跃记录`。
+/// 这一列过去从第 2 枚起**整体上移了一格**（错值），而分叉的唯一口径是
+/// `main.rs::usage_kpi_texts`（它按主干逐条自己写死、不吃表）⇒ 谁照表写就会照错写。
+/// 现已按主干改正，两边同尺由
+/// `usage_stats_render_tests::the_kpi_hint_column_and_the_text_function_agree` 互校钉住。
 pub const STATS_KPI_CARDS: &[(&str, char, &str, &str)] = &[
     (
         "累计 Token 数",
@@ -406,19 +457,19 @@ pub const STATS_KPI_CARDS: &[(&str, char, &str, &str)] = &[
         "峰值 Token 数",
         '\u{e9d9}',
         "StatsKpiPeakTokens",
-        "无完整 turn 记录",
+        "暂无用量记录",
     ),
     (
         "最长聊天时长",
         '\u{e823}',
         "StatsKpiLongestChat",
-        "今日暂无记录",
+        "无完整 turn 记录",
     ),
     (
         "当前连续天数",
         '\u{e787}',
         "StatsKpiCurrentStreak",
-        "暂无活跃记录",
+        "今日暂无记录",
     ),
     (
         "最长连续天数",
@@ -428,7 +479,22 @@ pub const STATS_KPI_CARDS: &[(&str, char, &str, &str)] = &[
     ),
 ];
 
-/// 设置页分区：(id, 标题, 字形)。顺序即主干侧栏顺序。
+/// 设置页分区：`(id, 中文标题, 字形)`。**数组序就是主干侧栏的行序**——
+/// `main.rs::nav_sections` 按本表下标往 `Nav.MenuItems` 尾部铺行，漂一位用户看得见。
+///
+/// 三列的主干出处（逐条对过，勿凭记忆改）：
+/// * 次序 = `MainWindow.xaml.cs:8289-8290` 的 `SectionOrder`，**恰好 12 项**；
+///   `pet` 在第 7（`memory` 之后、`agent-presets` 之前）。
+///   紧邻的文档注释 `MainWindow.xaml.cs:8286-8288` 另钉着两条：原「自动审批」分区
+///   **已撤下侧栏入口**（内容并入「插件」分区，见 `SETTINGS_PLUGIN_CARDS` 的
+///   `auto-approval` 那颗钻取卡）；八个壳内建分区不进内核 settings/mutate。
+/// * 标题 = `MainWindow.xaml.cs:8308-8323` 的 `SectionTitle`（映射臂在 8310-8321）。
+/// * 字形 = `MainWindow.xaml.cs:8325-8340` 的 `SectionGlyph`（映射臂在 8327-8338）。
+///
+/// 坑：主干 `SectionTitle`/`SectionGlyph` 两个 switch 的**书写次序**是
+/// `…memory, agent-presets, …, usage, pet, about`，与 `SectionOrder` 不一致——
+/// switch 按 id 取键，臂序毫无意义，**只有 `SectionOrder` 是行序**。照抄臂序即错。
+/// 次序与三元组内容由 `tokens::tests` 的两条测试分别锁住。
 pub const SETTINGS_SECTIONS: &[(&str, &str, char)] = &[
     ("general", "通用设置", '\u{e713}'),
     ("personalization", "个性化", '\u{e790}'),
@@ -436,11 +502,11 @@ pub const SETTINGS_SECTIONS: &[(&str, &str, char)] = &[
     ("plugins", "插件", '\u{ea86}'),
     ("skills", "技能", '\u{e734}'),
     ("memory", "记忆", '\u{e81c}'),
+    ("pet", "宠物", '\u{e76e}'),
     ("agent-presets", "Agent 预设", '\u{e9d9}'),
     ("computer-control", "电脑控制", '\u{e7f4}'),
     ("browser-control", "浏览器控制", '\u{e774}'),
     ("usage", "使用统计", '\u{e9d2}'),
-    ("pet", "宠物", '\u{e76e}'),
     ("about", "关于", '\u{e946}'),
 ];
 
@@ -449,6 +515,16 @@ pub const SETTINGS_PERMISSIONS: &[&str] = &["仅可查看", "工作区内修改"
 /// 主干「窗口材质」下拉，序同 `MainWindow.Personalization.cs` 的 `Materials`。
 pub const SETTINGS_MATERIALS: &[&str] = &["Mica", "Mica Alt", "亚克力", "无（纯色）"];
 pub const SETTINGS_THEMES: &[&str] = &["浅色", "深色", "跟随系统"];
+/// 主干 `MakeThemeCubes` 的三面表（`MainWindow.xaml.cs:10426-10431`）：
+/// `(内核值 id, 中文标签, 字形)`。**下标序必须与 `SETTINGS_THEMES` 严格一致**
+/// （0=light / 1=dark / 2=system）—— `apply_theme()` 的 `match pick(...)` 分支就是按这个
+/// 下标写的，UI 的 `is_checked` 也按这个下标派生。
+/// 中文标签同时是 UIA `Name` 的键（过 `catalog.l`：EN 侧拿 Light/Dark/System）。
+pub const SETTINGS_THEME_CUBES: &[(&str, &str, char)] = &[
+    ("light", "浅色", glyph::THEME_LIGHT),
+    ("dark", "深色", glyph::THEME_DARK),
+    ("system", "跟随系统", glyph::THEME_SYSTEM),
+];
 /// `locale_preference` 的 30 项 native 标签，序同主干 `LocaleLabels`。
 pub const SETTINGS_LOCALES: &[&str] = &[
     "简体中文",
@@ -501,8 +577,52 @@ mod tests {
         assert_eq!(pad::COMPOSER_BAR, [16.0, 4.0, 16.0, 12.0]);
     }
 
+    /// #65：轮次轨的几何在 `tokens.rs`（Thickness 档，主干 XAML 的字面量）与
+    /// `turnrail.rs`（算法常量）里各写了一遍，这一条就是那两份定义互钉的地方 ——
+    /// 任一边漂了这里就红（钉法同 `scroll::tests::palette_geometry_quantiser_agrees_with_the_shipped_constants`）。
+    #[test]
+    fn turn_rail_geometry_agrees_between_tokens_and_turnrail() {
+        use crate::turnrail;
+        assert_eq!(size::TURN_RAIL_WIDTH, turnrail::HOST_WIDTH);
+        assert_eq!(pad::RAIL_HOST[2], turnrail::HOST_RIGHT_MARGIN);
+        assert_eq!(pad::RAIL_LIST[1], turnrail::LIST_INSET);
+        assert_eq!(pad::RAIL_LIST[1], pad::RAIL_LIST[3], "主干是 `0,2` 对称内衬");
+        assert_eq!(
+            pad::RAIL_PREVIEW,
+            [12.0, 10.0, 12.0, 10.0],
+            "主干 MX:672 `Padding=\"12,10\"`"
+        );
+        assert_eq!(space::S4, 4.0, "预览卡行距 = 主干 Space4");
+        assert_eq!(radius::MEDIUM, 8.0, "预览卡圆角 = 主干 CornerMedium");
+        assert_eq!(turnrail::CARD_MAX_HEIGHT, 480.0, "预览卡 ScrollViewer MaxHeight");
+    }
+
+    /// #63：主干两处滑杆读数块的 `MinWidth` 本来就是两个值
+    /// （气泡 `MainWindow.Personalization.cs:171` = 48、皮肤 `:442` = 44），不许统一。
+    /// #72：宠物大小那处（`MainWindow.Pet.cs:313`）跟气泡同为 48，不跟皮肤的 44。
+    #[test]
+    fn slider_readout_min_widths_stay_split() {
+        assert_eq!(size::BUBBLE_VALUE_MIN_WIDTH, 48.0);
+        assert_eq!(size::STEPPER_VALUE_MIN_WIDTH, 44.0);
+        assert_eq!(size::PET_VALUE_MIN_WIDTH, 48.0);
+    }
+
+    /// #62：`settings_combo` 现在把选项标签过 `i18n::EN`，但选项**顺序**仍是模型值的下标    /// （主干 `Tag` = id，分叉 `Msg::Pick` = 下标），序一旦漂了 Pick 就落错档。
+    #[test]
+    fn material_option_order_is_the_pick_contract() {
+        assert_eq!(
+            SETTINGS_MATERIALS,
+            &["Mica", "Mica Alt", "亚克力", "无（纯色）"]
+        );
+    }
+
     #[test]
     fn settings_sections_follow_mainline_order() {
+        // 锚：主干 `MainWindow.xaml.cs:8289-8290` 的 `SectionOrder` 原文，12 项、`pet` 在
+        // 第 7（`memory` 之后）。这条测试**过去**抄的是分叉自己那份序（`pet` 掉到第 11），
+        // 名字却叫 `follow_mainline_order` ⇒ 命名级假绿：后来者会把它当主干事实源。
+        // 别拿 `SectionTitle`(`:8308-8323`)/`SectionGlyph`(`:8325-8340`) 的**臂序**当行序：
+        // 那两处 switch 把 `pet` 写在倒数第二，按 id 取键、臂序无意义；行序只有 `SectionOrder`。
         assert_eq!(
             SETTINGS_SECTIONS
                 .iter()
@@ -515,15 +635,46 @@ mod tests {
                 "plugins",
                 "skills",
                 "memory",
+                "pet",
                 "agent-presets",
                 "computer-control",
                 "browser-control",
                 "usage",
-                "pet",
                 "about",
             ],
         );
+        // 「恰好 12 行」「没有 auto-approval 侧栏行」（撤下依据 `MainWindow.xaml.cs:8286-8288`）
+        // 不再单独立断言：上面那条**整表相等**已经把行数与 id 集合一起钉死，多插一行
+        // （实测插 `("auto-approval", …)` 进数组）就是在 `:610` 这里红 ⇒ 再写两条
+        // `len == 12` / `!any(auto-approval)` 属于被蕴含的死断言，永不单独可达。
+        // 进设置页默认激活 general：`MainWindow.xaml.cs:8263` 的初值 + `:9007`
+        // `ActivateSectionAsync("general")`。这条不被上面蕴含（它钉的是另一颗常量）。
         assert_eq!(DEFAULT_SETTINGS_SECTION, SETTINGS_SECTIONS[0].0);
+    }
+
+    /// 12 行的 `(id, 标题, 字形)` 三元组整表对主干逐颗过表：
+    /// 标题 = `MainWindow.xaml.cs:8310-8321`（`SectionTitle` 的映射臂），
+    /// 字形 = `MainWindow.xaml.cs:8327-8338`（`SectionGlyph` 的映射臂，`"\uE713"` 之类）。
+    /// 为什么单独立一条：`every_glyph_exists_in_mainline_set` 只证明某颗字形在主干
+    /// **别处也出现过**（`E713` 既是 general 也是 `_ =>` 兜底），把 `pet` 的字形换成
+    /// `E713` 它照样绿；id↔标题、id↔字形 的**配对**此前全仓无锁。
+    #[test]
+    fn settings_section_title_and_glyph_pairs_match_mainline() {
+        const EXPECTED: &[(&str, &str, char)] = &[
+            ("general", "通用设置", '\u{e713}'),
+            ("personalization", "个性化", '\u{e790}'),
+            ("models", "模型", '\u{e8f1}'),
+            ("plugins", "插件", '\u{ea86}'),
+            ("skills", "技能", '\u{e734}'),
+            ("memory", "记忆", '\u{e81c}'),
+            ("pet", "宠物", '\u{e76e}'),
+            ("agent-presets", "Agent 预设", '\u{e9d9}'),
+            ("computer-control", "电脑控制", '\u{e7f4}'),
+            ("browser-control", "浏览器控制", '\u{e774}'),
+            ("usage", "使用统计", '\u{e9d2}'),
+            ("about", "关于", '\u{e946}'),
+        ];
+        assert_eq!(SETTINGS_SECTIONS, EXPECTED);
     }
 
     /// 主干 `PluginsNav_*` 六张钻取卡，顺序即 `SettingsHost.Children` 追加顺序。
@@ -605,12 +756,13 @@ mod tests {
         assert_eq!(glyph::WITHDRAW_EDIT, '\u{e70f}');
         // xaml.cs:16565 用量段
         assert_eq!(glyph::USAGE, '\u{e81e}');
-        // PermissionPresetGlyph（xaml.cs:15792-15799）
+        // PermissionPresetGlyph（xaml.cs:16667-16675）：六臂互不重复的那五臂 + 兜底锁。
         assert_eq!(glyph::PERMISSION_DEFAULT, '\u{e72e}');
         assert_eq!(glyph::PERMISSION_READ_ONLY, '\u{e890}');
         assert_eq!(glyph::PERMISSION_WORKSPACE, '\u{e70f}');
         assert_eq!(glyph::PERMISSION_FULL, '\u{e7ba}');
         assert_eq!(glyph::PERMISSION_AUTO, '\u{f1ba}');
+        assert_eq!(glyph::PERMISSION_CUSTOM, '\u{e713}');
     }
 
     /// 分叉用到的码位必须全部落在主干用过的集合里（不许自造字形）。
@@ -618,13 +770,14 @@ mod tests {
     fn every_glyph_exists_in_mainline_set() {
         const MAINLINE: &[char] = &[
             '\u{e70d}', '\u{e70e}', '\u{e70f}', '\u{e710}', '\u{e711}', '\u{e712}', '\u{e713}',
-            '\u{e71a}', '\u{e71c}', '\u{e721}', '\u{e72b}', '\u{e72c}', '\u{e72e}', '\u{e734}',
-            '\u{e73e}', '\u{e74a}', '\u{e74d}', '\u{e756}', '\u{e768}', '\u{e76b}', '\u{e76c}',
-            '\u{e76e}', '\u{e774}', '\u{e787}', '\u{e78b}', '\u{e790}', '\u{e7ba}', '\u{e7c3}',
-            '\u{e7f4}', '\u{e81c}', '\u{e81e}', '\u{e823}', '\u{e890}', '\u{e897}', '\u{e8a5}',
-            '\u{e8a7}', '\u{e8b7}', '\u{e8bd}', '\u{e8c8}', '\u{e8e0}', '\u{e8e1}', '\u{e8f1}',
-            '\u{e939}', '\u{e943}', '\u{e946}', '\u{e9ce}', '\u{e9d2}', '\u{e9d5}', '\u{e9d9}',
-            '\u{ea86}', '\u{eb9f}', '\u{f1ba}',
+            '\u{e716}', '\u{e71a}', '\u{e71c}', '\u{e721}', '\u{e72b}', '\u{e72c}', '\u{e72e}',
+            '\u{e734}', '\u{e73e}', '\u{e74a}', '\u{e74d}', '\u{e756}', '\u{e768}', '\u{e76b}',
+            '\u{e76c}', '\u{e76e}', '\u{e774}', '\u{e787}', '\u{e78b}', '\u{e790}', '\u{e7ba}',
+            '\u{e7c3}', '\u{e7f4}', '\u{e81c}', '\u{e81e}', '\u{e823}', '\u{e890}', '\u{e897}',
+            '\u{e8a5}', '\u{e8a7}', '\u{e8b7}', '\u{e8bc}', '\u{e8bd}', '\u{e8c8}', '\u{e8e0}',
+            '\u{e8e1}', '\u{e8f1}', '\u{e939}', '\u{e943}', '\u{e945}', '\u{e946}', '\u{e9ce}',
+            '\u{e9d2}', '\u{e9d5}', '\u{e9d9}', '\u{ea86}', '\u{eb9f}', '\u{f1ba}',
+            // 新增三颗均出自主干 ToolTable：e8bc skill / e716 subagent / e945 workflow（MessageActions.cs:625/627/628）
         ];
         let used = [
             glyph::NEW_SESSION,
@@ -659,6 +812,7 @@ mod tests {
             glyph::PERMISSION_WORKSPACE,
             glyph::PERMISSION_FULL,
             glyph::PERMISSION_AUTO,
+            glyph::PERMISSION_CUSTOM,
             glyph::FOLDER,
             glyph::FILE,
             glyph::OPEN_IN_APP,

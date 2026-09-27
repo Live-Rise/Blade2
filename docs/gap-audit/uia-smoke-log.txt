@@ -1,0 +1,98 @@
+PID=60116
+WINDOW=Blade²
+FOUND-VIA=uia-children
+--- TREE ---
+0 | Window | id= | Blade² | en=True | 196,196 2560x1600
+1 | Pane | id= | Non Client Input Sink Window | en=True | 209,196 2534x96
+1 | Pane | id= | AppWindow Custom Title Bar | en=True | 2467,196 276x64
+1 | Pane | id= |  | en=True | 209,197 2534x1586
+2 | Button | id=Minimize | Minimize | en=True | 2467,196 92x64
+2 | Button | id=Maximize | Maximize | en=True | 2559,196 92x64
+2 | Button | id=Close | Close | en=True | 2651,196 92x64
+2 | Pane | id= |  | en=True | 209,197 1267x793
+3 | Text | id= | Blade² | en=True | 297,226 82x38
+3 | Group | id=SessionSearchBox | 搜索会话 | en=True | 989,213 840x64
+3 | Custom | id=Nav |  | en=True | 209,293 2534x1490
+4 | Edit | id=TextBox | 搜索会话 | en=True | 989,213 840x64
+4 | Window | id=PaneRoot |  | en=True | 209,293 528x1490
+4 | List | id=ChatList | 对话消息列表 | en=True | empty
+4 | Group | id=KernelBootPanel | 内核加载进度 | en=True | 1481,777 520x317
+4 | Edit | id=InputBox | 消息输入框 | en=True | 773,1601 1928x72
+4 | Button | id=ComposerAddButton | 添加附件或操作 | en=True | 789,1683 56x56
+4 | Button | id=WorkspacePickerButton | 选择工作区 | en=True | 861,1678 268x66
+4 | Button | id=AgentModeButton | Agent 模式 | en=True | 1145,1678 240x66
+4 | Button | id=ModelButton | 模型与推理等级，当前 选择模型 | en=True | 2385,1678 200x66
+4 | Button | id=SendButton | 发送消息 | en=True | 2617,1677 68x68
+5 | Text | id= | 搜索会话… | en=True | 1057,226 133x38
+5 | Pane | id=MenuItemsScrollViewer |  | en=True | 209,301 528x1386
+5 | Pane | id=FooterItemsScrollViewer |  | en=True | 209,1695 528x80
+5 | Image | id=KernelBootMark |  | en=True | 1707,777 68x68
+5 | Text | id=KernelBootStage | 正在启动内核… | en=True | 1547,869 389x75
+5 | ProgressBar | id=KernelBootBar |  | en=True | 1481,968 520x6
+5 | Text | id=KernelBootStep | 第 2 步，共 4 步 · 16% | en=True | 1602,998 278x40
+5 | Text | id=KernelBootHint | 内核加载已进行 1 秒 | en=True | 1632,1062 219x32
+5 | Text | id=WorkspaceChipLabel | 选择工作区 | en=True | 925,1690 140x40
+5 | Text | id=AgentModeLabel | 标准模式 | en=True | 1209,1690 112x40
+5 | Text | id=ModelEffortLabel | 选择模型 | en=True | 2409,1690 112x40
+6 | Group | id=MenuItemsHost |  | en=True | 217,305 512x232
+6 | Group | id=FooterMenuItemsHost |  | en=True | 217,1699 512x72
+7 | ListItem | id=NewSessionItem | 新建会话 | en=True | 217,305 512x72
+7 | ListItem | id=WorkspaceSectionItem | 工作区 | en=True | 217,385 512x72
+7 | ListItem | id=UngroupedSessionsItem | 未分组会话 | en=True | 217,465 512x72
+7 | ListItem | id=SettingsItem | 设置 | en=True | 217,1699 512x72
+8 | Text | id=WorkspaceSectionHeaderText | 工作区 | en=True | 241,405 308x32
+8 | Button | id=WorkspaceViewOptionsButton | 视图选项 | en=True | 553,389 64x64
+8 | Button | id=AddWorkspaceButton | 添加工作区 | en=True | 621,389 64x64
+elements=41
+--- END TREE ---
+PROBE exists id=PreviewRoot label=file-preview-root count=0 enabled= name= => FAIL
+PROBE exists id=PreviewToolbar label=file-preview-toolbar count=0 enabled= name= => FAIL
+PROBE exists id=PreviewWrapToggle label=line-wrap-toggle count=0 enabled= name= => FAIL
+PROBE exists id=PreviewCopyAll label=copy-all count=0 enabled= name= => FAIL
+PROBE exists id=PreviewLoadMore label=load-more count=0 enabled= name= => FAIL
+PROBE exists id=PreviewChangedBanner label=file-updated-banner count=0 enabled= name= => FAIL
+PROBE exists id=PreviewMarkdown label=md-face count=0 enabled= name= => FAIL
+PROBE exists id=PreviewImage label=image-face count=0 enabled= name= => FAIL
+PROBE exists id=PreviewPdf label=pdf-face count=0 enabled= name= => FAIL
+PROBE exists id=FilesPanelPreviewText label=text-face count=0 enabled= name= => FAIL
+PROBE exists id=PreviewHtmlRelated label=html-related count=0 enabled= name= => FAIL
+PROBE exists id=ToolCard label=tool-card count=0 enabled= name= => FAIL
+PROBE exists id=ToolCardExpand label=tool-card-expand count=0 enabled= name= => FAIL
+PROBE exists id=ToolCopyJson label=tool-copy-json count=0 enabled= name= => FAIL
+PROBE exists id=QuestionPanel label=question-panel count=0 enabled= name= => FAIL
+PROBE exists id=QuestionNavPrev label=q-prev count=0 enabled= name= => FAIL
+PROBE exists id=QuestionNavNext label=q-next count=0 enabled= name= => FAIL
+PROBE exists id=QuestionSkip label=q-skip count=0 enabled= name= => FAIL
+PROBE exists id=QuestionAbandonAll label=q-abandon count=0 enabled= name= => FAIL
+PROBE exists id=QuestionToChat label=q-to-chat count=0 enabled= name= => FAIL
+PROBE exists id=RiskAckCheckBox label=risk-ack count=0 enabled= name= => FAIL
+PROBE exists id=ConfirmDangerFullAccessButton label=danger-confirm count=0 enabled= name= => FAIL
+PROBE enabled id=ConfirmDangerFullAccessButton label=danger-confirm-disabled-until-ack => FAIL (not found)
+PROBE exists id=CordisPanel label=cordis-panel count=0 enabled= name= => FAIL
+PROBE exists id=CordisApprovalCard label=cordis-approval count=0 enabled= name= => FAIL
+PROBE exists id=CordisRunStop label=cordis-run-stop count=0 enabled= name= => FAIL
+PROBE exists id=SubagentList label=subagent-list count=0 enabled= name= => FAIL
+PROBE exists id=SubagentPrompt label=subagent-prompt count=0 enabled= name= => FAIL
+PROBE exists id=SubagentInterrupt label=subagent-interrupt count=0 enabled= name= => FAIL
+PROBE exists id=TrajectoryPanel label=trajectory-panel count=0 enabled= name= => FAIL
+PROBE exists id=TrajectoryTiming label=trajectory-timing count=0 enabled= name= => FAIL
+PROBE exists id=TrajectoryLedger label=trajectory-ledger count=0 enabled= name= => FAIL
+PROBE exists id=LayoutSplitterSidebar label=sidebar-splitter count=0 enabled= name= => FAIL
+PROBE exists id=LayoutSplitterRight label=right-splitter count=0 enabled= name= => FAIL
+PROBE exists id=LayoutSplitterRightInner label=right-inner-splitter count=0 enabled= name= => FAIL
+PROBE exists id=RightPaneTabStrip label=right-pane-tabs count=0 enabled= name= => FAIL
+PROBE exists id=RightPaneCell0 label=right-pane-cell0 count=0 enabled= name= => FAIL
+PROBE exists id=RightPaneCell1 label=right-pane-cell1 count=0 enabled= name= => FAIL
+PROBE exists id=RestoreDefaultModelButton label=restore-default-model count=0 enabled= name= => FAIL
+PROBE exists id=ModelButton label=model-button count=1 enabled=True name=模型与推理等级，当前 选择模型 => PASS
+PROBE exists id=NewSessionItem label=new-session count=1 enabled=True name=新建会话 => PASS
+PROBE exists id=InputBox label=input-box count=1 enabled=True name=消息输入框 => PASS
+PROBE exists id=SendButton label=send-button count=1 enabled=True name=发送消息 => PASS
+PROBE exists id=ChatList label=chat-list count=1 enabled=True name=对话消息列表 => PASS
+PROBE exists id=KernelBootPanel label=kernel-boot-panel count=1 enabled=True name=内核加载进度 => PASS
+PROBE exists id=SettingsItem label=settings-item count=1 enabled=True name=设置 => PASS
+PROBE exists id=PermissionButton label=permission-button count=0 enabled= name= => FAIL
+--- SUMMARY ---
+TOTAL=47 PASS=7 FAIL=40 PARTIAL=0
+KILLED
+

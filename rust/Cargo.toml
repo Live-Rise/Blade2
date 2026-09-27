@@ -1,6 +1,9 @@
 [package]
 name = "blade2-rs"
-version = "0.1.0"
+# 与主干壳版本对齐（`Package.appxmanifest:10` / `Blade2.csproj:18` 的 `0.8.2.0`）：
+# cargo 不接受四段版本号，这里写三段，关于页用 `concat!(env!("CARGO_PKG_VERSION"), ".0")`
+# 补回主干的四段显示格式（`src/main.rs` 的 `SHELL_VERSION`）。
+version = "0.8.2"
 edition = "2024"
 
 [dependencies]

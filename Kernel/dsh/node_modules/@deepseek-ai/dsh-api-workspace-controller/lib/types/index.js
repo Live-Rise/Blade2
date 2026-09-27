@@ -33,47 +33,72 @@ var __esDecorate = (this && this.__esDecorate) || function (ctor, descriptorIn, 
     if (target) Object.defineProperty(target, contextIn.name, descriptor);
     done = true;
 };
+import z from '@deepseek-ai/schemastery';
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
 import { WorkspaceCommands } from "./commands.js";
 import { DirectoryPickerController } from "./directory-picker.js";
-import { WorkspaceFeed } from "./feed.js";
+import { WorkspaceFeed, workspaceView } from "./feed.js";
+import { defaultWorkspaceDirectory, validateDocumentsDirectory } from "./default-directory.js";
 export { DirectoryPickerController } from "./directory-picker.js";
 /** Host service backing the generated `ctx.remote.workspace` namespace. */
 let WorkspaceController = (() => {
     let _classSuper = TypertRemoteService;
     let _instanceExtraInitializers = [];
     let _create_decorators;
+    let _initializeDefault_decorators;
     let _rename_decorators;
     let _delete_decorators;
     let _insertBefore_decorators;
     let _insertSessionBefore_decorators;
     let _archiveSession_decorators;
+    let _unarchiveSession_decorators;
+    let _pinSession_decorators;
+    let _unpinSession_decorators;
     let _follow_decorators;
     return class WorkspaceController extends _classSuper {
         static {
             const _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(_classSuper[Symbol.metadata] ?? null) : void 0;
             _create_decorators = [Remote('create')];
+            _initializeDefault_decorators = [Remote('initializeDefault')];
             _rename_decorators = [Remote('rename')];
             _delete_decorators = [Remote('delete')];
             _insertBefore_decorators = [Remote('insertBefore')];
             _insertSessionBefore_decorators = [Remote('insertSessionBefore')];
             _archiveSession_decorators = [Remote('archiveSession')];
+            _unarchiveSession_decorators = [Remote('unarchiveSession')];
+            _pinSession_decorators = [Remote('pinSession')];
+            _unpinSession_decorators = [Remote('unpinSession')];
             _follow_decorators = [Remote({ mode: 'stream' })];
             __esDecorate(this, null, _create_decorators, { kind: "method", name: "create", static: false, private: false, access: { has: obj => "create" in obj, get: obj => obj.create }, metadata: _metadata }, null, _instanceExtraInitializers);
+            __esDecorate(this, null, _initializeDefault_decorators, { kind: "method", name: "initializeDefault", static: false, private: false, access: { has: obj => "initializeDefault" in obj, get: obj => obj.initializeDefault }, metadata: _metadata }, null, _instanceExtraInitializers);
             __esDecorate(this, null, _rename_decorators, { kind: "method", name: "rename", static: false, private: false, access: { has: obj => "rename" in obj, get: obj => obj.rename }, metadata: _metadata }, null, _instanceExtraInitializers);
             __esDecorate(this, null, _delete_decorators, { kind: "method", name: "delete", static: false, private: false, access: { has: obj => "delete" in obj, get: obj => obj.delete }, metadata: _metadata }, null, _instanceExtraInitializers);
             __esDecorate(this, null, _insertBefore_decorators, { kind: "method", name: "insertBefore", static: false, private: false, access: { has: obj => "insertBefore" in obj, get: obj => obj.insertBefore }, metadata: _metadata }, null, _instanceExtraInitializers);
             __esDecorate(this, null, _insertSessionBefore_decorators, { kind: "method", name: "insertSessionBefore", static: false, private: false, access: { has: obj => "insertSessionBefore" in obj, get: obj => obj.insertSessionBefore }, metadata: _metadata }, null, _instanceExtraInitializers);
             __esDecorate(this, null, _archiveSession_decorators, { kind: "method", name: "archiveSession", static: false, private: false, access: { has: obj => "archiveSession" in obj, get: obj => obj.archiveSession }, metadata: _metadata }, null, _instanceExtraInitializers);
+            __esDecorate(this, null, _unarchiveSession_decorators, { kind: "method", name: "unarchiveSession", static: false, private: false, access: { has: obj => "unarchiveSession" in obj, get: obj => obj.unarchiveSession }, metadata: _metadata }, null, _instanceExtraInitializers);
+            __esDecorate(this, null, _pinSession_decorators, { kind: "method", name: "pinSession", static: false, private: false, access: { has: obj => "pinSession" in obj, get: obj => obj.pinSession }, metadata: _metadata }, null, _instanceExtraInitializers);
+            __esDecorate(this, null, _unpinSession_decorators, { kind: "method", name: "unpinSession", static: false, private: false, access: { has: obj => "unpinSession" in obj, get: obj => obj.unpinSession }, metadata: _metadata }, null, _instanceExtraInitializers);
             __esDecorate(this, null, _follow_decorators, { kind: "method", name: "follow", static: false, private: false, access: { has: obj => "follow" in obj, get: obj => obj.follow }, metadata: _metadata }, null, _instanceExtraInitializers);
             if (_metadata) Object.defineProperty(this, Symbol.metadata, { enumerable: true, configurable: true, writable: true, value: _metadata });
         }
         static inject = ['typert', 'workspaceRegistry'];
-        commands = __runInitializers(this, _instanceExtraInitializers);
+        static Config = z.object({
+            documentsDirectory: z.string(),
+            documentsLookupTimeoutMs: z.natural().min(1).default(10_000),
+        });
+        config = __runInitializers(this, _instanceExtraInitializers);
+        commands;
         feed;
-        /** @param ctx - Host context containing the Workspace registry. */
-        constructor(ctx) {
+        /**
+         * @param ctx - Host context containing the Workspace registry.
+         * @param config - first-use directory policy.
+         */
+        constructor(ctx, config = {}) {
             super(ctx, 'workspaceController', { namespace: 'workspace' });
+            this.config = WorkspaceController.Config(config);
+            if (this.config.documentsDirectory !== undefined)
+                validateDocumentsDirectory(this.config.documentsDirectory);
             this.commands = new WorkspaceCommands(ctx);
             this.feed = new WorkspaceFeed(ctx);
             // This package is the Loader entry for both Remote owners it hosts: the
@@ -89,6 +114,21 @@ let WorkspaceController = (() => {
          */
         create(request) {
             return this.commands.create(request);
+        }
+        /**
+         * Initialize or reuse the default Workspace during first-use startup. The
+         * directory name is fixed, so the Host never renames or relocates an
+         * existing default; its initial title is that same name, which browser
+         * consumers label in the reader's language.
+         * @param signal - caller lifetime; cancels native directory lookup.
+         * @returns the durable Workspace, or undefined when first-use initialization is ineligible; creates no Session or message.
+         */
+        async initializeDefault(signal) {
+            const workspace = await this.ctx.workspaceRegistry.initializeDefault(async () => {
+                const timeout = AbortSignal.timeout(this.config.documentsLookupTimeoutMs);
+                return await defaultWorkspaceDirectory(this.config.documentsDirectory, AbortSignal.any([signal, timeout]));
+            });
+            return workspace === undefined ? undefined : { workspace: workspaceView(workspace) };
         }
         /**
          * Rename one Workspace to a unique non-blank title.
@@ -129,6 +169,30 @@ let WorkspaceController = (() => {
          */
         archiveSession(request) {
             return this.commands.archiveSession(request);
+        }
+        /**
+         * Restore one archived Session to Workspace grouping surfaces.
+         * @param request - Session identity to unarchive.
+         * @returns the complete resulting archive set.
+         */
+        unarchiveSession(request) {
+            return this.commands.unarchiveSession(request);
+        }
+        /**
+         * Surface one known unarchived Session ahead of unpinned Sessions.
+         * @param request - Session identity to pin.
+         * @returns the complete resulting pin set, most recently pinned first.
+         */
+        pinSession(request) {
+            return this.commands.pinSession(request);
+        }
+        /**
+         * Remove one Session's pin without changing its saved Session order.
+         * @param request - Session identity to unpin.
+         * @returns the complete resulting pin set, most recently pinned first.
+         */
+        unpinSession(request) {
+            return this.commands.unpinSession(request);
         }
         /**
          * Stream a complete Workspace baseline followed by ordered increments.

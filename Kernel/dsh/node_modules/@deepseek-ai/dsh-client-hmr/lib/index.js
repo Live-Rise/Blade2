@@ -3,21 +3,21 @@ import z from "@deepseek-ai/schemastery";
 //#region lib/types/events.js
 /** System SSE endpoint pushing graph/rebuilt frames (wire protocol constant). */
 const EVENTS_ENDPOINT = "/plugins/events";
+EVENTS_ENDPOINT.slice(1);
 //#endregion
 //#region lib/types/index.js
 /**
-* HMR plugin, node half: the host end of the dev reload chain. One interval
+* Host transport for Web client graph changes and rebuilt bundles. One interval
 * stat-polls every graph row's client bundle (polling by design: network mounts
 * deliver no inotify events), reports changes through
-* `clientModuleHost.rebuilt(id)`, and serves the `/plugins/events` SSE channel
+* `clientModules.rebuilt(id)`, and serves the `/plugins/events` SSE channel
 * broadcasting graph/rebuilt frames to the browser half (src/client/).
-* The web bundle mounts this row unconditionally: without a rebuild
-* watcher rewriting client bundles, the poll observes no changes and the
-* chain stays idle.
+* The Web composition mounts this transport for live graph updates;
+* a development rebuild watcher also supplies bundle changes.
 */
 /** Cordis plugin name. */
 const name = "client-hmr";
-/** Required services: the web plugin table and the route registry. */
+/** Required services: the client graph and Web route registry. */
 const inject = ["clientModules", "webServer"];
 const Config = z.object({ pollIntervalMs: z.number().step(1).min(1).default(500) });
 /** Serialize one frame as an SSE data line. */
@@ -29,22 +29,23 @@ function bundleStat(path) {
 	const bundle = statSync(path);
 	return {
 		mtimeMs: bundle.mtimeMs,
+		ctimeMs: bundle.ctimeMs,
 		size: bundle.size
 	};
 }
-/** Whether the executable bundle is unchanged since the last successful re-hash. */
+/** Whether the executable bundle metadata is unchanged since its last publication. */
 function sameBundleStat(left, right) {
-	return left.mtimeMs === right.mtimeMs && left.size === right.size;
+	return left.mtimeMs === right.mtimeMs && left.ctimeMs === right.ctimeMs && left.size === right.size;
 }
 /**
-* Mount the dev chain: bundle watches, rebuilt reporting, and the SSE channel.
-* @param ctx - host plugin context carrying clientModuleHost and webServer.
+* Mount bundle watches and graph/rebuilt SSE delivery.
+* @param ctx - host plugin context carrying clientModules and webServer.
 * @param config - validated {@link Config}.
 */
 function apply(ctx, config) {
 	const pollIntervalMs = config.pollIntervalMs;
 	const watched = /* @__PURE__ */ new Map();
-	const rehash = (id, watch, current) => {
+	const publish = (id, watch, current) => {
 		try {
 			ctx.clientModules.rebuilt(id);
 		} catch (error) {
@@ -55,6 +56,7 @@ function apply(ctx, config) {
 			ctx.logger.warn(error);
 		}
 		watch.mtimeMs = current.mtimeMs;
+		watch.ctimeMs = current.ctimeMs;
 		watch.size = current.size;
 		watch.dirty = false;
 	};
@@ -72,7 +74,7 @@ function apply(ctx, config) {
 			if (error.code !== "ENOENT") ctx.logger.warn(error);
 			return;
 		}
-		if (!sameBundleStat(current, watch)) rehash(id, watch, current);
+		if (!sameBundleStat(current, watch)) publish(id, watch, current);
 	};
 	const pollWatches = () => {
 		for (const [id, watch] of watched) {
@@ -85,7 +87,7 @@ function apply(ctx, config) {
 				continue;
 			}
 			if (!watch.dirty && sameBundleStat(current, watch)) continue;
-			rehash(id, watch, current);
+			publish(id, watch, current);
 		}
 	};
 	const syncWatches = () => {
@@ -112,6 +114,13 @@ function apply(ctx, config) {
 		};
 	}, "client-hmr: bundle watches");
 	const connections = /* @__PURE__ */ new Set();
+	const publishGraph = () => {
+		const line = sseData({
+			type: "graph",
+			graph: ctx.clientModules.graph()
+		});
+		for (const res of connections) res.write(line);
+	};
 	const connect = (res) => {
 		res.writeHead(200, {
 			"content-type": "text/event-stream",
@@ -119,11 +128,11 @@ function apply(ctx, config) {
 			"connection": "keep-alive"
 		});
 		res.write(": connected\n\n");
+		connections.add(res);
 		res.write(sseData({
 			type: "graph",
 			graph: ctx.clientModules.graph()
 		}));
-		connections.add(res);
 		res.on("close", () => {
 			connections.delete(res);
 		});
@@ -141,6 +150,7 @@ function apply(ctx, config) {
 				connect(res);
 			}
 		});
+		const unsubscribeGraph = ctx.clientModules.onGraphChanged(publishGraph);
 		const unsubscribe = ctx.clientModules.onRebuilt((id, rev) => {
 			const line = sseData({
 				type: "rebuilt",
@@ -150,6 +160,7 @@ function apply(ctx, config) {
 			for (const res of connections) res.write(line);
 		});
 		return () => {
+			unsubscribeGraph();
 			unsubscribe();
 			disposeRoute();
 			for (const res of connections) res.destroy();

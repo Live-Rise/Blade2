@@ -82,7 +82,7 @@ function apply(ctx, config) {
 	const distIndex = config.distIndex;
 	const distRoot = dirname(distIndex);
 	const renderIndex = async () => {
-		return ctx.webServer.renderIndex(await readFile(distIndex, "utf8")).replace(/<head(?:\s[^>]*)?>/i, (open) => `${open}<base href="/">`);
+		return ctx.webServer.renderIndex(await readFile(distIndex, "utf8")).replace(/<head(?:\s[^>]*)?>/i, (open) => `${open}<base href="./">`);
 	};
 	ctx.effect(() => ctx.webServer.registerFallback(async (req, res) => {
 		if (req.method !== "GET" && req.method !== "HEAD") {

@@ -1,10 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  工作区文件面板（右侧栏）：文件树 + 文件内容预览。
+  工作区文件面板（右侧栏）：文件树 + 六形态文档预览。
   RPC 契约（以内核 @deepseek-ai/dsh-api-workspace-files/lib/typert.remote-client.js 为准）：
     workspaceFiles/list  args { workspaceFileScopeId, path }            - value { path, entries[{name,type,size?}], truncated }
     workspaceFiles/stat  args { workspaceFileScopeId, path }            - value { absolutePath, version, bytes? }
     workspaceFiles/read  args { workspaceFileScopeId, path, range{offset?,limit?} } - value { offset, text, lines, eof, absolutePath, version, bytes? }
+    workspaceFiles/readAll    args { workspaceFileScopeId, path }       - value { offset, data(base64), eof, absolutePath, version, bytes? }
+    workspaceFiles/readBytes  args { workspaceFileScopeId, path, range{offset?,length?} } - value { offset, data(base64), eof, ... }
+    workspaceFiles/readRelated args { workspaceFileScopeId, path, relativePath } - value { offset, data(base64), eof, ... }
     workspaceFiles/changes args { workspaceFileScopeId }                - 流：{kind:"ready"} | {kind:"change", change}
   workspaceFileScopeId = 会话 id（内核 lookup "workspaceFileScope"：由会话 header.cwd 解出工作区根；
   dsh-api-gateway/lib/index.js resolveParameter 取 args[parameter.wire]）。
@@ -13,6 +16,8 @@
   内核错误码 → InfoBar：workspace-file/not-text（二进制/含 NUL）、workspace-file/too-large、
   workspace-file/not-found、workspace-file/not-directory、workspace-file/not-regular-file、
   workspace-file/outside-workspace、gateway/lookup-not-found（会话无 header.cwd）等。
+  预览文案与交互对齐 @deepseek-ai/dsh-client-ui-sidebar-documentpreview
+  （换行 / 加载更多 / 重新读取 / 文件已更新 / 复制）。
 -->
 <UserControl
     x:Class="Blade2.FilesPanel"
@@ -23,9 +28,10 @@
     xmlns:local="using:Blade2"
     mc:Ignorable="d">
 
-    <!-- 右栏固定宽度：内容面（聊天列 MaxWidth 760）在 1280 默认窗口下仍留有可用行宽 -->
+    <!-- 列宽由 MainWindow.LayoutColumns 的右栏把手托管（默认 340，clamp 300..viewport*0.7）；
+         这里只保底 MinWidth，不再写死 Width。 -->
     <Border x:Name="PanelRoot"
-            Width="340"
+            MinWidth="280"
             Background="{ThemeResource SurfaceBrush}"
             BorderBrush="{ThemeResource StrokeSubtleBrush}"
             BorderThickness="1,0,0,0">
@@ -41,6 +47,7 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
@@ -66,8 +73,17 @@
                                TextWrapping="NoWrap"
                                AutomationProperties.AutomationId="FilesPanelHeaderPath" />
                 </StackPanel>
-                <Button x:Name="RefreshButton"
+                <Button x:Name="FileActionButton"
                         Grid.Column="2"
+                        Style="{StaticResource IconButtonStyle}"
+                        AutomationProperties.AutomationId="FileActionMenu"
+                        AutomationProperties.Name="文件操作"
+                        ToolTipService.ToolTip="文件操作"
+                        Click="OnFileActionMenuClick">
+                    <FontIcon Glyph="&#xE712;" FontSize="14" />
+                </Button>
+                <Button x:Name="RefreshButton"
+                        Grid.Column="3"
                         Style="{StaticResource IconButtonStyle}"
                         AutomationProperties.AutomationId="FilesPanelRefreshButton"
                         AutomationProperties.Name="刷新文件树"
@@ -76,7 +92,7 @@
                     <FontIcon Glyph="&#xE72C;" FontSize="14" />
                 </Button>
                 <Button x:Name="CloseButton"
-                        Grid.Column="3"
+                        Grid.Column="4"
                         Style="{StaticResource IconButtonStyle}"
                         AutomationProperties.AutomationId="FilesPanelCloseButton"
                         AutomationProperties.Name="关闭文件面板"
@@ -96,72 +112,293 @@
 
             <!-- ============ 主体 ============ -->
             <Grid Grid.Row="2">
-                <!-- 文件树（非绑定模式 TreeViewNode：目录懒加载，Expanding 事件触发一行 list） -->
-                <ScrollViewer x:Name="TreeScroll"
-                              Padding="8,0,8,12"
-                              VerticalScrollBarVisibility="Auto"
-                              VerticalScrollMode="Auto">
-                    <TreeView x:Name="FileTree"
-                              SelectionMode="Single"
-                              CanDragItems="False"
-                              CanReorderItems="False"
-                              AllowDrop="False"
-                              Expanding="OnNodeExpanding"
-                              ItemInvoked="OnTreeItemInvoked"
-                              KeyDown="OnTreeKeyDown"
-                              AutomationProperties.AutomationId="FilesPanelTree">
-                        <TreeView.ItemTemplate>
-                            <!-- 非绑定模式（自管 TreeViewNode）下 ItemTemplate 的 DataContext 是
-                                 TreeViewNode 本身，数据项在 Content 里（见 Microsoft Learn "Tree view"
-                                 的 Pictures/Music 示例：x:DataType="TreeViewNode" + ((T)Content).X）。 -->
-                            <DataTemplate>
-                                <Grid ColumnSpacing="{ThemeResource Space8}" Padding="0,3" Opacity="{Binding Content.RowOpacity}">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <FontIcon Grid.Column="0"
-                                              Glyph="{Binding Content.Glyph}"
-                                              FontSize="14"
-                                              Opacity="0.8"
-                                              Foreground="{ThemeResource TextSecondaryBrush}"
-                                              VerticalAlignment="Center" />
-                                    <TextBlock Grid.Column="1"
-                                               Text="{Binding Content.Name}"
-                                               Style="{StaticResource BodyTextStyle}"
-                                               TextWrapping="NoWrap"
-                                               TextTrimming="CharacterEllipsis"
-                                               VerticalAlignment="Center" />
-                                </Grid>
-                            </DataTemplate>
-                        </TreeView.ItemTemplate>
-                    </TreeView>
-                </ScrollViewer>
-
-                <!-- 预览（文本）：等宽 + 保留换行（NoWrap 不吞行，长行走横向滚动） -->
-                <Grid x:Name="PreviewHost" Visibility="Collapsed">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
-                    <StackPanel Grid.Row="0" Margin="{ThemeResource OverlayMargin}" Spacing="{ThemeResource Space2}">
-                        <TextBlock x:Name="PreviewMeta"
-                                   Style="{StaticResource HintTextStyle}"
-                                   TextWrapping="Wrap"
-                                   AutomationProperties.AutomationId="FilesPanelPreviewMeta" />
-                    </StackPanel>
-                    <ScrollViewer Grid.Row="1"
-                                  Padding="12,0,12,12"
-                                  HorizontalScrollBarVisibility="Auto"
-                                  HorizontalScrollMode="Auto"
+                <!-- 文件树（非绑定模式 TreeViewNode：目录懒加载，Expanding 事件触发一行 list）。
+                     TreeView 的 UIA peer 常吞掉挂在控件上的 AutomationId（运行时暴露成 ListControl），
+                     因此契约 id 挂在外层 Grid，保证 UIA 能按 FilesPanelTree 定位文件树。 -->
+                <Grid AutomationProperties.AutomationId="FilesPanelTree"
+                      AutomationProperties.Name="工作区文件树">
+                    <ScrollViewer x:Name="TreeScroll"
+                                  Padding="8,0,8,12"
                                   VerticalScrollBarVisibility="Auto"
                                   VerticalScrollMode="Auto">
-                        <TextBlock x:Name="PreviewText"
-                                   Style="{StaticResource CodeTextStyle}"
-                                   TextWrapping="NoWrap"
-                                   IsTextSelectionEnabled="True"
-                                   AutomationProperties.AutomationId="FilesPanelPreviewText" />
+                        <TreeView x:Name="FileTree"
+                                  SelectionMode="Single"
+                                  CanDragItems="False"
+                                  CanReorderItems="False"
+                                  AllowDrop="False"
+                                  Expanding="OnNodeExpanding"
+                                  ItemInvoked="OnTreeItemInvoked"
+                                  KeyDown="OnTreeKeyDown"
+                                  RightTapped="OnTreeRightTapped">
+                            <TreeView.ItemTemplate>
+                                <!-- 非绑定模式（自管 TreeViewNode）下 ItemTemplate 的 DataContext 是
+                                     TreeViewNode 本身，数据项在 Content 里（见 Microsoft Learn "Tree view"
+                                     的 Pictures/Music 示例：x:DataType="TreeViewNode" + ((T)Content).X）。 -->
+                                <DataTemplate>
+                                    <Grid ColumnSpacing="{ThemeResource Space8}" Padding="0,3" Opacity="{Binding Content.RowOpacity}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Grid.Column="0"
+                                                  Glyph="{Binding Content.Glyph}"
+                                                  FontSize="14"
+                                                  Opacity="0.8"
+                                                  Foreground="{ThemeResource TextSecondaryBrush}"
+                                                  VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding Content.Name}"
+                                                   Style="{StaticResource BodyTextStyle}"
+                                                   TextWrapping="NoWrap"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center" />
+                                    </Grid>
+                                </DataTemplate>
+                            </TreeView.ItemTemplate>
+                        </TreeView>
                     </ScrollViewer>
+                </Grid>
+
+                <!-- 预览：工具条 + 已更新横幅 + 元信息 + 六形态内容面 -->
+                <Grid x:Name="PreviewHost"
+                      Visibility="Collapsed"
+                      AutomationProperties.AutomationId="PreviewRoot">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- 预览辅助：换行 / 复制 / 重新读取（对齐 documentpreview 文案） -->
+                    <StackPanel x:Name="PreviewToolbar"
+                                Grid.Row="0"
+                                Orientation="Horizontal"
+                                Spacing="{ThemeResource Space2}"
+                                Margin="12,6,12,4"
+                                AutomationProperties.AutomationId="PreviewToolbar">
+                        <ToggleButton x:Name="WrapToggle"
+                                      Content="自动换行"
+                                      IsChecked="True"
+                                      MinHeight="28"
+                                      Padding="8,2"
+                                      FontSize="12"
+                                      AutomationProperties.AutomationId="PreviewWrapToggle"
+                                      AutomationProperties.Name="自动换行"
+                                      Click="OnWrapToggle" />
+                        <Button x:Name="CopyAllButton"
+                                Content="复制全文"
+                                Style="{StaticResource CompactButtonStyle}"
+                                AutomationProperties.AutomationId="PreviewCopyAll"
+                                AutomationProperties.Name="复制全文"
+                                Click="OnCopyAllClick" />
+                        <Button x:Name="CopySelectionButton"
+                                Content="复制选中"
+                                Style="{StaticResource CompactButtonStyle}"
+                                AutomationProperties.AutomationId="PreviewCopySelection"
+                                AutomationProperties.Name="复制选中"
+                                Click="OnCopySelectionClick" />
+                        <Button x:Name="ReloadPreviewButton"
+                                Content="重新读取"
+                                Style="{StaticResource CompactButtonStyle}"
+                                AutomationProperties.AutomationId="PreviewReload"
+                                AutomationProperties.Name="重新读取文件"
+                                ToolTipService.ToolTip="重新读取文件"
+                                Click="OnReloadPreviewClick" />
+                        <!-- HTML 面：DOM 渲染（WebView2，默认）/ 源码+大纲 切换 -->
+                        <ToggleButton x:Name="HtmlModeToggle"
+                                      Content="源码"
+                                      MinHeight="28"
+                                      Padding="8,2"
+                                      FontSize="12"
+                                      Visibility="Collapsed"
+                                      AutomationProperties.AutomationId="PreviewHtmlModeToggle"
+                                      AutomationProperties.Name="切换 HTML 源码视图"
+                                      Click="OnHtmlModeToggle" />
+                    </StackPanel>
+
+                    <!-- 文件已更新横幅：只提示不自动重载（避免打断阅读位置），点「重新载入」才换内容 -->
+                    <Grid x:Name="ChangedBanner"
+                          Grid.Row="1"
+                          Margin="12,0,12,4"
+                          Padding="10,6"
+                          ColumnSpacing="{ThemeResource Space8}"
+                          Background="{ThemeResource CardBrush}"
+                          BorderBrush="{ThemeResource StrokeSubtleBrush}"
+                          BorderThickness="0,0,0,1"
+                          Visibility="Collapsed"
+                          AutomationProperties.AutomationId="PreviewChangedBanner">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="ChangedBannerText"
+                                   Grid.Column="0"
+                                   Text="文件已更新，当前显示为旧内容。"
+                                   Style="{StaticResource HintTextStyle}"
+                                   TextWrapping="Wrap"
+                                   VerticalAlignment="Center" />
+                        <Button x:Name="ChangedReloadButton"
+                                Grid.Column="1"
+                                Content="重新载入"
+                                Style="{StaticResource CompactButtonStyle}"
+                                AutomationProperties.AutomationId="PreviewChangedReload"
+                                Click="OnChangedReloadClick" />
+                    </Grid>
+
+                    <TextBlock x:Name="PreviewMeta"
+                               Grid.Row="2"
+                               Margin="{ThemeResource OverlayMargin}"
+                               Style="{StaticResource HintTextStyle}"
+                               TextWrapping="Wrap"
+                               AutomationProperties.AutomationId="FilesPanelPreviewMeta" />
+
+                    <Grid Grid.Row="3">
+                        <!-- HTML 标签结构大纲 + 附属资源列表（readRelated，可点开），叠在源码面上方 -->
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <TextBlock x:Name="HtmlOutlineSummary"
+                                   Grid.Row="0"
+                                   Margin="12,0,12,2"
+                                   Style="{StaticResource HintTextStyle}"
+                                   TextWrapping="Wrap"
+                                   Visibility="Collapsed"
+                                   AutomationProperties.AutomationId="PreviewHtmlOutline" />
+                        <TextBlock x:Name="HtmlRelatedSummary"
+                                   Grid.Row="1"
+                                   Margin="12,0,12,2"
+                                   Style="{StaticResource HintTextStyle}"
+                                   TextWrapping="Wrap"
+                                   Visibility="Collapsed"
+                                   AutomationProperties.AutomationId="PreviewHtmlRelated" />
+                        <StackPanel x:Name="HtmlRelatedList"
+                                    Grid.Row="2"
+                                    Margin="12,0,12,4"
+                                    Spacing="2"
+                                    Visibility="Collapsed"
+                                    AutomationProperties.AutomationId="PreviewHtmlRelatedList" />
+
+                        <!-- HTML DOM 预览（路 A）：WebView2 仅渲染受信本地 HTML；脚本关、禁外链。
+                             Runtime 缺失 / 初始化失败时回落源码面（TextScroll）。 -->
+                        <WebView2 x:Name="HtmlWebView"
+                                  Grid.Row="3"
+                                  Visibility="Collapsed"
+                                  AutomationProperties.AutomationId="PreviewHtmlDom" />
+
+                        <!-- 纯文本 / 代码 / HTML 源码：等宽 + 可选中（复制选中走 SelectedText） -->
+                        <ScrollViewer x:Name="TextScroll"
+                                      Grid.Row="3"
+                                      Padding="12,0,12,12"
+                                      HorizontalScrollBarVisibility="Auto"
+                                      HorizontalScrollMode="Auto"
+                                      VerticalScrollBarVisibility="Auto"
+                                      VerticalScrollMode="Auto">
+                            <!-- CodeTextStyle 的 TargetType 是 TextBlock，RichTextBlock 不能复用该 Style，
+                                 等宽字号直接落在控件上（与 Theme/Typography 的 CodeTextStyle 同参）。 -->
+                            <RichTextBlock x:Name="PreviewRich"
+                                           FontFamily="{StaticResource CodeFontFamily}"
+                                           FontSize="{ThemeResource CaptionTextBlockFontSize}"
+                                           LineHeight="16"
+                                           IsTextSelectionEnabled="True"
+                                           TextWrapping="NoWrap"
+                                           AutomationProperties.AutomationId="FilesPanelPreviewText" />
+                        </ScrollViewer>
+
+                        <!-- Markdown：标题/列表/代码块/链接 轻量渲染 -->
+                        <ScrollViewer x:Name="MarkdownScroll"
+                                      Grid.Row="3"
+                                      Padding="12,0,12,12"
+                                      HorizontalScrollBarVisibility="Disabled"
+                                      VerticalScrollBarVisibility="Auto"
+                                      VerticalScrollMode="Auto"
+                                      Visibility="Collapsed">
+                            <StackPanel x:Name="MarkdownHost"
+                                        Spacing="{ThemeResource Space6}"
+                                        AutomationProperties.AutomationId="PreviewMarkdown" />
+                        </ScrollViewer>
+
+                        <!-- 图片：readBytes 解码后按原始像素展示（横向可滚） -->
+                        <ScrollViewer x:Name="ImageScroll"
+                                      Grid.Row="3"
+                                      Padding="8,0,8,12"
+                                      HorizontalScrollBarVisibility="Auto"
+                                      HorizontalScrollMode="Auto"
+                                      VerticalScrollBarVisibility="Auto"
+                                      VerticalScrollMode="Auto"
+                                      Visibility="Collapsed">
+                            <Image x:Name="PreviewImage"
+                                   Stretch="Uniform"
+                                   AutomationProperties.AutomationId="PreviewImage" />
+                        </ScrollViewer>
+
+                        <!-- PDF：页导航 + 页位图；解密/损坏时降级为占位 + 用系统打开 -->
+                        <Grid x:Name="PdfHost"
+                              Grid.Row="3"
+                              Visibility="Collapsed"
+                              AutomationProperties.AutomationId="PreviewPdf">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <StackPanel Grid.Row="0"
+                                        Orientation="Horizontal"
+                                        Spacing="{ThemeResource Space2}"
+                                        Margin="12,0,12,6">
+                                <Button x:Name="PdfPrevButton"
+                                        Content="上一页"
+                                        Style="{StaticResource CompactButtonStyle}"
+                                        Click="OnPdfPrevClick" />
+                                <TextBlock x:Name="PdfPageLabel"
+                                           Style="{StaticResource HintTextStyle}"
+                                           VerticalAlignment="Center"
+                                           AutomationProperties.AutomationId="PreviewPdfPageLabel" />
+                                <Button x:Name="PdfNextButton"
+                                        Content="下一页"
+                                        Style="{StaticResource CompactButtonStyle}"
+                                        Click="OnPdfNextClick" />
+                            </StackPanel>
+                            <ScrollViewer Grid.Row="1"
+                                          Padding="8,0,8,8"
+                                          HorizontalScrollBarVisibility="Auto"
+                                          VerticalScrollBarVisibility="Auto"
+                                          VerticalScrollMode="Auto">
+                                <Image x:Name="PdfPageImage"
+                                       Stretch="Uniform"
+                                       AutomationProperties.AutomationId="PreviewPdfPageImage" />
+                            </ScrollViewer>
+                            <StackPanel Grid.Row="2"
+                                        Orientation="Horizontal"
+                                        Spacing="{ThemeResource Space2}"
+                                        Margin="12,0,12,8">
+                                <Button x:Name="PdfOpenButton"
+                                        Content="用系统打开"
+                                        Style="{StaticResource CompactButtonStyle}"
+                                        AutomationProperties.AutomationId="PreviewPdfOpen"
+                                        Click="OnPdfOpenClick" />
+                                <Button x:Name="PdfCopyPathButton"
+                                        Content="复制路径"
+                                        Style="{StaticResource CompactButtonStyle}"
+                                        AutomationProperties.AutomationId="PreviewPdfCopyPath"
+                                        Click="OnPdfCopyPathClick" />
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
+
+                    <Button x:Name="LoadMoreButton"
+                            Grid.Row="4"
+                            Content="加载更多"
+                            Margin="12,4,12,10"
+                            HorizontalAlignment="Stretch"
+                            Visibility="Collapsed"
+                            AutomationProperties.AutomationId="PreviewLoadMore"
+                            AutomationProperties.Name="加载更多"
+                            Click="OnLoadMoreClick" />
                 </Grid>
 
                 <!-- 占位（二进制/不可预览/空目录/未选会话） -->

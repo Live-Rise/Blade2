@@ -154,12 +154,12 @@
                             <StackPanel Padding="0,2,0,2" ToolTipService.ToolTip="{Binding Full}">
                                 <!-- 结果行：标题 + 片段（提示行时整体隐藏） -->
                                 <TextBlock Text="{Binding Title}"
-                                           TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                                           TextWrapping="Wrap"
                                            Visibility="{x:Bind HitVisibility}" />
                                 <TextBlock Text="{Binding Snippet}"
                                            Style="{StaticResource CaptionTextStyle}"
                                            Foreground="{ThemeResource TextSecondaryBrush}"
-                                           TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                                           TextWrapping="Wrap"
                                            Visibility="{x:Bind HitVisibility}" />
                                 <!-- 无结果提示行：单行纯文字，不可选中跳转（QuerySubmitted 拦截） -->
                                 <TextBlock Text="{Binding Title}"
@@ -385,10 +385,40 @@
                                                Foreground="{ThemeResource TextTertiaryBrush}"
                                                AutomationProperties.AutomationId="SubagentReadOnlyHint" />
                                 </Grid>
+                                <!-- 子代理动作（P0-7）：续跑/打断（仅子代理会话）。
+                                     显隐由 RefreshSubagentHeaderActions 管；UIA = Prompt/Interrupt。
+                                     目录入口已撤：内核 0.1.7 移除 subagents/list（改订阅流），目录面板随之撤除。 -->
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="{ThemeResource Space4}">
+                                    <Button x:Name="SubagentPromptButton"
+                                            Style="{StaticResource IconButtonStyle}"
+                                            Background="Transparent" BorderThickness="0"
+                                            CornerRadius="{ThemeResource CornerSmall}"
+                                            Width="{ThemeResource ShellBackButtonSize}" Height="{ThemeResource ShellBackButtonSize}"
+                                            MinWidth="0" Padding="0"
+                                            Visibility="Collapsed"
+                                            Click="OnSubagentPromptClick"
+                                            AutomationProperties.AutomationId="SubagentPrompt"
+                                            AutomationProperties.Name="续跑"
+                                            ToolTipService.ToolTip="续跑">
+                                        <FontIcon Glyph="&#xE724;" FontSize="{ThemeResource GlyphSizeBody}" />
+                                    </Button>
+                                    <Button x:Name="SubagentInterruptButton"
+                                            Style="{StaticResource IconButtonStyle}"
+                                            Background="Transparent" BorderThickness="0"
+                                            CornerRadius="{ThemeResource CornerSmall}"
+                                            Width="{ThemeResource ShellBackButtonSize}" Height="{ThemeResource ShellBackButtonSize}"
+                                            MinWidth="0" Padding="0"
+                                            Visibility="Collapsed"
+                                            Click="OnSubagentInterruptClick"
+                                            AutomationProperties.AutomationId="SubagentInterrupt"
+                                            AutomationProperties.Name="打断"
+                                            ToolTipService.ToolTip="打断">
+                                        <FontIcon Glyph="&#xE71A;" FontSize="{ThemeResource GlyphSizeBody}" />
+                                    </Button>
                                 <!-- 后台作业入口（对标官方 JobListAction）：live 圆点 + 计数文本 + 下拉。
                                      圆点只在有 running/stopping 作业时出现；下拉行 = 状态点/kind 徽章/
                                      标签/状态/时长（时长 1s tick，开面板期间）。 -->
-                                <Button x:Name="JobsTriggerButton" Grid.Column="1"
+                                <Button x:Name="JobsTriggerButton"
                                         Background="Transparent" BorderThickness="0"
                                         CornerRadius="{ThemeResource CornerSmall}"
                                         Padding="8,4"
@@ -416,6 +446,7 @@
                                         </Flyout>
                                     </Button.Flyout>
                                 </Button>
+                                </StackPanel>
                             </Grid>
 
                             <Border x:Name="ChatColumn" Grid.Row="1"
@@ -549,10 +580,10 @@
                                                             HorizontalContentAlignment="Stretch" />
                                         </DataTemplate>
                                         <!-- 交付物：deliverables/presented 事件渲染成文件卡。
-                                             每行两个动作（都回内核宿主路由，壳不做本地兜底）：
-                                               打开       POST /api/present.open?…&action=open   （默认应用打开）
-                                               显示       POST /api/present.open?…&action=reveal （文件管理器定位）
-                                             路由由 dsh-client-ui-deliverables 的 node 半边提供，需 Cookie 鉴权。 -->
+                                             P1-21 文件操作菜单（FileActionMenu）：
+                                               打开 / 用默认应用打开 / 打开所在文件夹 / 在侧边栏预览 / 在文件资源管理器中显示。
+                                             open/reveal 回内核宿主路由 POST /api/present.open（Cookie 鉴权）；
+                                             侧边栏预览走 FilesPanel.OpenPathInPreviewAsync。 -->
                                         <DataTemplate x:Key="DeliverableTpl" x:DataType="local:ChatBubble">
                                             <Border Loaded="OnBubbleBorderLoaded"
                                                     Background="{ThemeResource BubbleMicaBrush}"
@@ -592,9 +623,11 @@
                                                                             <Button Content="打开"
                                                                                     AutomationProperties.AutomationId="PresentedFileOpenButton"
                                                                                     Click="OnPresentedFileOpenClick" />
-                                                                            <Button Content="显示"
-                                                                                    AutomationProperties.AutomationId="PresentedFileRevealButton"
-                                                                                    Click="OnPresentedFileRevealClick" />
+                                                                            <Button AutomationProperties.AutomationId="FileActionMenu"
+                                                                                    AutomationProperties.Name="更多文件操作"
+                                                                                    Click="OnPresentedFileMenuClick">
+                                                                                <FontIcon Glyph="&#xE712;" FontSize="12" />
+                                                                            </Button>
                                                                         </StackPanel>
                                                                     </Grid>
                                                                 </Border>
@@ -660,34 +693,30 @@
                                         </DataTemplate>
                                     </ListView.ItemTemplate>
                                 </ListView>
-                                <!-- 悬停预览卡：内容由 ShowTurnRailPreview 代码填充（预览文案来自投影，
-                                     非静态文本）。负左边距让整卡右缘停在 rail 左缘再往左 10px
-                                     （官方 preview right:calc(100% + 10px)），不遮刻度本身；
-                                     纵向 Top 由代码按刻度中心跟随、夹在 rail 上下沿内
-                                     （官方 preview top clamp 同语义）。 -->
+                                <!-- 悬停预览卡：简介完整换行、高度自适应，不截断不加省略号。 -->
                                 <Border x:Name="TurnRailPreviewCard"
-                                        Width="276" HorizontalAlignment="Left" VerticalAlignment="Top"
-                                        Margin="-286,0,0,0"
+                                        Width="360" HorizontalAlignment="Left" VerticalAlignment="Top"
+                                        Margin="-370,0,0,0"
                                         Visibility="Collapsed"
                                         Background="{ThemeResource CardBrush}"
                                         BorderBrush="{ThemeResource StrokeBrush}"
                                         BorderThickness="1"
                                         CornerRadius="{ThemeResource CornerMedium}"
-                                        Padding="10,8"
+                                        Padding="12,10"
                                         IsHitTestVisible="False"
                                         AutomationProperties.AutomationId="TurnRailPreviewCard">
-                                    <StackPanel Spacing="{ThemeResource Space4}">
-                                        <TextBlock x:Name="TurnRailPreviewPrompt"
-                                                   Style="{StaticResource BodyTextStyle}"
-                                                   TextWrapping="Wrap"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   MaxLines="2" />
-                                        <TextBlock x:Name="TurnRailPreviewResponse"
-                                                   Style="{StaticResource HintTextStyle}"
-                                                   TextWrapping="Wrap"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   MaxLines="3" />
-                                    </StackPanel>
+                                    <ScrollViewer MaxHeight="480"
+                                                  VerticalScrollBarVisibility="Auto"
+                                                  HorizontalScrollBarVisibility="Disabled">
+                                        <StackPanel Spacing="{ThemeResource Space4}">
+                                            <TextBlock x:Name="TurnRailPreviewPrompt"
+                                                       Style="{StaticResource BodyTextStyle}"
+                                                       TextWrapping="Wrap" />
+                                            <TextBlock x:Name="TurnRailPreviewResponse"
+                                                       Style="{StaticResource HintTextStyle}"
+                                                       TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </ScrollViewer>
                                 </Border>
                             </Grid>
 
@@ -704,10 +733,9 @@
                                 <TextBlock Text="开始一段新的会话" Style="{StaticResource EmptyStateTitleTextStyle}" HorizontalAlignment="Center" />
                             </StackPanel>
 
-                            <!-- 内核加载态：壳先亮相（不再用全屏不透明加载层盖住整个窗口），
-                                 内核在后台起，进度摆在主页正中间（品牌标 + 阶段 + 确定性进度条 +
-                                 第几步/百分比 + 秒数）。失败时这张卡留着给原因与重试钮；
-                                 内核就绪前界面其余部分照常可用（皮肤/托盘/导航/设置都不依赖内核）。 -->
+                            <!-- 内核引导失败卡：引导全程静默（无进度条/阶段文案/提示，见
+                                 MainWindow.KernelBoot.cs），这张卡只在内核起不来时上屏，
+                                 给原因与重试钮；空态标题让位（UpdateEmptyState 控制）。 -->
                             <StackPanel x:Name="KernelBootPanel" Grid.Row="1"
                                         Visibility="Collapsed"
                                         HorizontalAlignment="Center"
@@ -715,11 +743,9 @@
                                         MaxWidth="360"
                                         Spacing="{ThemeResource Space12}"
                                         AutomationProperties.AutomationId="KernelBootPanel"
-                                        AutomationProperties.Name="内核加载进度">
+                                        AutomationProperties.Name="内核启动状态">
                                 <Image x:Name="KernelBootMark" Width="{ThemeResource EmptyStateMarkSize}" Height="{ThemeResource EmptyStateMarkSize}" Source="ms-appx:///Assets/Square44x44Logo.png" HorizontalAlignment="Center" />
-                                <TextBlock x:Name="KernelBootStage" Text="正在启动内核…" Style="{StaticResource EmptyStateTitleTextStyle}" HorizontalAlignment="Center" />
-                                <ProgressBar x:Name="KernelBootBar" Width="260" HorizontalAlignment="Center" Minimum="0" Maximum="100" Value="0" />
-                                <TextBlock x:Name="KernelBootStep" Text="第 1 步，共 4 步 · 0%" Style="{StaticResource BodyStrongTextStyle}" HorizontalAlignment="Center" />
+                                <TextBlock x:Name="KernelBootStage" Text="内核启动失败" Style="{StaticResource EmptyStateTitleTextStyle}" HorizontalAlignment="Center" />
                                 <TextBlock x:Name="KernelBootHint" Style="{StaticResource HintTextStyle}" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Visibility="Collapsed" />
                                 <Button x:Name="KernelBootRetry" Content="重试" Visibility="Collapsed" HorizontalAlignment="Center" Click="OnKernelBootRetryClick" />
                             </StackPanel>
@@ -813,8 +839,7 @@
                                                            Text="{Binding Description}"
                                                            Style="{StaticResource CaptionTextStyle}"
                                                            Foreground="{ThemeResource TextSecondaryBrush}"
-                                                           TextTrimming="CharacterEllipsis"
-                                                           TextWrapping="NoWrap"
+                                                           TextWrapping="Wrap"
                                                            VerticalAlignment="Center" />
                                                 <TextBlock Grid.Column="2"
                                                            Text="{Binding Hint}"
@@ -1311,12 +1336,15 @@
                             </Border>
                         </Grid>
 
-                        <!-- 工作区文件右栏（跨聊天页内容五行，收起时不占宽） -->
-                        <local:FilesPanel x:Name="FilesPanelView"
-                                          Grid.Row="0"
-                                          Grid.RowSpan="5"
-                                          Grid.Column="1"
-                                          Visibility="Collapsed" />
+                        <!-- 工作区文件右栏宿主（跨聊天页内容五行，收起时不占宽）。
+                             P1-26：分栏/标签/全屏由 MainWindow.LayoutColumns 在此宿主内组装。 -->
+                        <Grid x:Name="RightPaneHost"
+                              Grid.Row="0"
+                              Grid.RowSpan="5"
+                              Grid.Column="1"
+                              Visibility="Collapsed">
+                            <local:FilesPanel x:Name="FilesPanelView" />
+                        </Grid>
                     </Grid>
 
                     <!-- ===== 设置页（页内面板，与聊天页平级，不是浮层）：固定页头 + 内容列居中限宽 1064。

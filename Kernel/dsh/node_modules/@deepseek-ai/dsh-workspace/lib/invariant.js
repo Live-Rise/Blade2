@@ -15,6 +15,7 @@ import { defineDomain, domainTable } from "@deepseek-ai/dsh-storage-domain";
 */
 /** Workspace id schema at the durable boundary; branding has no runtime representation. */
 const workspaceId = z.string().transform((value) => value);
+const sessionId = z.string().transform((value) => brandString(value));
 /**
 * Durable shape of one workspace record. `path` is the `fs.realpath` canon
 * stamped at create; `sessionIds` is the ordered ownership account (array
@@ -23,7 +24,7 @@ const workspaceId = z.string().transform((value) => value);
 const workspaceRecord = z.object({
 	path: z.string(),
 	title: z.string(),
-	sessionIds: z.array(z.string().transform((value) => brandString(value))),
+	sessionIds: z.array(sessionId),
 	createdAt: z.string(),
 	updatedAt: z.string()
 });
@@ -45,14 +46,18 @@ defineDomain({
 	global: {
 		schema: z.object({
 			initialized: z.boolean(),
+			/** First-use Workspace identity, retained after its registration is deleted. */
+			defaultWorkspaceId: workspaceId.optional(),
 			workspaceIds: z.array(workspaceId),
-			archivedSessionIds: z.array(z.string().transform((value) => brandString(value))).default([]),
+			archivedSessionIds: z.array(sessionId).default([]),
+			pinnedSessionIds: z.array(sessionId).default([]),
 			pendingMutation: workspacePendingMutation.optional()
 		}),
 		initial: {
 			initialized: false,
 			workspaceIds: [],
-			archivedSessionIds: []
+			archivedSessionIds: [],
+			pinnedSessionIds: []
 		}
 	},
 	tables: { workspaces: domainTable(workspaceRecord) }

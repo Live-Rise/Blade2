@@ -1,6 +1,6 @@
 /**
- * Pure request-projection geometry shared by attachment providers and
- * provider-side request pricing. @module @deepseek-ai/dsh-attachment/request-projection
+ * Pure request-projection geometry shared by model routes and provider-side
+ * request pricing. @module @deepseek-ai/dsh-attachment/request-projection
  */
 /**
  * Compute aspect-preserving integer dimensions within a hard total-pixel budget.
@@ -29,5 +29,21 @@ export function requestImageDimensions(width, height, maxPixels) {
         projectedWidth = Math.max(1, Math.round(projectedHeight * width / height));
     }
     return { width: projectedWidth, height: projectedHeight };
+}
+/**
+ * Compute aspect-preserving integer dimensions with an exact long edge; the
+ * short edge rounds to the nearest pixel, as an encoder resize by the
+ * long edge alone.
+ * @param width - positive source width.
+ * @param height - positive source height.
+ * @param longEdge - positive target for the longer source edge.
+ * @returns the target dimensions; a long edge at or above the source returns the source unchanged.
+ */
+export function longEdgeDimensions(width, height, longEdge) {
+    if (longEdge >= Math.max(width, height))
+        return { width, height };
+    return width >= height
+        ? { width: longEdge, height: Math.max(1, Math.round(longEdge * height / width)) }
+        : { width: Math.max(1, Math.round(longEdge * width / height)), height: longEdge };
 }
 //# sourceMappingURL=request-projection.js.map

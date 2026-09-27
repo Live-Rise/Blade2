@@ -13,6 +13,20 @@ use crate::kernel::Endpoint;
 const PATH: &str = "/api/remote.mux";
 const READ_TICK: Duration = Duration::from_millis(120);
 
+/// 内核侧那条常驻事件流的端点名（网关按字面量记账，见 `Mux::open_events`）。
+pub const EVENTS_ENDPOINT: &str = "$events";
+
+/// 一发 `open` 的线上形状：`{type,streamId,endpoint,payload:{args}}`，四键之外不许有第五键
+/// （`parseRemoteStreamClientMessage` 用 `exactKeys` 硬校验）。
+fn open_frame(stream_id: &str, endpoint: &str, args: &Value) -> Value {
+    json!({
+        "type": "open",
+        "streamId": stream_id,
+        "endpoint": endpoint,
+        "payload": { "args": args },
+    })
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum MuxEvent {
     Item {
@@ -181,16 +195,7 @@ impl Mux {
     pub fn open(&mut self, endpoint: &str, args: Value) -> Result<String, String> {
         self.next_id += 1;
         let id = format!("rs{}", self.next_id);
-        self.send_text(
-            json!({
-                "type": "open",
-                "streamId": id,
-                "endpoint": endpoint,
-                "payload": { "args": args },
-            })
-            .to_string()
-            .as_str(),
-        )?;
+        self.send_text(open_frame(&id, endpoint, &args).to_string().as_str())?;
         Ok(id)
     }
 
@@ -200,6 +205,20 @@ impl Mux {
                 .to_string()
                 .as_str(),
         )
+    }
+
+    /// 打开 `$events` 那条常驻事件流（#74 的审批 / 提问帧都从这里来）。
+    ///
+    /// 编号口径（`Mux::open` 的 `next_id` 从 1 起自增，每个实例一套、重连即重新编起）：
+    /// `open_mux` 那三发的顺序是 workspace/follow = rs1、**$events = rs2**、
+    /// session/control = rs3。rs2 只是取证时好读，**分流判据一律是 open 返回的 streamId**
+    /// （`DshRpcClient.cs:313` 也是把 id 记进 `_eventsStreamId`，不拿端点名比帧）。
+    ///
+    /// `args` 必须逐字是 `{}`：`openRemoteEvents` 对多出来的一个键都回
+    /// `gateway/arguments-invalid`。流的第一元素是 `ready`，其 `clientId` 是本代次唯一
+    /// 可用的回帧身份（`crate::kernel::InteractionLedger`）。
+    pub fn open_events(&mut self) -> Result<String, String> {
+        self.open(EVENTS_ENDPOINT, json!({}))
     }
 
     /// 打开主干那条长驻「会话控制面」流（`MainWindow.xaml.cs:15201` 的
@@ -411,6 +430,58 @@ mod tests {
         assert_eq!(message(r#"{"streamId":"rs1"}"#), None);
         assert_eq!(message(r#"{"type":"pong","streamId":"rs1"}"#), None);
         assert!(parse_message(b"not json").is_err());
+    }
+
+    /// `$events` 的 `open` 帧形状：四键 + `args` 逐字 `{}`（多一个键网关就回
+    /// `gateway/arguments-invalid`），端点名走常量而不是散落字面量。
+    #[test]
+    fn events_open_frame_carries_exactly_four_keys_and_empty_args() {
+        let frame = open_frame("rs2", EVENTS_ENDPOINT, &json!({}));
+        assert_eq!(
+            frame,
+            json!({
+                "type": "open",
+                "streamId": "rs2",
+                "endpoint": "$events",
+                "payload": { "args": {} },
+            })
+        );
+        let mut keys: Vec<&str> = frame
+            .as_object()
+            .expect("对象")
+            .keys()
+            .map(|key| key.as_str())
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["endpoint", "payload", "streamId", "type"]);
+        // 会话控制面那发同形状：零参。
+        assert_eq!(
+            open_frame("rs3", "session/control", &json!({}))["payload"]["args"],
+            json!({})
+        );
+    }
+
+    /// 流元素的 `value` 在 mux 层**一个字都不动**：`ready`/`cancel`/`waterfall` 都得原样
+    /// 交给上层按 streamId 分流（帧型解译在 `crate::kernel::parse_events_frame`）。
+    #[test]
+    fn events_stream_elements_pass_through_untouched() {
+        for value in [
+            json!({ "type": "ready", "clientId": "c-1", "host": "dsh" }),
+            json!({ "type": "cancel", "eventId": "e-1" }),
+            json!({
+                "type": "waterfall", "event": "approval/request", "eventId": "e-2",
+                "agentId": "s-1", "request": { "toolName": "bash", "reason": "escalate" }
+            }),
+        ] {
+            let frame = json!({ "type": "item", "streamId": "rs2", "value": value }).to_string();
+            assert_eq!(
+                message(frame.as_str()),
+                Some(MuxEvent::Item {
+                    stream: "rs2".into(),
+                    value: Some(value),
+                })
+            );
+        }
     }
 
     /// 长帧（>125 字节走 126 那一档）的分帧：`take_frame` 只在整帧齐了才吐，

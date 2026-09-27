@@ -5,7 +5,9 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Automation;
 using Blade2.Dsh;
 
 namespace Blade2;
@@ -49,14 +51,18 @@ public sealed class FileNode
 }
 
 /// <summary>
-/// 工作区文件面板（右侧栏）：文件树 + 文本预览 + 变更自动刷新。
+/// 工作区文件面板（右侧栏）：文件树 + 六形态文档预览 + 变更自动刷新。
 /// RPC 契约（内核 @deepseek-ai/dsh-api-workspace-files 的 typert 描述符）：
 ///   workspaceFiles/list    args { workspaceFileScopeId, path } → { path, entries[{name,type,size?}], truncated }
 ///   workspaceFiles/stat    args { workspaceFileScopeId, path } → { absolutePath, version, bytes? }
 ///   workspaceFiles/read    args { workspaceFileScopeId, path, range{offset,limit} } → { offset, text, lines, eof, absolutePath, version, bytes? }
+///   workspaceFiles/readAll    args { workspaceFileScopeId, path } → { offset, data(base64), eof, ... }
+///   workspaceFiles/readBytes  args { workspaceFileScopeId, path, range{offset,length} } → { offset, data(base64), eof, ... }
+///   workspaceFiles/readRelated args { workspaceFileScopeId, path, relativePath } → { offset, data(base64), eof, ... }
 ///   workspaceFiles/changes args { workspaceFileScopeId }      → 流 {kind:"ready"} | {kind:"change", change:{absolutePath,version}|{absolutePath,absent:true}}
 /// workspaceFileScopeId = 会话 id（内核 lookup "workspaceFileScope" 由会话 header.cwd 解出工作区根）；
 /// path 用**绝对路径**（工作区根 + "/" + 每级名），相对路径同样可解析但绝对路径无歧义。
+/// 六形态与预览辅助见 Pages/FilesPanel.Preview.cs。
 /// </summary>
 public sealed partial class FilesPanel : UserControl
 {
@@ -90,6 +96,13 @@ public sealed partial class FilesPanel : UserControl
 
     /// <summary>面板请求关闭（标题栏关闭钮）——由宿主收起本栏。</summary>
     public event Action? CloseRequested;
+
+    /// <summary>右栏 dock 接管宽度：面板铺满宿主，不自定宽。</summary>
+    public void StretchToHost()
+    {
+        PanelRoot.Width = double.NaN;
+        PanelRoot.HorizontalAlignment = HorizontalAlignment.Stretch;
+    }
 
     /// <summary>绑定 RPC 与"当前会话/工作区根"提供器（宿主在启动时调用一次）。</summary>
     public void Attach(DshRpcClient rpc, Func<string?> sessionId, Func<string?> workspaceRoot)
@@ -504,22 +517,163 @@ public sealed partial class FilesPanel : UserControl
         catch (Exception) { }
     }
 
-    /// <summary>打开一个文件的预览：stat 取版本/大小，read 取文本页（内核按行窗口与字节上限截断）。</summary>
+    // ---------------- 文件操作菜单（P1-21：FileActionMenu） ----------------
+
+    /// <summary>当前菜单作用路径：预览态用预览文件，树态用选中文件/目录。</summary>
+    private string? CurrentActionPath()
+    {
+        if (_previewPath is { Length: > 0 } p)
+        {
+            return p;
+        }
+        if (FileTree.SelectedNode?.Content is FileNode { IsPlaceholder: false, Path: { Length: > 0 } fp })
+        {
+            return fp;
+        }
+        return null;
+    }
+
+    private void OnFileActionMenuClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            ShowFileActionMenu(FileActionButton, CurrentActionPath());
+        }
+        catch (Exception) { }
+    }
+
+    private void OnTreeRightTapped(object sender, RightTappedRoutedEventArgs e)
+    {
+        try
+        {
+            // TreeView 无容器命中细节：用当前选中节点作菜单目标（右键前通常已选中）。
+            var path = (FileTree.SelectedNode?.Content as FileNode)?.Path;
+            if (path is null)
+            {
+                return;
+            }
+            if (sender is FrameworkElement fe)
+            {
+                ShowFileActionMenu(fe, path);
+                e.Handled = true;
+            }
+        }
+        catch (Exception) { }
+    }
+
+    /// <summary>五项文件动作（对齐官方 deliverables 文案）：
+    /// 打开 / 用默认应用打开 / 打开所在文件夹 / 在侧边栏预览 / 在文件资源管理器中显示。</summary>
+    private void ShowFileActionMenu(FrameworkElement anchor, string? path)
+    {
+        var flyout = new MenuFlyout();
+        AutomationProperties.SetAutomationId(flyout, "FileActionMenu");
+
+        void Add(string text, string automationId, string action, bool enabled = true)
+        {
+            var item = new MenuFlyoutItem { Text = MainWindow.TL(text), Tag = action, IsEnabled = enabled && path is not null };
+            AutomationProperties.SetAutomationId(item, automationId);
+            AutomationProperties.SetName(item, MainWindow.TL(text));
+            item.Click += async (_, _) =>
+            {
+                try
+                {
+                    if (path is null)
+                    {
+                        return;
+                    }
+                    await RunFileActionAsync(path, action);
+                }
+                catch (Exception) { }
+            };
+            flyout.Items.Add(item);
+        }
+
+        Add("打开", "FileActionMenuOpen", "open");
+        Add("用默认应用打开", "FileActionMenuDefaultApp", "defaultApp");
+        Add("打开所在文件夹", "FileActionMenuFolder", "folder");
+        Add("在侧边栏预览", "FileActionMenuPreview", "preview");
+        Add("在文件资源管理器中显示", "FileActionMenuReveal", "reveal");
+
+        flyout.ShowAt(anchor, new FlyoutShowOptions { Placement = FlyoutPlacementMode.BottomEdgeAlignedRight });
+    }
+
+    /// <summary>执行一项文件动作。preview 走本面板；其余经宿主（session/openWorkspacePath）。</summary>
+    private async Task RunFileActionAsync(string path, string action)
+    {
+        switch (action)
+        {
+            case "preview":
+            case "open":
+                // 面板内「打开」= 侧边栏预览（官方 presented.action 同义）。
+                await OpenPathInPreviewAsync(path);
+                return;
+            case "defaultApp":
+                RequestHostOpen(path, reveal: false);
+                return;
+            case "reveal":
+                RequestHostOpen(path, reveal: true);
+                return;
+            case "folder":
+                var normalized = path.Replace('\\', '/');
+                var idx = normalized.LastIndexOf('/');
+                var dir = idx > 0 ? normalized[..idx] : normalized;
+                RequestHostOpen(dir, reveal: false);
+                return;
+        }
+    }
+
+    /// <summary>宿主动作回调（由 MainWindow 注入）：默认应用打开 / 资源管理器显示。</summary>
+    public Action<string, bool>? HostOpenRequested;
+
+    private void RequestHostOpen(string path, bool reveal)
+    {
+        if (HostOpenRequested is { } cb)
+        {
+            cb(path, reveal);
+        }
+    }
+
+    /// <summary>从交付物/菜单「在侧边栏预览」进入：确保面板可见并打开该路径预览。</summary>
+    public async Task OpenPathInPreviewAsync(string path)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            return;
+        }
+        // 面板未挂会话时先按 provider 对齐（宿主已 Attach）。
+        if (_session is null && _sessionIdProvider is not null)
+        {
+            SetSession(_sessionIdProvider(), _workspaceRootProvider?.Invoke());
+        }
+        var name = DisplayNameOf(path);
+        await ShowPreviewAsync(new FileNode { Name = name, Path = path, Type = "file" });
+    }
+
+    /// <summary>打开一个文件的预览：stat 取版本/大小，按扩展名切六形态（文本页 / Markdown / 代码 / 图 / PDF / HTML）。</summary>
     private async Task ShowPreviewAsync(FileNode file)
     {
         if (_rpc is null || _session is null)
         {
+            ShowPreviewHost();
+            HeaderTitle.Text = file.Name;
+            HeaderPath.Text = file.Path;
+            ApplyPreviewFace(FaceOf(file.Path));
+            ShowPreviewErrorFace(
+                MainWindow.TL("无法预览"),
+                MainWindow.TL("内核未连接或会话未就绪，无法读取工作区文件。"));
             return;
         }
         var sid = _session;
         ShowPreviewHost();
         HeaderTitle.Text = file.Name;
         HeaderPath.Text = file.Path;
-        PreviewText.Text = "";
+        ResetPreviewBody();
+        ApplyPreviewFace(FaceOf(file.Path));
         PreviewMeta.Text = MainWindow.TL("正在读取…");
         HideStatus();
         _previewPath = file.Path;
         _previewVersion = null;
+        _previewStatBytes = null;
         var previewGeneration = ++_previewGeneration;
         try
         {
@@ -528,22 +682,31 @@ public sealed partial class FilesPanel : UserControl
             if (previewGeneration != _previewGeneration) return; // 已返回树/换文件/换会话：丢弃过期回写
             var version = stat.TryGetProperty("version", out var v) ? v.GetString() : null;
             long? bytes = stat.TryGetProperty("bytes", out var b) && b.ValueKind == JsonValueKind.Number ? b.GetInt64() : null;
-            var read = await rpc.CallOkAsync("workspaceFiles/read", new
+            _previewVersion = version;
+            _previewStatBytes = bytes;
+
+            switch (_previewFace)
             {
-                workspaceFileScopeId = sid,
-                path = file.Path,
-                range = new { offset = 1, limit = PreviewLineLimit },
-            });
-            if (previewGeneration != _previewGeneration) return;
-            _previewVersion = read.TryGetProperty("version", out var rv) ? rv.GetString() : version;
-            PreviewText.Text = read.TryGetProperty("text", out var txt) ? txt.GetString() ?? "" : "";
-            var lines = read.TryGetProperty("lines", out var ln) && ln.ValueKind == JsonValueKind.Number ? ln.GetInt32() : 0;
-            var eof = read.TryGetProperty("eof", out var ef) && ef.ValueKind == JsonValueKind.True;
-            PreviewMeta.Text = MainWindow.TLF("{0} · {1} 行 · 版本 {2}", FormatSize(bytes), lines, Short(version));
-            if (!eof)
-            {
-                ShowStatus(InfoBarSeverity.Informational,
-                    MainWindow.TLF("文件较长，仅显示前 {0} 行（内核单页上限 {1} 行 / 2 MiB）。", lines, PreviewLineLimit));
+                case PreviewFace.Image:
+                    await LoadImageFaceAsync(sid, file.Path, previewGeneration);
+                    break;
+                case PreviewFace.Pdf:
+                    await LoadPdfFaceAsync(sid, file.Path, previewGeneration);
+                    break;
+                case PreviewFace.Html:
+                    await LoadHtmlFaceAsync(sid, file.Path, previewGeneration);
+                    break;
+                case PreviewFace.Markdown:
+                case PreviewFace.Code:
+                case PreviewFace.PlainText:
+                default:
+                    await LoadTextPageAsync(sid, file.Path, previewGeneration, append: false);
+                    if (previewGeneration == _previewGeneration && !_previewEof)
+                    {
+                        ShowStatus(InfoBarSeverity.Informational,
+                            MainWindow.TLF("文件较长，仅显示前 {0} 行（内核单页上限 {1} 行 / 2 MiB）。", _previewNextLine - 1, PreviewLineLimit));
+                    }
+                    break;
             }
         }
         catch (Exception ex)
@@ -555,7 +718,7 @@ public sealed partial class FilesPanel : UserControl
         }
     }
 
-    /// <summary>变更流触发的预览重载：版本没变则不动（不打断阅读位置）。</summary>
+    /// <summary>变更流触发的预览检查：版本变了只弹「文件已更新」横幅，不自动重载（避免打断阅读位置）。</summary>
     private async Task RefreshPreviewAsync()
     {
         if (_previewPath is null || _rpc is null || _session is null)
@@ -575,7 +738,7 @@ public sealed partial class FilesPanel : UserControl
             {
                 return;
             }
-            await ShowPreviewAsync(new FileNode { Name = DisplayNameOf(path), Path = path, Type = "file" });
+            ChangedBanner.Visibility = Visibility.Visible;
         }
         catch (Exception ex)
         {
@@ -730,6 +893,7 @@ public sealed partial class FilesPanel : UserControl
         _previewGeneration++;
         _previewPath = null;
         _previewVersion = null;
+        ChangedBanner.Visibility = Visibility.Collapsed;
         BackButton.Visibility = Visibility.Collapsed;
         TreeScroll.Visibility = Visibility.Visible;
         PreviewHost.Visibility = Visibility.Collapsed;
@@ -760,10 +924,29 @@ public sealed partial class FilesPanel : UserControl
     {
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(BackButton, MainWindow.TL("返回文件树"));
         Microsoft.UI.Xaml.Controls.ToolTipService.SetToolTip(BackButton, MainWindow.TL("返回文件树"));
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(FileActionButton, MainWindow.TL("文件操作"));
+        Microsoft.UI.Xaml.Controls.ToolTipService.SetToolTip(FileActionButton, MainWindow.TL("文件操作"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(RefreshButton, MainWindow.TL("刷新文件树"));
         Microsoft.UI.Xaml.Controls.ToolTipService.SetToolTip(RefreshButton, MainWindow.TL("刷新"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(CloseButton, MainWindow.TL("关闭文件面板"));
         Microsoft.UI.Xaml.Controls.ToolTipService.SetToolTip(CloseButton, MainWindow.TL("关闭"));
+        WrapToggle.Content = MainWindow.TL("自动换行");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(WrapToggle, MainWindow.TL("自动换行"));
+        CopyAllButton.Content = MainWindow.TL("复制全文");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(CopyAllButton, MainWindow.TL("复制全文"));
+        CopySelectionButton.Content = MainWindow.TL("复制选中");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(CopySelectionButton, MainWindow.TL("复制选中"));
+        ReloadPreviewButton.Content = MainWindow.TL("重新读取");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ReloadPreviewButton, MainWindow.TL("重新读取文件"));
+        Microsoft.UI.Xaml.Controls.ToolTipService.SetToolTip(ReloadPreviewButton, MainWindow.TL("重新读取文件"));
+        LoadMoreButton.Content = MainWindow.TL("加载更多");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(LoadMoreButton, MainWindow.TL("加载更多"));
+        PdfPrevButton.Content = MainWindow.TL("上一页");
+        PdfNextButton.Content = MainWindow.TL("下一页");
+        PdfOpenButton.Content = MainWindow.TL("用系统打开");
+        ChangedBannerText.Text = MainWindow.TL("文件已更新，当前显示为旧内容。");
+        ChangedReloadButton.Content = MainWindow.TL("重新载入");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ChangedReloadButton, MainWindow.TL("重新载入"));
         if (TreeScroll.Visibility == Visibility.Visible)
         {
             HeaderTitle.Text = MainWindow.TL("工作区文件");

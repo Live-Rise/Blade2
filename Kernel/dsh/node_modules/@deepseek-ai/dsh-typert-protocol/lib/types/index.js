@@ -4,8 +4,10 @@
  * remains a Typert compiler responsibility.
  * @module @deepseek-ai/dsh-typert-protocol
  */
-import { Service } from '@deepseek-ai/cordis';
+import { Context, Service } from '@deepseek-ai/cordis';
 export { RemoteError, remoteErrorOf } from "./remote-error.js";
+export { TYPERT_OWNED_VALUE, isTypertOwnedValue, typertOwnedValue } from "./owned-value.js";
+export { isRemoteJsonValue, isRemoteUplinkItem } from "./json-value.js";
 const TYPERT_REMOTE_SEGMENT_PATTERN = /^[A-Za-z0-9_$.-]+$/;
 /**
  * Test one generated Remote name against the Connection endpoint grammar.
@@ -17,7 +19,10 @@ export function isTypertRemoteSegment(value) {
 }
 const REMOTE_METHOD_DESCRIPTOR = '@deepseek-ai/dsh-typert-protocol/remote-methods';
 /**
- * Bind one visible Service field to a Cordis key and Remote namespace.
+ * Bind one visible Service field to a Cordis key and Remote namespace. A
+ * service that owns a Cordis Context also gives its tree `ctx.invocation`,
+ * `undefined` outside a Remote call, so no `TypertRemoteService` is needed for
+ * a Host composition to read it.
  * @param service - owning Service instance, normally `this`.
  * @param serviceKey - exact Cordis service key.
  * @param options - optional distinct wire namespace.
@@ -27,6 +32,9 @@ export function bindTypertRemote(service, serviceKey, options = {}) {
     validateName('service key', serviceKey);
     const namespace = options.namespace ?? serviceKey;
     validateName('namespace', namespace);
+    const ctx = Reflect.get(service, 'ctx');
+    if (ctx instanceof Context)
+        provideInvocationAccessor(ctx);
     return Object.freeze({ service, serviceKey, namespace });
 }
 /** Cordis Service base that exposes its registered name through Typert Gateway. */
@@ -43,6 +51,17 @@ export class TypertRemoteService extends Service {
         super(ctx, serviceKey);
         this.typertRemote = bindTypertRemote(this, this.name, options);
     }
+}
+/**
+ * Make `ctx.invocation` read as `undefined` outside a Remote call instead of the
+ * reflect service's "cannot get property" error; a call-derived Context shadows
+ * the accessor with its own property. The first Remote Service constructed in a
+ * tree registers it on the root, where it outlives any one Service.
+ */
+function provideInvocationAccessor(ctx) {
+    if (Object.hasOwn(ctx.root.reflect.props, 'invocation'))
+        return;
+    ctx.root.accessor('invocation', { get: () => undefined });
 }
 export function Remote(methodExportOrOptions, context) {
     if (typeof methodExportOrOptions === 'string') {

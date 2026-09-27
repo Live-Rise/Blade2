@@ -1,4 +1,5 @@
 /** Wire messages for Gateway-owned Remote streams and event-result RPCs. */
+import { isRemoteJsonValue } from '@deepseek-ai/dsh-typert-protocol';
 /** Exact WebSocket route carrying every Typert Remote stream. */
 export const REMOTE_STREAM_MUX_PATH = '/api/remote.mux';
 /** Gateway-internal logical stream carrying application-selected Cordis events. */
@@ -116,14 +117,6 @@ export function restoreRemoteEventRejection(rejection) {
     return error;
 }
 /**
- * Test whether a value crosses JSON transport without coercion or omission.
- * @param value - candidate boundary value.
- * @returns whether the value is losslessly JSON-compatible.
- */
-export function isRemoteJsonValue(value) {
-    return visitJsonValue(value, new Set());
-}
-/**
  * Recognize a non-empty Remote Event correlation id at a wire boundary.
  * @param value - untrusted wire value.
  * @returns whether the value is a valid Remote Event id.
@@ -154,7 +147,15 @@ export function isRemoteEventAgentId(value) {
  */
 export function parseRemoteStreamClientMessage(text) {
     return parseMessage(text, (value) => {
-        if (value.type === 'cancel' && exactKeys(value, ['type', 'streamId']) && validId(value.streamId)) {
+        if ((value.type === 'cancel' || value.type === 'end')
+            && exactKeys(value, ['type', 'streamId'])
+            && validId(value.streamId)) {
+            return value;
+        }
+        if (value.type === 'item'
+            && (exactKeys(value, ['type', 'streamId']) || exactKeys(value, ['type', 'streamId', 'value']))
+            && validId(value.streamId)
+            && (!Object.hasOwn(value, 'value') || isRemoteJsonValue(value.value))) {
             return value;
         }
         if (value.type === 'open'
@@ -252,42 +253,5 @@ function stringProperty(value, key) {
         return undefined;
     const candidate = Reflect.get(value, key);
     return typeof candidate === 'string' ? candidate : undefined;
-}
-function visitJsonValue(value, ancestors) {
-    if (value === null || typeof value === 'string' || typeof value === 'boolean')
-        return true;
-    if (typeof value === 'number')
-        return Number.isFinite(value) && !Object.is(value, -0);
-    if (typeof value !== 'object')
-        return false;
-    if (ancestors.has(value))
-        return false;
-    ancestors.add(value);
-    try {
-        if (Array.isArray(value)) {
-            if (Object.getPrototypeOf(value) !== Array.prototype
-                || Reflect.ownKeys(value).length !== value.length + 1)
-                return false;
-            for (let index = 0; index < value.length; index++) {
-                if (!Object.hasOwn(value, index) || !visitJsonValue(value[index], ancestors))
-                    return false;
-            }
-            return true;
-        }
-        const prototype = Object.getPrototypeOf(value);
-        if (prototype !== Object.prototype && prototype !== null)
-            return false;
-        for (const key of Reflect.ownKeys(value)) {
-            if (typeof key !== 'string')
-                return false;
-            const descriptor = Object.getOwnPropertyDescriptor(value, key);
-            if (descriptor?.enumerable !== true || !visitJsonValue(Reflect.get(value, key), ancestors))
-                return false;
-        }
-        return true;
-    }
-    finally {
-        ancestors.delete(value);
-    }
 }
 //# sourceMappingURL=stream-protocol.js.map

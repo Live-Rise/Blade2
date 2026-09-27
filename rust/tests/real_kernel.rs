@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use blade2_rs::kernel::{Kernel, Launch};
+use blade2_rs::kernel::{Kernel, Launch, is_bundled};
 
 fn repo_root(manifest: &Path) -> PathBuf {
     manifest
@@ -27,6 +27,17 @@ fn real_kernel_handshake_and_session_list() {
         "缺少 {}",
         kernel_dir.join("node.exe").display()
     );
+    assert!(bin_js.is_file(), "缺少 {}", bin_js.display());
+    // #84-A：这里手搓的 argv 就是两级 launcher 的**第 1 级（内置）**的形状 —— `node.exe` +
+    // `bin.js` + `web --no-open --port 0`，走正常 argv 列表（内置级 std 的转义已等价于主干那对
+    // 外层双引号，见 `launcher_argv`），不是回退级那颗必须原样交给 cmd.exe 的嵌套引号串
+    // ⇒ `args_verbatim = false`。
+    // `is_bundled` 的口径（§1.7-1）是「内置那两颗 `File.Exists` 的与」，与本次实际起了谁无关，
+    // 故跟着上面那两条前提**现算**而非硬编码：两文件都在 ⇒ true，与 `Launch::from_env` 同结果。
+    let (node_probe, bin_js_probe) = (
+        kernel_dir.join("node.exe").is_file().then_some(kernel_dir.join("node.exe")),
+        bin_js.is_file().then_some(bin_js.clone()),
+    );
     let session_cwd = cwd.display().to_string();
     let launch = Launch {
         exe: kernel_dir.join("node.exe"),
@@ -37,6 +48,8 @@ fn real_kernel_handshake_and_session_list() {
             "--port".into(),
             "0".into(),
         ],
+        args_verbatim: false,
+        is_bundled: is_bundled(&node_probe, &bin_js_probe),
         dsh_home: Some(home),
         path_prepend: Some(kernel_dir.join("bin")),
         working_dir: Some(cwd),

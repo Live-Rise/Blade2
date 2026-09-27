@@ -327,8 +327,8 @@ public sealed partial class MainWindow
                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                   <Image Stretch="UniformToFill" Source="{Binding ThumbSource}"/>
                 </Grid>
-                <TextBlock Text="{Binding Label}" FontSize="12" TextWrapping="Wrap" MaxLines="2"
-                           TextTrimming="CharacterEllipsis" Margin="0,6,0,0"
+                <TextBlock Text="{Binding Label}" FontSize="12" TextWrapping="Wrap"
+                           Margin="0,6,0,0"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
               </StackPanel>
             </DataTemplate>

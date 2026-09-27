@@ -60,7 +60,9 @@ window.__ModuleLoader__.load({
 		* @param ctx - client root context.
 		*/
 		function apply(ctx) {
-			const injected = () => ({ pick: () => ctx.uiWorkspace.pickDirectory() });
+			const desktop = globalThis.__DSH_DIRECTORY_PICKER__;
+			const pick = desktop === void 0 ? () => ctx.uiWorkspace.pickDirectory() : () => desktop.pick();
+			const injected = () => ({ pick });
 			ctx.slots.inject("conversation.hero.workspace.directoryFlow", () => ctx.slots.inject("sidebar.workspaces.directoryFlow", function* () {
 				yield ctx.slots.register({
 					name: "conversation.hero.workspace.directoryFlow",

@@ -1,0 +1,964 @@
+UNHANDLED-PRE size=295094 mtime=09/23/2026 09:42:13
+PID=29032
+WINDOW=Blade²
+KERNEL-BOOT state=ready
+UNHANDLED-POST size=295094 mtime=09/23/2026 09:42:13
+UNHANDLED-TAIL=   at Blade2.MainWindow.<>c__DisplayClass1558_0.<PostUi>b__0() in E:\Syncthing\DshWinUI\MainWindow.xaml.cs:line 18638 | === 09-23 09:42:13 [app] handled=False === | Method 'GetVirtualMethodTableInfoForKey' in type 'Microsoft.Web.WebView2.Core.CoreWebView2' from assembly 'Microsoft.Web.WebView2.Core.Projection, Version=1.0.2903.40, Culture=neutral, PublicKeyToken=2a8ab48044d2601e' does not have an implementation. | System.TypeLoadException: Method 'GetVirtualMethodTableInfoForKey' in type 'Microsoft.Web.WebView2.Core.CoreWebView2' from assembly 'Microsoft.Web.WebView2.Core.Projection, Version=1.0.2903.40, Culture=neutral, PublicKeyToken=2a8ab48044d2601e' does not have an implementation. |    at Blade2.Blade2_XamlTypeInfo.XamlTypeInfoProvider.InitTypeTables() |    at Blade2.Blade2_XamlTypeInfo.XamlTypeInfoProvider.LookupTypeIndexByName(String typeName) in E:\Syncthing\DshWinUI\obj\x64\Debug\net8.0-windows10.0.22621.0\win-x64\XamlTypeInfo.g.cs:line 380 |    at Blade2.Blade2_XamlTypeInfo.XamlTypeInfoProvider.GetXamlTypeByName(String typeName) in E:\Syncthing\DshWinUI\obj\x64\Debug\net8.0-windows10.0.22621.0\win-x64\XamlTypeInfo.g.cs:line 167 |    at Blade2.Blade2_XamlTypeInfo.XamlMetaDataProvider.GetXamlType(String fullName) in E:\Syncthing\DshWinUI\obj\x64\Debug\net8.0-windows10.0.22621.0\win-x64\XamlTypeInfo.g.cs:line 103 |    at Blade2.App.GetXamlType(String fullName) in E:\Syncthing\DshWinUI\obj\x64\Debug\net8.0-windows10.0.22621.0\win-x64\XamlTypeInfo.g.cs:line 51 |    at ABI.Microsoft.UI.Xaml.Markup.IXamlMetadataProvider.Do_Abi_GetXamlType_1(IntPtr thisPtr, IntPtr fullName, IntPtr* result) | ---STACK--- |    at Blade2.Blade2_XamlTypeInfo.XamlTypeInfoProvider.InitTypeTables() |    at Blade2.Blade2_XamlTypeInfo.XamlTypeInfoProvider.LookupTypeIndexByName(String typeName) in E:\Syncthing\DshWinUI\obj\x64\Debug\net8.0-windows10.0.22621.0\win-x64\XamlTypeInfo.g.cs:line 380 |    at Blade2.Blade2_XamlTypeInfo.XamlTypeInfoProvider.GetXamlTypeByName(String typeName) in E:\Syncthing\DshWinUI\obj\x64\Debug\net8.0-windows10.0.22621.0\win-x64\XamlTypeInfo.g.cs:line 167 |    at Blade2.Blade2_XamlTypeInfo.XamlMetaDataProvider.GetXamlType(String fullName) in E:\Syncthing\DshWinUI\obj\x64\Debug\net8.0-windows10.0.22621.0\win-x64\XamlTypeInfo.g.cs:line 103 |    at Blade2.App.GetXamlType(String fullName) in E:\Syncthing\DshWinUI\obj\x64\Debug\net8.0-windows10.0.22621.0\win-x64\XamlTypeInfo.g.cs:line 51 |    at ABI.Microsoft.UI.Xaml.Markup.IXamlMetadataProvider.Do_Abi_GetXamlType_1(IntPtr thisPtr, IntPtr fullName, IntPtr* result) | ---UI-THREAD--- |    at System.Environment.get_StackTrace() |    at Blade2.App.<>c.<.ctor>b__4_0(Object s, UnhandledExceptionEventArgs e) in E:\Syncthing\DshWinUI\App.xaml.cs:line 22 |    at WinRT._EventSource_global__Microsoft_UI_Xaml_UnhandledExceptionEventHandler.EventState.<GetEventInvoke>b__1_0(Object sender, UnhandledExceptionEventArgs e) |    at ABI.Microsoft.UI.Xaml.UnhandledExceptionEventHandler.Do_Abi_Invoke(IntPtr thisPtr, IntPtr sender, IntPtr e) |    at ABI.Microsoft.UI.Xaml.IApplicationStaticsMethods.Start(IObjectReference _obj, ApplicationInitializationCallback callback) |    at Microsoft.UI.Xaml.Application.Start(ApplicationInitializationCallback callback) |    at Blade2.Program.Main(String[] args) in E:\Syncthing\DshWinUI\obj\x64\Debug\net8.0-windows10.0.22621.0\win-x64\App.g.i.cs:line 26
+=== IDS after-boot ===
+  id=Minimize | Button | en=True | name=Minimize
+  id=Maximize | Button | en=True | name=Maximize
+  id=Close | Button | en=True | name=Close
+  id=ContentScrollViewer | Pane | en=True | name=
+  id=PrimaryButton | Button | en=True | name=继续
+  id=SessionSearchBox | Group | en=True | name=搜索会话
+  id=TextBox | Edit | en=True | name=搜索会话
+  id=Nav | Custom | en=True | name=
+  id=PaneRoot | Window | en=True | name=
+  id=MenuItemsScrollViewer | Pane | en=True | name=
+  id=MenuItemsHost | Group | en=True | name=
+  id=NewSessionItem | ListItem | en=True | name=新建会话
+  id=WorkspaceSectionItem | ListItem | en=True | name=工作区
+  id=WorkspaceSectionHeaderText | Text | en=True | name=工作区
+  id=WorkspaceViewOptionsButton | Button | en=True | name=视图选项
+  id=AddWorkspaceButton | Button | en=True | name=添加工作区
+  id=Workspace_50141382-d003-41d8-b9a5-51d1be06e0d9 | ListItem | en=True | name=Documents
+  id=UngroupedSessionsItem | ListItem | en=True | name=未分组会话
+  id=Session_session-79ae765a-9c43-439a-bc27-40b7f96d3e1f | ListItem | en=True | name=Use the bash tool to
+  id=SessionMore_session-79ae765a-9c43-439a-bc27-40b7f96d3e1f | Button | en=True | name=会话操作：Use the bash tool to
+  id=Session_session-f6f0fcc7-fb6d-4ad4-923a-89a1192c97a8 | ListItem | en=True | name=新会话
+  id=SessionMore_session-f6f0fcc7-fb6d-4ad4-923a-89a1192c97a8 | Button | en=True | name=会话操作：新会话
+  id=Session_session-b214b56f-c790-451c-bc48-c9a3a8ab9476 | ListItem | en=True | name=创造模式可以修改目前的blade G
+  id=SessionMore_session-b214b56f-c790-451c-bc48-c9a3a8ab9476 | Button | en=True | name=会话操作：创造模式可以修改目前的blade G
+  id=Session_session-472209f6-fb3a-475e-b733-66e425706e1b | ListItem | en=True | name=新会话
+  id=SessionMore_session-472209f6-fb3a-475e-b733-66e425706e1b | Button | en=True | name=会话操作：新会话
+  id=Session_session-24015534-bd54-4822-843b-d3d8c4a54402 | ListItem | en=True | name=已就绪的计划（链接 Gf8ZPstxkhg
+  id=SessionMore_session-24015534-bd54-4822-843b-d3d8c4a54402 | Button | en=True | name=会话操作：已就绪的计划（链接 Gf8ZPstxkhg
+  id=ExpandGroup_ | ListItem | en=True | name=展开其余 147 个会话
+  id=FooterItemsScrollViewer | Pane | en=True | name=
+  id=FooterMenuItemsHost | Group | en=True | name=
+  id=SettingsItem | ListItem | en=True | name=设置
+  id=ChatList | List | en=True | name=对话消息列表
+  id=ChatHero | Group | en=True | name=空态：开始一段新的会话
+  id=HeroMarkImage | Image | en=True | name=
+  id=InputBox | Edit | en=True | name=消息输入框
+  id=ComposerAddButton | Button | en=True | name=添加附件或操作
+  id=WorkspacePickerButton | Button | en=True | name=选择工作区
+  id=WorkspaceChipLabel | Text | en=True | name=选择工作区
+  id=AgentModeButton | Button | en=True | name=Agent 模式
+  id=AgentModeLabel | Text | en=True | name=标准模式
+  id=PermissionButton | Button | en=True | name=访问模式，当前：自动审批
+  id=PermissionLabel | Text | en=True | name=自动审批
+  id=ModelButton | Button | en=True | name=模型与推理等级，当前 step-5-preview 高
+  id=ModelEffortLabel | Text | en=True | name=step-5-preview 高
+  id=SendButton | Button | en=True | name=发送消息
+  id=LayoutSplitterSidebar | Group | en=True | name=调整侧栏宽度
+  unique-ids=47
+PROBE exists id=ModelButton label=ModelButton group=shell count=1 enabled=True name=模型与推理等级，当前 step-5-preview 高 help= => PASS
+PROBE exists id=NewSessionItem label=NewSessionItem group=shell count=1 enabled=True name=新建会话 help= => PASS
+PROBE exists id=InputBox label=InputBox group=shell count=1 enabled=True name=消息输入框 help=Enter 发送，Shift+Enter 换行，输入 / 唤起命令，@ 引用文件或会话 => PASS
+PROBE exists id=SendButton label=SendButton group=shell count=1 enabled=True name=发送消息 help= => PASS
+PROBE exists id=ChatList label=ChatList group=shell count=1 enabled=True name=对话消息列表 help= => PASS
+PROBE exists id=SettingsItem label=SettingsItem group=shell count=1 enabled=True name=设置 help= => PASS
+PROBE exists id=PermissionButton label=PermissionButton group=shell count=1 enabled=True name=访问模式，当前：自动审批 help= => PASS
+PROBE exists id=ComposerAddButton label=ComposerAddButton group=shell count=1 enabled=True name=添加附件或操作 help= => PASS
+PROBE exists id=KernelBootPanel label=KernelBootPanel group=shell count=0 enabled= name= help= => FAIL
+PROBE exists id=LayoutSplitterSidebar label=LayoutSplitterSidebar group=shell count=1 enabled=True name=调整侧栏宽度 help= => PASS
+PROBE exists id=LayoutSplitterRight label=LayoutSplitterRight group=shell count=0 enabled= name= help= => FAIL
+PROBE exists id=FilesPanelTree label=FilesPanelTree group=shell count=0 enabled= name= help= => FAIL
+FOUND-SESSION id=Session_session-79ae765a-9c43-439a-bc27-40b7f96d3e1f name=Use the bash tool to
+INVOKE open-existing-session => OK via=SelectionItemPattern
+=== IDS after-session ===
+  id=Minimize | Button | en=True | name=Minimize
+  id=Maximize | Button | en=True | name=Maximize
+  id=Close | Button | en=True | name=Close
+  id=ContentScrollViewer | Pane | en=True | name=
+  id=PrimaryButton | Button | en=True | name=继续
+  id=SessionSearchBox | Group | en=True | name=搜索会话
+  id=TextBox | Edit | en=True | name=搜索会话
+  id=Nav | Custom | en=True | name=
+  id=PaneRoot | Window | en=True | name=
+  id=MenuItemsScrollViewer | Pane | en=True | name=
+  id=MenuItemsHost | Group | en=True | name=
+  id=NewSessionItem | ListItem | en=True | name=新建会话
+  id=WorkspaceSectionItem | ListItem | en=True | name=工作区
+  id=WorkspaceSectionHeaderText | Text | en=True | name=工作区
+  id=WorkspaceViewOptionsButton | Button | en=True | name=视图选项
+  id=AddWorkspaceButton | Button | en=True | name=添加工作区
+  id=Workspace_50141382-d003-41d8-b9a5-51d1be06e0d9 | ListItem | en=True | name=Documents
+  id=UngroupedSessionsItem | ListItem | en=True | name=未分组会话
+  id=Session_session-79ae765a-9c43-439a-bc27-40b7f96d3e1f | ListItem | en=True | name=Use the bash tool to
+  id=SessionMore_session-79ae765a-9c43-439a-bc27-40b7f96d3e1f | Button | en=True | name=会话操作：Use the bash tool to
+  id=Session_session-f6f0fcc7-fb6d-4ad4-923a-89a1192c97a8 | ListItem | en=True | name=新会话
+  id=SessionMore_session-f6f0fcc7-fb6d-4ad4-923a-89a1192c97a8 | Button | en=True | name=会话操作：新会话
+  id=Session_session-b214b56f-c790-451c-bc48-c9a3a8ab9476 | ListItem | en=True | name=创造模式可以修改目前的blade G
+  id=SessionMore_session-b214b56f-c790-451c-bc48-c9a3a8ab9476 | Button | en=True | name=会话操作：创造模式可以修改目前的blade G
+  id=Session_session-472209f6-fb3a-475e-b733-66e425706e1b | ListItem | en=True | name=新会话
+  id=SessionMore_session-472209f6-fb3a-475e-b733-66e425706e1b | Button | en=True | name=会话操作：新会话
+  id=Session_session-24015534-bd54-4822-843b-d3d8c4a54402 | ListItem | en=True | name=已就绪的计划（链接 Gf8ZPstxkhg
+  id=SessionMore_session-24015534-bd54-4822-843b-d3d8c4a54402 | Button | en=True | name=会话操作：已就绪的计划（链接 Gf8ZPstxkhg
+  id=ExpandGroup_ | ListItem | en=True | name=展开其余 147 个会话
+  id=FooterItemsScrollViewer | Pane | en=True | name=
+  id=FooterMenuItemsHost | Group | en=True | name=
+  id=SettingsItem | ListItem | en=True | name=设置
+  id=ChatSessionTitle | Text | en=True | name=当前会话标题
+  id=SubagentList | Button | en=True | name=子代理目录
+  id=ChatList | List | en=True | name=对话消息列表
+  id=ContextExpand | Button | en=True | name=系统提示词
+  id=MessageCopyButton | Button | en=True | name=复制消息
+  id=MessageDetailsButton | Button | en=True | name=消息详情
+  id=ReasoningToggle | Button | en=True | name=思考
+  id=ToolCard | Group | en=True | name=Pwsh Run echo command for smoke test
+  id=ToolCardExpand | Button | en=True | name=Pwsh Run echo command for smoke test
+  id=ToolCardWorkdir | Text | en=True | name=C:\Users\Admin\Documents
+  id=ToolCardDuration | Text | en=True | name=1秒
+  id=ToolCopyJson | Button | en=True | name=复制参数 JSON
+  id=ToolCardPath | Text | en=True | name=C:\Users\Admin\Documents\t36-smoke.txt
+  id=ToolCardDiffStat | Text | en=True | name=+1 -0
+  id=RunStatsTurnsText | Text | en=True | name=1 轮 3 步 · 101 tok/s
+  id=RunStatsTokensText | Text | en=True | name=2.9 万 tok · 缓存命中 52.3%
+  id=InputBox | Edit | en=True | name=消息输入框
+  id=ComposerAddButton | Button | en=True | name=添加附件或操作
+  id=PermissionButton | Button | en=True | name=访问模式，当前：自动审批
+  id=PermissionLabel | Text | en=True | name=自动审批
+  id=ModelButton | Button | en=True | name=模型与推理等级，当前 step-5-preview 高
+  id=ModelEffortLabel | Text | en=True | name=step-5-preview 高
+  id=ContextMeterRing | Button | en=True | name=上下文已用 1%
+  id=SendButton | Button | en=True | name=发送消息
+  id=LayoutSplitterSidebar | Group | en=True | name=调整侧栏宽度
+  unique-ids=57
+PROBE invoke id=ModelButton label=model-menu via=InvokePattern => PASS
+=== IDS model-menu ===
+  id=ModelFlyout | Menu | en=True | name=
+  id=TextBlock | Text | en=True | name=模型
+  id=ModelOption_DeepSeek-V41-Flash | MenuItem | en=True | name=模型：DeepSeek-V41-Flash
+  id=ModelOption_DeepSeek-V4-Flash | MenuItem | en=True | name=模型：DeepSeek-V4-Flash
+  id=ModelOption_DeepSeek-V4-Pro | MenuItem | en=True | name=模型：DeepSeek-V4-Pro
+  id=ModelOption_DeepSeek-V4-Flash-Vision-Exp | MenuItem | en=True | name=模型：DeepSeek-V4-Flash-Vision-Exp
+  id=ModelOption_step-5-preview | MenuItem | en=True | name=模型：step-5-preview，上次使用
+  id=ModelOption_Kimi K3 (Free) | MenuItem | en=True | name=模型：Kimi K3 (Free)
+  id=ModelOption_MiMo-V2.6-Flash | MenuItem | en=True | name=模型：MiMo-V2.6-Flash
+  id=ModelOption_MiMo-V2.6-Pro | MenuItem | en=True | name=模型：MiMo-V2.6-Pro
+  id=ModelOption_LastUsed | MenuItem | en=True | name=上次使用：step-5-preview
+  id=EffortTierBlurb_off | MenuItem | en=False | name=快速、高效且经济；适合目标明确、常规或并行任务。
+  id=EffortOption_off | MenuItem | en=True | name=推理等级：关闭。快速、高效且经济；适合目标明确、常规或并行任务。
+  id=EffortOption_low | MenuItem | en=True | name=推理等级：低。快速、高效且经济；适合目标明确、常规或并行任务。
+  id=EffortTierBlurb_high | MenuItem | en=False | name=更强的自主编码、知识与复杂推理能力；适合复杂或质量优先的任务，但成本更高。
+  id=EffortOption_high | MenuItem | en=True | name=推理等级：高。更强的自主编码、知识与复杂推理能力；适合复杂或质量优先的任务，但成本更高。
+  id=EffortOption_max | MenuItem | en=True | name=推理等级：最大。更强的自主编码、知识与复杂推理能力；适合复杂或质量优先的任务，但成本更高。
+  id=Minimize | Button | en=True | name=Minimize
+  id=Maximize | Button | en=True | name=Maximize
+  id=Close | Button | en=True | name=Close
+  id=ContentScrollViewer | Pane | en=True | name=
+  id=PrimaryButton | Button | en=True | name=继续
+  id=SessionSearchBox | Group | en=True | name=搜索会话
+  id=TextBox | Edit | en=True | name=搜索会话
+  id=Nav | Custom | en=True | name=
+  id=PaneRoot | Window | en=True | name=
+  id=MenuItemsScrollViewer | Pane | en=True | name=
+  id=MenuItemsHost | Group | en=True | name=
+  id=NewSessionItem | ListItem | en=True | name=新建会话
+  id=WorkspaceSectionItem | ListItem | en=True | name=工作区
+  id=WorkspaceSectionHeaderText | Text | en=True | name=工作区
+  id=WorkspaceViewOptionsButton | Button | en=True | name=视图选项
+  id=AddWorkspaceButton | Button | en=True | name=添加工作区
+  id=Workspace_50141382-d003-41d8-b9a5-51d1be06e0d9 | ListItem | en=True | name=Documents
+  id=UngroupedSessionsItem | ListItem | en=True | name=未分组会话
+  id=Session_session-79ae765a-9c43-439a-bc27-40b7f96d3e1f | ListItem | en=True | name=Use the bash tool to
+  id=SessionMore_session-79ae765a-9c43-439a-bc27-40b7f96d3e1f | Button | en=True | name=会话操作：Use the bash tool to
+  id=Session_session-f6f0fcc7-fb6d-4ad4-923a-89a1192c97a8 | ListItem | en=True | name=新会话
+  id=SessionMore_session-f6f0fcc7-fb6d-4ad4-923a-89a1192c97a8 | Button | en=True | name=会话操作：新会话
+  id=Session_session-b214b56f-c790-451c-bc48-c9a3a8ab9476 | ListItem | en=True | name=创造模式可以修改目前的blade G
+  id=SessionMore_session-b214b56f-c790-451c-bc48-c9a3a8ab9476 | Button | en=True | name=会话操作：创造模式可以修改目前的blade G
+  id=Session_session-472209f6-fb3a-475e-b733-66e425706e1b | ListItem | en=True | name=新会话
+  id=SessionMore_session-472209f6-fb3a-475e-b733-66e425706e1b | Button | en=True | name=会话操作：新会话
+  id=Session_session-24015534-bd54-4822-843b-d3d8c4a54402 | ListItem | en=True | name=已就绪的计划（链接 Gf8ZPstxkhg
+  id=SessionMore_session-24015534-bd54-4822-843b-d3d8c4a54402 | Button | en=True | name=会话操作：已就绪的计划（链接 Gf8ZPstxkhg
+  id=ExpandGroup_ | ListItem | en=True | name=展开其余 147 个会话
+  id=FooterItemsScrollViewer | Pane | en=True | name=
+  id=FooterMenuItemsHost | Group | en=True | name=
+  id=SettingsItem | ListItem | en=True | name=设置
+  id=ChatSessionTitle | Text | en=True | name=当前会话标题
+  id=SubagentList | Button | en=True | name=子代理目录
+  id=ChatList | List | en=True | name=对话消息列表
+  id=ContextExpand | Button | en=True | name=系统提示词
+  id=MessageCopyButton | Button | en=True | name=复制消息
+  id=MessageDetailsButton | Button | en=True | name=消息详情
+  id=ReasoningToggle | Button | en=True | name=思考
+  id=ToolCard | Group | en=True | name=Pwsh Run echo command for smoke test
+  id=ToolCardExpand | Button | en=True | name=Pwsh Run echo command for smoke test
+  id=ToolCardWorkdir | Text | en=True | name=C:\Users\Admin\Documents
+  id=ToolCardDuration | Text | en=True | name=1秒
+  id=ToolCopyJson | Button | en=True | name=复制参数 JSON
+  id=ToolCardPath | Text | en=True | name=C:\Users\Admin\Documents\t36-smoke.txt
+  id=ToolCardDiffStat | Text | en=True | name=+1 -0
+  id=RunStatsTurnsText | Text | en=True | name=1 轮 3 步 · 101 tok/s
+  id=RunStatsTokensText | Text | en=True | name=2.9 万 tok · 缓存命中 52.3%
+  id=InputBox | Edit | en=True | name=消息输入框
+  id=ComposerAddButton | Button | en=True | name=添加附件或操作
+  id=PermissionButton | Button | en=True | name=访问模式，当前：自动审批
+  id=PermissionLabel | Text | en=True | name=自动审批
+  id=ModelButton | Button | en=True | name=模型与推理等级，当前 step-5-preview 高
+  id=ModelEffortLabel | Text | en=True | name=step-5-preview 高
+  id=ContextMeterRing | Button | en=True | name=上下文已用 1%
+  id=SendButton | Button | en=True | name=发送消息
+  id=LayoutSplitterSidebar | Group | en=True | name=调整侧栏宽度
+  unique-ids=74
+MODEL-ITEM id=ModelOption_DeepSeek-V41-Flash name=模型：DeepSeek-V41-Flash help=快速、高效且经济；适合目标明确、常规或并行任务。
+MODEL-ITEM id=ModelOption_DeepSeek-V4-Flash name=模型：DeepSeek-V4-Flash help=快速、高效且经济；适合目标明确、常规或并行任务。
+MODEL-ITEM id=ModelOption_DeepSeek-V4-Pro name=模型：DeepSeek-V4-Pro help=更强的自主编码、知识与复杂推理能力；适合复杂或质量优先的任务，但成本更高。
+MODEL-ITEM id=ModelOption_DeepSeek-V4-Flash-Vision-Exp name=模型：DeepSeek-V4-Flash-Vision-Exp help=
+MODEL-ITEM id=ModelOption_step-5-preview name=模型：step-5-preview，上次使用 help=
+MODEL-ITEM id=ModelOption_Kimi K3 (Free) name=模型：Kimi K3 (Free) help=
+MODEL-ITEM id=ModelOption_MiMo-V2.6-Flash name=模型：MiMo-V2.6-Flash help=快速、高效且经济；适合目标明确、常规或并行任务。
+MODEL-ITEM id=ModelOption_MiMo-V2.6-Pro name=模型：MiMo-V2.6-Pro help=更强的自主编码、知识与复杂推理能力；适合复杂或质量优先的任务，但成本更高。
+MODEL-ITEM id=ModelOption_LastUsed name=上次使用：step-5-preview help=恢复上次使用的模型：step-5-preview
+MODEL-ITEM id=EffortOption_off name=推理等级：关闭。快速、高效且经济；适合目标明确、常规或并行任务。 help=
+MODEL-ITEM id=EffortOption_low name=推理等级：低。快速、高效且经济；适合目标明确、常规或并行任务。 help=
+MODEL-ITEM id=EffortOption_high name=推理等级：高。更强的自主编码、知识与复杂推理能力；适合复杂或质量优先的任务，但成本更高。 help=
+MODEL-ITEM id=EffortOption_max name=推理等级：最大。更强的自主编码、知识与复杂推理能力；适合复杂或质量优先的任务，但成本更高。 help=
+PROBE model-helptext count=5 => PASS
+PROBE exists id=ModelOption_LastUsed label=model-last-used group=model count=1 enabled=True name=上次使用：step-5-preview help=恢复上次使用的模型：step-5-preview => PASS
+PROBE exists id=RestoreDefaultModelButton label=restore-default-model group=model count=0 enabled= name= help= => FAIL
+INVOKE dismiss-model-menu => FAIL no invoke/toggle/expand pattern
+PROBE invoke id=PermissionButton label=permission-menu via=InvokePattern => PASS
+=== IDS permission-menu ===
+  id=PermissionFlyout | Menu | en=True | name=
+  id=PermissionPreset_read-only | MenuItem | en=True | name=访问模式：仅可查看。只读：可浏览工作区，不能写文件或执行修改
+  id=TextBlock | Text | en=True | name=仅可查看
+  id=PermissionPreset_workspace-write | MenuItem | en=True | name=访问模式：工作区内修改。可写工作区与允许的临时目录；更广范围的重试需审批
+  id=PermissionPreset_danger-full-access | MenuItem | en=True | name=访问模式：完全权限。完全文件访问，不再弹出审批确认
+  id=PermissionPreset_auto-approve | MenuItem | en=True | name=访问模式：自动审批。Flash 预判写入/命令是否不可回补：安全自动批准，有风险转人工审批
+  id=Minimize | Button | en=True | name=Minimize
+  id=Maximize | Button | en=True | name=Maximize
+  id=Close | Button | en=True | name=Close
+  id=ContentScrollViewer | Pane | en=True | name=
+  id=PrimaryButton | Button | en=True | name=继续
+  id=SessionSearchBox | Group | en=True | name=搜索会话
+  id=TextBox | Edit | en=True | name=搜索会话
+  id=Nav | Custom | en=True | name=
+  id=PaneRoot | Window | en=True | name=
+  id=MenuItemsScrollViewer | Pane | en=True | name=
+  id=MenuItemsHost | Group | en=True | name=
+  id=NewSessionItem | ListItem | en=True | name=新建会话
+  id=WorkspaceSectionItem | ListItem | en=True | name=工作区
+  id=WorkspaceSectionHeaderText | Text | en=True | name=工作区
+  id=WorkspaceViewOptionsButton | Button | en=True | name=视图选项
+  id=AddWorkspaceButton | Button | en=True | name=添加工作区
+  id=Workspace_50141382-d003-41d8-b9a5-51d1be06e0d9 | ListItem | en=True | name=Documents
+  id=UngroupedSessionsItem | ListItem | en=True | name=未分组会话
+  id=Session_session-79ae765a-9c43-439a-bc27-40b7f96d3e1f | ListItem | en=True | name=Use the bash tool to
+  id=SessionMore_session-79ae765a-9c43-439a-bc27-40b7f96d3e1f | Button | en=True | name=会话操作：Use the bash tool to
+  id=Session_session-f6f0fcc7-fb6d-4ad4-923a-89a1192c97a8 | ListItem | en=True | name=新会话
+  id=SessionMore_session-f6f0fcc7-fb6d-4ad4-923a-89a1192c97a8 | Button | en=True | name=会话操作：新会话
+  id=Session_session-b214b56f-c790-451c-bc48-c9a3a8ab9476 | ListItem | en=True | name=创造模式可以修改目前的blade G
+  id=SessionMore_session-b214b56f-c790-451c-bc48-c9a3a8ab9476 | Button | en=True | name=会话操作：创造模式可以修改目前的blade G
+  id=Session_session-472209f6-fb3a-475e-b733-66e425706e1b | ListItem | en=True | name=新会话
+  id=SessionMore_session-472209f6-fb3a-475e-b733-66e425706e1b | Button | en=True | name=会话操作：新会话
+  id=Session_session-24015534-bd54-4822-843b-d3d8c4a54402 | ListItem | en=True | name=已就绪的计划（链接 Gf8ZPstxkhg
+  id=SessionMore_session-24015534-bd54-4822-843b-d3d8c4a54402 | Button | en=True | name=会话操作：已就绪的计划（链接 Gf8ZPstxkhg
+  id=ExpandGroup_ | ListItem | en=True | name=展开其余 147 个会话
+  id=FooterItemsScrollViewer | Pane | en=True | name=
+  id=FooterMenuItemsHost | Group | en=True | name=
+  id=SettingsItem | ListItem | en=True | name=设置
+  id=ChatSessionTitle | Text | en=True | name=当前会话标题
+  id=SubagentList | Button | en=True | name=子代理目录
+  id=ChatList | List | en=True | name=对话消息列表
+  id=ContextExpand | Button | en=True | name=系统提示词
+  id=MessageCopyButton | Button | en=True | name=复制消息
+  id=MessageDetailsButton | Button | en=True | name=消息详情
+  id=ReasoningToggle | Button | en=True | name=思考
+  id=ToolCard | Group | en=True | name=Pwsh Run echo command for smoke test
+  id=ToolCardExpand | Button | en=True | name=Pwsh Run echo command for smoke test
+  id=ToolCardWorkdir | Text | en=True | name=C:\Users\Admin\Documents
+  id=ToolCardDuration | Text | en=True | name=1秒
+  id=ToolCopyJson | Button | en=True | name=复制参数 JSON
+  id=ToolCardPath | Text | en=True | name=C:\Users\Admin\Documents\t36-smoke.txt
+  id=ToolCardDiffStat | Text | en=True | name=+1 -0
+  id=RunStatsTurnsText | Text | en=True | name=1 轮 3 步 · 101 tok/s
+  id=RunStatsTokensText | Text | en=True | name=2.9 万 tok · 缓存命中 52.3%
+  id=InputBox | Edit | en=True | name=消息输入框
+  id=ComposerAddButton | Button | en=True | name=添加附件或操作
+  id=PermissionButton | Button | en=True | name=访问模式，当前：自动审批
+  id=PermissionLabel | Text | en=True | name=自动审批
+  id=ModelButton | Button | en=True | name=模型与推理等级，当前 step-5-preview 高
+  id=ModelEffortLabel | Text | en=True | name=step-5-preview 高
+  id=ContextMeterRing | Button | en=True | name=上下文已用 1%
+  id=SendButton | Button | en=True | name=发送消息
+  id=LayoutSplitterSidebar | Group | en=True | name=调整侧栏宽度
+  unique-ids=63
+PERM-TEXT '完全权限' count=2
+INVOKE select-danger-preset => OK via=TogglePattern
+=== IDS after-danger ===
+  id=Minimize | Button | en=True | name=Minimize
+  id=Maximize | Button | en=True | name=Maximize
+  id=Close | Button | en=True | name=Close
+  id=ContentScrollViewer | Pane | en=True | name=
+  id=PrimaryButton | Button | en=True | name=继续
+  id=SessionSearchBox | Group | en=True | name=搜索会话
+  id=TextBox | Edit | en=True | name=搜索会话
+  id=Nav | Custom | en=True | name=
+  id=PaneRoot | Window | en=True | name=
+  id=MenuItemsScrollViewer | Pane | en=True | name=
+  id=MenuItemsHost | Group | en=True | name=
+  id=NewSessionItem | ListItem | en=True | name=新建会话
+  id=WorkspaceSectionItem | ListItem | en=True | name=工作区
+  id=WorkspaceSectionHeaderText | Text | en=True | name=工作区
+  id=WorkspaceViewOptionsButton | Button | en=True | name=视图选项
+  id=AddWorkspaceButton | Button | en=True | name=添加工作区
+  id=Workspace_50141382-d003-41d8-b9a5-51d1be06e0d9 | ListItem | en=True | name=Documents
+  id=UngroupedSessionsItem | ListItem | en=True | name=未分组会话
+  id=Session_session-79ae765a-9c43-439a-bc27-40b7f96d3e1f | ListItem | en=True | name=Use the bash tool to
+  id=SessionMore_session-79ae765a-9c43-439a-bc27-40b7f96d3e1f | Button | en=True | name=会话操作：Use the bash tool to
+  id=Session_session-f6f0fcc7-fb6d-4ad4-923a-89a1192c97a8 | ListItem | en=True | name=新会话
+  id=SessionMore_session-f6f0fcc7-fb6d-4ad4-923a-89a1192c97a8 | Button | en=True | name=会话操作：新会话
+  id=Session_session-b214b56f-c790-451c-bc48-c9a3a8ab9476 | ListItem | en=True | name=创造模式可以修改目前的blade G
+  id=SessionMore_session-b214b56f-c790-451c-bc48-c9a3a8ab9476 | Button | en=True | name=会话操作：创造模式可以修改目前的blade G
+  id=Session_session-472209f6-fb3a-475e-b733-66e425706e1b | ListItem | en=True | name=新会话
+  id=SessionMore_session-472209f6-fb3a-475e-b733-66e425706e1b | Button | en=True | name=会话操作：新会话
+  id=Session_session-24015534-bd54-4822-843b-d3d8c4a54402 | ListItem | en=True | name=已就绪的计划（链接 Gf8ZPstxkhg
+  id=SessionMore_session-24015534-bd54-4822-843b-d3d8c4a54402 | Button | en=True | name=会话操作：已就绪的计划（链接 Gf8ZPstxkhg
+  id=ExpandGroup_ | ListItem | en=True | name=展开其余 147 个会话
+  id=FooterItemsScrollViewer | Pane | en=True | name=
+  id=FooterMenuItemsHost | Group | en=True | name=
+  id=SettingsItem | ListItem | en=True | name=设置
+  id=ChatSessionTitle | Text | en=True | name=当前会话标题
+  id=SubagentList | Button | en=True | name=子代理目录
+  id=ChatList | List | en=True | name=对话消息列表
+  id=ContextExpand | Button | en=True | name=系统提示词
+  id=MessageCopyButton | Button | en=True | name=复制消息
+  id=MessageDetailsButton | Button | en=True | name=消息详情
+  id=ReasoningToggle | Button | en=True | name=思考
+  id=ToolCard | Group | en=True | name=Pwsh Run echo command for smoke test
+  id=ToolCardExpand | Button | en=True | name=Pwsh Run echo command for smoke test
+  id=ToolCardWorkdir | Text | en=True | name=C:\Users\Admin\Documents
+  id=ToolCardDuration | Text | en=True | name=1秒
+  id=ToolCopyJson | Button | en=True | name=复制参数 JSON
+  id=ToolCardPath | Text | en=True | name=C:\Users\Admin\Documents\t36-smoke.txt
+  id=ToolCardDiffStat | Text | en=True | name=+1 -0
+  id=RunStatsTurnsText | Text | en=True | name=1 轮 3 步 · 101 tok/s
+  id=RunStatsTokensText | Text | en=True | name=2.9 万 tok · 缓存命中 52.3%
+  id=InputBox | Edit | en=True | name=消息输入框
+  id=ComposerAddButton | Button | en=True | name=添加附件或操作
+  id=PermissionButton | Button | en=True | name=访问模式，当前：自动审批
+  id=PermissionLabel | Text | en=True | name=自动审批
+  id=ModelButton | Button | en=True | name=模型与推理等级，当前 step-5-preview 高
+  id=ModelEffortLabel | Text | en=True | name=step-5-preview 高
+  id=ContextMeterRing | Button | en=True | name=上下文已用 1%
+  id=SendButton | Button | en=True | name=发送消息
+  id=LayoutSplitterSidebar | Group | en=True | name=调整侧栏宽度
+  unique-ids=57
+PROBE exists id=RiskAckCheckBox label=risk-ack group=perm count=0 enabled= name= help= => FAIL
+PROBE enabled id=ConfirmDangerFullAccessButton label=danger-confirm-disabled => FAIL (not found)
+INVOKE risk-ack-check (RiskAckCheckBox) => NOTFOUND
+PROBE enabled id=ConfirmDangerFullAccessButton label=danger-confirm-enabled-after-ack => FAIL (not found)
+GATE after-cancel risk-present=False (expect False)
+INVOKE composer-add => OK via=InvokePattern
+INVOKE open-files-panel => OK via=InvokePattern
+=== IDS files-panel ===
+  id=Minimize | Button | en=True | name=Minimize
+  id=Maximize | Button | en=True | name=Maximize
+  id=Close | Button | en=True | name=Close
+  id=ContentScrollViewer | Pane | en=True | name=
+  id=PrimaryButton | Button | en=True | name=继续
+  id=SessionSearchBox | Group | en=True | name=搜索会话
+  id=TextBox | Edit | en=True | name=搜索会话
+  id=Nav | Custom | en=True | name=
+  id=PaneRoot | Window | en=True | name=
+  id=MenuItemsScrollViewer | Pane | en=True | name=
+  id=MenuItemsHost | Group | en=True | name=
+  id=NewSessionItem | ListItem | en=True | name=新建会话
+  id=WorkspaceSectionItem | ListItem | en=True | name=工作区
+  id=WorkspaceSectionHeaderText | Text | en=True | name=工作区
+  id=WorkspaceViewOptionsButton | Button | en=True | name=视图选项
+  id=AddWorkspaceButton | Button | en=True | name=添加工作区
+  id=Workspace_50141382-d003-41d8-b9a5-51d1be06e0d9 | ListItem | en=True | name=Documents
+  id=UngroupedSessionsItem | ListItem | en=True | name=未分组会话
+  id=Session_session-79ae765a-9c43-439a-bc27-40b7f96d3e1f | ListItem | en=True | name=Use the bash tool to
+  id=SessionMore_session-79ae765a-9c43-439a-bc27-40b7f96d3e1f | Button | en=True | name=会话操作：Use the bash tool to
+  id=Session_session-f6f0fcc7-fb6d-4ad4-923a-89a1192c97a8 | ListItem | en=True | name=新会话
+  id=SessionMore_session-f6f0fcc7-fb6d-4ad4-923a-89a1192c97a8 | Button | en=True | name=会话操作：新会话
+  id=Session_session-b214b56f-c790-451c-bc48-c9a3a8ab9476 | ListItem | en=True | name=创造模式可以修改目前的blade G
+  id=SessionMore_session-b214b56f-c790-451c-bc48-c9a3a8ab9476 | Button | en=True | name=会话操作：创造模式可以修改目前的blade G
+  id=Session_session-472209f6-fb3a-475e-b733-66e425706e1b | ListItem | en=True | name=新会话
+  id=SessionMore_session-472209f6-fb3a-475e-b733-66e425706e1b | Button | en=True | name=会话操作：新会话
+  id=Session_session-24015534-bd54-4822-843b-d3d8c4a54402 | ListItem | en=True | name=已就绪的计划（链接 Gf8ZPstxkhg
+  id=SessionMore_session-24015534-bd54-4822-843b-d3d8c4a54402 | Button | en=True | name=会话操作：已就绪的计划（链接 Gf8ZPstxkhg
+  id=ExpandGroup_ | ListItem | en=True | name=展开其余 147 个会话
+  id=FooterItemsScrollViewer | Pane | en=True | name=
+  id=FooterMenuItemsHost | Group | en=True | name=
+  id=SettingsItem | ListItem | en=True | name=设置
+  id=ChatSessionTitle | Text | en=True | name=当前会话标题
+  id=SubagentList | Button | en=True | name=子代理目录
+  id=ChatList | List | en=True | name=对话消息列表
+  id=ContextExpand | Button | en=True | name=系统提示词
+  id=MessageCopyButton | Button | en=True | name=复制消息
+  id=MessageDetailsButton | Button | en=True | name=消息详情
+  id=ReasoningToggle | Button | en=True | name=思考
+  id=ToolCard | Group | en=True | name=Pwsh Run echo command for smoke test
+  id=ToolCardExpand | Button | en=True | name=Pwsh Run echo command for smoke test
+  id=ToolCardWorkdir | Text | en=True | name=C:\Users\Admin\Documents
+  id=ToolCardDuration | Text | en=True | name=1秒
+  id=ToolCopyJson | Button | en=True | name=复制参数 JSON
+  id=ToolCardPath | Text | en=True | name=C:\Users\Admin\Documents\t36-smoke.txt
+  id=ToolCardDiffStat | Text | en=True | name=+1 -0
+  id=RunStatsTurnsText | Text | en=True | name=1 轮 3 步 · 101 tok/s
+  id=RunStatsTokensText | Text | en=True | name=2.9 万 tok · 缓存命中 52.3%
+  id=InputBox | Edit | en=True | name=消息输入框
+  id=ComposerAddButton | Button | en=True | name=添加附件或操作
+  id=PermissionButton | Button | en=True | name=访问模式，当前：自动审批
+  id=PermissionLabel | Text | en=True | name=自动审批
+  id=ModelButton | Button | en=True | name=模型与推理等级，当前 step-5-preview 高
+  id=ModelEffortLabel | Text | en=True | name=step-5-preview 高
+  id=ContextMeterRing | Button | en=True | name=上下文已用 1%
+  id=SendButton | Button | en=True | name=发送消息
+  id=RightPaneTabStrip | Group | en=True | name=右栏标签栏
+  id=RightPaneTab:tab-0 | Button | en=True | name=工作区文件
+  id=RightPaneAddTab | Button | en=True | name=新标签页
+  id=RightPaneFullscreen | Button | en=True | name=全屏
+  id=RightPaneDockBody | Group | en=True | name=右栏分栏宿主
+  id=RightPaneCell0 | Group | en=True | name=右栏第一格
+  id=FilesPanelHeaderTitle | Text | en=True | name=工作区文件
+  id=FilesPanelHeaderPath | Text | en=True | name=C:\Users\Admin\Documents
+  id=FileActionMenu | Button | en=True | name=文件操作
+  id=FilesPanelRefreshButton | Button | en=True | name=刷新文件树
+  id=FilesPanelCloseButton | Button | en=True | name=关闭文件面板
+  id=FilesPanelTree | Group | en=True | name=工作区文件树
+  id=TreeScroll | Pane | en=True | name=
+  id=ListControl | Tree | en=True | name=
+  id=VerticalScrollBar | ScrollBar | en=True | name=垂直
+  id=LayoutSplitterSidebar | Group | en=True | name=调整侧栏宽度
+  id=LayoutSplitterRight | Group | en=True | name=调整右栏宽度
+  unique-ids=73
+PROBE exists id=FilesPanelTree label=FilesPanelTree group=files count=1 enabled=True name=工作区文件树 help= => PASS
+PROBE exists id=FilesPanelStatusBar label=FilesPanelStatusBar group=files count=0 enabled= name= help= => FAIL
+PROBE exists id=RightPaneTabStrip label=RightPaneTabStrip group=files count=1 enabled=True name=右栏标签栏 help= => PASS
+PROBE exists id=RightPaneCell0 label=RightPaneCell0 group=files count=1 enabled=True name=右栏第一格 help= => PASS
+PROBE exists id=FileActionMenu label=FileActionMenu group=files count=1 enabled=True name=文件操作 help= => PASS
+PROBE exists id=FileActionButton label=FileActionButton group=files count=0 enabled= name= help= => FAIL
+PROBE exists id=RefreshButton label=RefreshButton group=files count=0 enabled= name= help= => FAIL
+INVOKE back-before-sample.md (FilesPanelBackButton) => NOTFOUND
+FIXTURE-LOOKUP sample.md count=2
+INVOKE open-sample.md => OK via=InvokePattern
+PROBE exists id=PreviewMarkdown label=face-sample.md-PreviewMarkdown group=preview count=0 enabled= name= help= => FAIL
+PROBE exists id=PreviewRoot label=face-sample.md-PreviewRoot group=preview count=0 enabled= name= help= => FAIL
+PROBE exists id=PreviewToolbar label=face-sample.md-PreviewToolbar group=preview count=0 enabled= name= help= => FAIL
+PROBE exists id=PreviewWrapToggle label=face-sample.md-PreviewWrapToggle group=preview count=0 enabled= name= help= => FAIL
+PROBE exists id=PreviewCopyAll label=face-sample.md-PreviewCopyAll group=preview count=1 enabled=True name=复制全文 help= => PASS
+PROBE exists id=PreviewLoadMore label=face-sample.md-PreviewLoadMore group=preview count=0 enabled= name= help= => FAIL
+INVOKE back-before-sample.cs => OK via=InvokePattern
+FIXTURE-LOOKUP sample.cs count=2
+INVOKE open-sample.cs => OK via=InvokePattern
+PROBE exists id=FilesPanelPreviewText label=face-sample.cs-FilesPanelPreviewText group=preview count=1 enabled=True name=1 // Preview fixture C# \n 2 namespace Fixture; \n 3 \n 4 public class Sample \n 5 { \n 6 public int Value => 42; \n 7 } \n help= => PASS
+PROBE exists id=PreviewRoot label=face-sample.cs-PreviewRoot group=preview count=0 enabled= name= help= => FAIL
+PROBE exists id=PreviewToolbar label=face-sample.cs-PreviewToolbar group=preview count=0 enabled= name= help= => FAIL
+PROBE exists id=PreviewWrapToggle label=face-sample.cs-PreviewWrapToggle group=preview count=1 enabled=True name=自动换行 help= => PASS
+PROBE exists id=PreviewCopyAll label=face-sample.cs-PreviewCopyAll group=preview count=1 enabled=True name=复制全文 help= => PASS
+INVOKE back-before-sample.txt => OK via=InvokePattern
+FIXTURE-LOOKUP sample.txt count=2
+INVOKE open-sample.txt => OK via=InvokePattern
+PROBE exists id=FilesPanelPreviewText label=face-sample.txt-FilesPanelPreviewText group=preview count=1 enabled=True name=Preview fixture plain text. \n Line two. \n help= => PASS
+PROBE exists id=PreviewRoot label=face-sample.txt-PreviewRoot group=preview count=0 enabled= name= help= => FAIL
+PROBE exists id=PreviewToolbar label=face-sample.txt-PreviewToolbar group=preview count=0 enabled= name= help= => FAIL
+PROBE exists id=PreviewWrapToggle label=face-sample.txt-PreviewWrapToggle group=preview count=1 enabled=True name=自动换行 help= => PASS
+PROBE exists id=PreviewCopyAll label=face-sample.txt-PreviewCopyAll group=preview count=1 enabled=True name=复制全文 help= => PASS
+INVOKE back-before-sample.html => OK via=InvokePattern
+FIXTURE-LOOKUP sample.html count=2
+INVOKE open-sample.html => OK via=InvokePattern
+PROBE exists id=PreviewHtmlOutline label=face-sample.html-PreviewHtmlOutline group=preview count=1 enabled=True name=DOM 预览 · 标题：fixture · 一级标题 1 · 链接 0 · 图片 0（脚本已禁用） help= => PASS
+PROBE exists id=PreviewHtmlRelated label=face-sample.html-PreviewHtmlRelated group=preview count=0 enabled= name= help= => FAIL
+PROBE exists id=PreviewRoot label=face-sample.html-PreviewRoot group=preview count=0 enabled= name= help= => FAIL
+PROBE exists id=PreviewToolbar label=face-sample.html-PreviewToolbar group=preview count=0 enabled= name= help= => FAIL
+INVOKE back-before-sample.png => OK via=InvokePattern
+FIXTURE-LOOKUP sample.png count=2
+INVOKE open-sample.png => OK via=InvokePattern
+PROBE exists id=PreviewImage label=face-sample.png-PreviewImage group=preview count=1 enabled=True name= help= => PASS
+PROBE exists id=PreviewRoot label=face-sample.png-PreviewRoot group=preview count=0 enabled= name= help= => FAIL
+PROBE exists id=PreviewToolbar label=face-sample.png-PreviewToolbar group=preview count=0 enabled= name= help= => FAIL
+INVOKE back-before-sample.pdf => OK via=InvokePattern
+FIXTURE-LOOKUP sample.pdf count=2
+INVOKE open-sample.pdf => OK via=InvokePattern
+PROBE exists id=PreviewPdf label=face-sample.pdf-PreviewPdf group=preview count=0 enabled= name= help= => FAIL
+PROBE exists id=PreviewRoot label=face-sample.pdf-PreviewRoot group=preview count=0 enabled= name= help= => FAIL
+PROBE exists id=PreviewToolbar label=face-sample.pdf-PreviewToolbar group=preview count=0 enabled= name= help= => FAIL
+PROBE exists id=PreviewPdfPageLabel label=face-sample.pdf-PreviewPdfPageLabel group=preview count=1 enabled=True name=无法在壳内渲染 help= => PASS
+PROBE exists id=PreviewPdfOpen label=face-sample.pdf-PreviewPdfOpen group=preview count=1 enabled=True name=用系统打开 help= => PASS
+PROBE exists id=PreviewPdfCopyPath label=face-sample.pdf-PreviewPdfCopyPath group=preview count=1 enabled=True name=复制路径 help= => PASS
+INVOKE composer-add-2 => OK via=InvokePattern
+=== IDS composer-menu ===
+  id=ComposerAddFlyout | Menu | en=True | name=
+  id=TextBlock | Text | en=True | name=添加图片或文件
+  id=OpenInAppSubMenu | MenuItem | en=True | name=在应用中打开
+  id=SchedulesMenuItem | MenuItem | en=True | name=计划（只读）
+  id=SkillsMenuItem | MenuItem | en=True | name=技能
+  id=CordisMenuItem | MenuItem | en=True | name=Cordis 插件
+  id=TodosMenuItem | MenuItem | en=True | name=任务
+  id=TrajectoryMenuItem | MenuItem | en=True | name=轨迹
+  id=Minimize | Button | en=True | name=Minimize
+  id=Maximize | Button | en=True | name=Maximize
+  id=Close | Button | en=True | name=Close
+  id=ContentScrollViewer | Pane | en=True | name=
+  id=PrimaryButton | Button | en=True | name=继续
+  id=Light Dismiss | Button | en=True | name=关闭
+  id=SessionSearchBox | Group | en=True | name=搜索会话
+  id=TextBox | Edit | en=True | name=搜索会话
+  id=Nav | Custom | en=True | name=
+  id=PaneRoot | Window | en=True | name=
+  id=MenuItemsScrollViewer | Pane | en=True | name=
+  id=MenuItemsHost | Group | en=True | name=
+  id=NewSessionItem | ListItem | en=True | name=新建会话
+  id=WorkspaceSectionItem | ListItem | en=True | name=工作区
+  id=WorkspaceSectionHeaderText | Text | en=True | name=工作区
+  id=WorkspaceViewOptionsButton | Button | en=True | name=视图选项
+  id=AddWorkspaceButton | Button | en=True | name=添加工作区
+  id=Workspace_50141382-d003-41d8-b9a5-51d1be06e0d9 | ListItem | en=True | name=Documents
+  id=UngroupedSessionsItem | ListItem | en=True | name=未分组会话
+  id=Session_session-79ae765a-9c43-439a-bc27-40b7f96d3e1f | ListItem | en=True | name=Use the bash tool to
+  id=SessionMore_session-79ae765a-9c43-439a-bc27-40b7f96d3e1f | Button | en=True | name=会话操作：Use the bash tool to
+  id=Session_session-f6f0fcc7-fb6d-4ad4-923a-89a1192c97a8 | ListItem | en=True | name=新会话
+  id=SessionMore_session-f6f0fcc7-fb6d-4ad4-923a-89a1192c97a8 | Button | en=True | name=会话操作：新会话
+  id=Session_session-b214b56f-c790-451c-bc48-c9a3a8ab9476 | ListItem | en=True | name=创造模式可以修改目前的blade G
+  id=SessionMore_session-b214b56f-c790-451c-bc48-c9a3a8ab9476 | Button | en=True | name=会话操作：创造模式可以修改目前的blade G
+  id=Session_session-472209f6-fb3a-475e-b733-66e425706e1b | ListItem | en=True | name=新会话
+  id=SessionMore_session-472209f6-fb3a-475e-b733-66e425706e1b | Button | en=True | name=会话操作：新会话
+  id=Session_session-24015534-bd54-4822-843b-d3d8c4a54402 | ListItem | en=True | name=已就绪的计划（链接 Gf8ZPstxkhg
+  id=SessionMore_session-24015534-bd54-4822-843b-d3d8c4a54402 | Button | en=True | name=会话操作：已就绪的计划（链接 Gf8ZPstxkhg
+  id=ExpandGroup_ | ListItem | en=True | name=展开其余 147 个会话
+  id=FooterItemsScrollViewer | Pane | en=True | name=
+  id=FooterMenuItemsHost | Group | en=True | name=
+  id=SettingsItem | ListItem | en=True | name=设置
+  id=ChatSessionTitle | Text | en=True | name=当前会话标题
+  id=SubagentList | Button | en=True | name=子代理目录
+  id=ChatList | List | en=True | name=对话消息列表
+  id=ContextExpand | Button | en=True | name=系统提示词
+  id=MessageCopyButton | Button | en=True | name=复制消息
+  id=MessageDetailsButton | Button | en=True | name=消息详情
+  id=ReasoningToggle | Button | en=True | name=思考
+  id=ToolCard | Group | en=True | name=Pwsh Run echo command for smoke test
+  id=ToolCardExpand | Button | en=True | name=Pwsh Run echo command for smoke test
+  id=ToolCardWorkdir | Text | en=True | name=C:\Users\Admin\Documents
+  id=ToolCardDuration | Text | en=True | name=1秒
+  id=ToolCopyJson | Button | en=True | name=复制参数 JSON
+  id=ToolCardPath | Text | en=True | name=C:\Users\Admin\Documents\t36-smoke.txt
+  id=ToolCardDiffStat | Text | en=True | name=+1 -0
+  id=RunStatsTurnsText | Text | en=True | name=1 轮 3 步 · 101 tok/s
+  id=RunStatsTokensText | Text | en=True | name=2.9 万 tok · 缓存命中 52.3%
+  id=InputBox | Edit | en=True | name=消息输入框
+  id=ComposerAddButton | Button | en=True | name=添加附件或操作
+  id=PermissionButton | Button | en=True | name=访问模式，当前：自动审批
+  id=PermissionLabel | Text | en=True | name=自动审批
+  id=ModelButton | Button | en=True | name=模型与推理等级，当前 step-5-preview 高
+  id=ModelEffortLabel | Text | en=True | name=step-5-preview 高
+  id=ContextMeterRing | Button | en=True | name=上下文已用 1%
+  id=SendButton | Button | en=True | name=发送消息
+  id=RightPaneTabStrip | Group | en=True | name=右栏标签栏
+  id=RightPaneTab:tab-0 | Button | en=True | name=工作区文件
+  id=RightPaneAddTab | Button | en=True | name=新标签页
+  id=RightPaneFullscreen | Button | en=True | name=全屏
+  id=RightPaneDockBody | Group | en=True | name=右栏分栏宿主
+  id=RightPaneCell0 | Group | en=True | name=右栏第一格
+  id=FilesPanelBackButton | Button | en=True | name=返回文件树
+  id=FilesPanelHeaderTitle | Text | en=True | name=sample.pdf
+  id=FilesPanelHeaderPath | Text | en=True | name=C:/Users/Admin/Documents/sample.pdf
+  id=FileActionMenu | Button | en=True | name=文件操作
+  id=FilesPanelRefreshButton | Button | en=True | name=刷新文件树
+  id=FilesPanelCloseButton | Button | en=True | name=关闭文件面板
+  id=FilesPanelStatusBar | StatusBar | en=True | name=
+  id=StandardIcon | Text | en=True | name=信息图标
+  id=Title | Text | en=True | name=
+  id=Message | Text | en=True | name=文件已损坏或平台不支持渲染。
+  id=CloseButton | Button | en=True | name=关闭
+  id=FilesPanelTree | Group | en=True | name=工作区文件树
+  id=PreviewReload | Button | en=True | name=重新读取文件
+  id=FilesPanelPreviewMeta | Text | en=True | name=294 B · 版本 37480335
+  id=PdfPrevButton | Button | en=False | name=上一页
+  id=PreviewPdfPageLabel | Text | en=True | name=无法在壳内渲染
+  id=PdfNextButton | Button | en=False | name=下一页
+  id=PreviewPdfPageImage | Image | en=True | name=
+  id=PreviewPdfOpen | Button | en=True | name=用系统打开
+  id=PreviewPdfCopyPath | Button | en=True | name=复制路径
+  id=LayoutSplitterSidebar | Group | en=True | name=调整侧栏宽度
+  id=LayoutSplitterRight | Group | en=True | name=调整右栏宽度
+  unique-ids=93
+INVOKE open-trajectory => OK via=InvokePattern
+=== IDS trajectory ===
+  id=Minimize | Button | en=True | name=Minimize
+  id=Maximize | Button | en=True | name=Maximize
+  id=Close | Button | en=True | name=Close
+  id=ContentScrollViewer | Pane | en=True | name=
+  id=PrimaryButton | Button | en=True | name=继续
+  id=SessionSearchBox | Group | en=True | name=搜索会话
+  id=TextBox | Edit | en=True | name=搜索会话
+  id=Nav | Custom | en=True | name=
+  id=PaneRoot | Window | en=True | name=
+  id=MenuItemsScrollViewer | Pane | en=True | name=
+  id=MenuItemsHost | Group | en=True | name=
+  id=NewSessionItem | ListItem | en=True | name=新建会话
+  id=WorkspaceSectionItem | ListItem | en=True | name=工作区
+  id=WorkspaceSectionHeaderText | Text | en=True | name=工作区
+  id=WorkspaceViewOptionsButton | Button | en=True | name=视图选项
+  id=AddWorkspaceButton | Button | en=True | name=添加工作区
+  id=Workspace_50141382-d003-41d8-b9a5-51d1be06e0d9 | ListItem | en=True | name=Documents
+  id=UngroupedSessionsItem | ListItem | en=True | name=未分组会话
+  id=Session_session-79ae765a-9c43-439a-bc27-40b7f96d3e1f | ListItem | en=True | name=Use the bash tool to
+  id=SessionMore_session-79ae765a-9c43-439a-bc27-40b7f96d3e1f | Button | en=True | name=会话操作：Use the bash tool to
+  id=Session_session-f6f0fcc7-fb6d-4ad4-923a-89a1192c97a8 | ListItem | en=True | name=新会话
+  id=SessionMore_session-f6f0fcc7-fb6d-4ad4-923a-89a1192c97a8 | Button | en=True | name=会话操作：新会话
+  id=Session_session-b214b56f-c790-451c-bc48-c9a3a8ab9476 | ListItem | en=True | name=创造模式可以修改目前的blade G
+  id=SessionMore_session-b214b56f-c790-451c-bc48-c9a3a8ab9476 | Button | en=True | name=会话操作：创造模式可以修改目前的blade G
+  id=Session_session-472209f6-fb3a-475e-b733-66e425706e1b | ListItem | en=True | name=新会话
+  id=SessionMore_session-472209f6-fb3a-475e-b733-66e425706e1b | Button | en=True | name=会话操作：新会话
+  id=Session_session-24015534-bd54-4822-843b-d3d8c4a54402 | ListItem | en=True | name=已就绪的计划（链接 Gf8ZPstxkhg
+  id=SessionMore_session-24015534-bd54-4822-843b-d3d8c4a54402 | Button | en=True | name=会话操作：已就绪的计划（链接 Gf8ZPstxkhg
+  id=ExpandGroup_ | ListItem | en=True | name=展开其余 147 个会话
+  id=FooterItemsScrollViewer | Pane | en=True | name=
+  id=FooterMenuItemsHost | Group | en=True | name=
+  id=SettingsItem | ListItem | en=True | name=设置
+  id=ChatSessionTitle | Text | en=True | name=当前会话标题
+  id=SubagentList | Button | en=True | name=子代理目录
+  id=ChatList | List | en=True | name=对话消息列表
+  id=ContextExpand | Button | en=True | name=系统提示词
+  id=MessageCopyButton | Button | en=True | name=复制消息
+  id=MessageDetailsButton | Button | en=True | name=消息详情
+  id=ReasoningToggle | Button | en=True | name=思考
+  id=ToolCard | Group | en=True | name=Pwsh Run echo command for smoke test
+  id=ToolCardExpand | Button | en=True | name=Pwsh Run echo command for smoke test
+  id=ToolCardWorkdir | Text | en=True | name=C:\Users\Admin\Documents
+  id=ToolCardDuration | Text | en=True | name=1秒
+  id=ToolCopyJson | Button | en=True | name=复制参数 JSON
+  id=ToolCardPath | Text | en=True | name=C:\Users\Admin\Documents\t36-smoke.txt
+  id=ToolCardDiffStat | Text | en=True | name=+1 -0
+  id=RunStatsTurnsText | Text | en=True | name=1 轮 3 步 · 101 tok/s
+  id=RunStatsTokensText | Text | en=True | name=2.9 万 tok · 缓存命中 52.3%
+  id=InputBox | Edit | en=True | name=消息输入框
+  id=ComposerAddButton | Button | en=True | name=添加附件或操作
+  id=PermissionButton | Button | en=True | name=访问模式，当前：自动审批
+  id=PermissionLabel | Text | en=True | name=自动审批
+  id=ModelButton | Button | en=True | name=模型与推理等级，当前 step-5-preview 高
+  id=ModelEffortLabel | Text | en=True | name=step-5-preview 高
+  id=ContextMeterRing | Button | en=True | name=上下文已用 1%
+  id=SendButton | Button | en=True | name=发送消息
+  id=RightPaneTabStrip | Group | en=True | name=右栏标签栏
+  id=RightPaneTab:tab-0 | Button | en=True | name=工作区文件
+  id=RightPaneAddTab | Button | en=True | name=新标签页
+  id=RightPaneFullscreen | Button | en=True | name=全屏
+  id=RightPaneDockBody | Group | en=True | name=右栏分栏宿主
+  id=RightPaneCell0 | Group | en=True | name=右栏第一格
+  id=FilesPanelBackButton | Button | en=True | name=返回文件树
+  id=FilesPanelHeaderTitle | Text | en=True | name=sample.pdf
+  id=FilesPanelHeaderPath | Text | en=True | name=C:/Users/Admin/Documents/sample.pdf
+  id=FileActionMenu | Button | en=True | name=文件操作
+  id=FilesPanelRefreshButton | Button | en=True | name=刷新文件树
+  id=FilesPanelCloseButton | Button | en=True | name=关闭文件面板
+  id=FilesPanelStatusBar | StatusBar | en=True | name=
+  id=StandardIcon | Text | en=True | name=信息图标
+  id=Title | Text | en=True | name=
+  id=Message | Text | en=True | name=文件已损坏或平台不支持渲染。
+  id=CloseButton | Button | en=True | name=关闭
+  id=FilesPanelTree | Group | en=True | name=工作区文件树
+  id=PreviewReload | Button | en=True | name=重新读取文件
+  id=FilesPanelPreviewMeta | Text | en=True | name=294 B · 版本 37480335
+  id=PdfPrevButton | Button | en=False | name=上一页
+  id=PreviewPdfPageLabel | Text | en=True | name=无法在壳内渲染
+  id=PdfNextButton | Button | en=False | name=下一页
+  id=PreviewPdfPageImage | Image | en=True | name=
+  id=PreviewPdfOpen | Button | en=True | name=用系统打开
+  id=PreviewPdfCopyPath | Button | en=True | name=复制路径
+  id=LayoutSplitterSidebar | Group | en=True | name=调整侧栏宽度
+  id=LayoutSplitterRight | Group | en=True | name=调整右栏宽度
+  unique-ids=84
+PROBE exists id=TrajectoryPanel label=trajectory-panel group=traj count=0 enabled= name= help= => FAIL
+PROBE exists id=TrajectoryTiming label=trajectory-timing group=traj count=0 enabled= name= help= => FAIL
+PROBE exists id=TrajectoryLedger label=trajectory-ledger group=traj count=0 enabled= name= help= => FAIL
+PROBE exists id=TrajectoryKindFilter label=trajectory-filter group=traj count=0 enabled= name= help= => FAIL
+INVOKE close-traj-dialog => OK via=InvokePattern
+INVOKE composer-add-3 => OK via=InvokePattern
+INVOKE open-cordis => OK via=InvokePattern
+=== IDS cordis ===
+  id=Minimize | Button | en=True | name=Minimize
+  id=Maximize | Button | en=True | name=Maximize
+  id=Close | Button | en=True | name=Close
+  id=ContentScrollViewer | Pane | en=True | name=
+  id=PrimaryButton | Button | en=True | name=继续
+  id=SessionSearchBox | Group | en=True | name=搜索会话
+  id=TextBox | Edit | en=True | name=搜索会话
+  id=Nav | Custom | en=True | name=
+  id=PaneRoot | Window | en=True | name=
+  id=MenuItemsScrollViewer | Pane | en=True | name=
+  id=MenuItemsHost | Group | en=True | name=
+  id=NewSessionItem | ListItem | en=True | name=新建会话
+  id=WorkspaceSectionItem | ListItem | en=True | name=工作区
+  id=WorkspaceSectionHeaderText | Text | en=True | name=工作区
+  id=WorkspaceViewOptionsButton | Button | en=True | name=视图选项
+  id=AddWorkspaceButton | Button | en=True | name=添加工作区
+  id=Workspace_50141382-d003-41d8-b9a5-51d1be06e0d9 | ListItem | en=True | name=Documents
+  id=UngroupedSessionsItem | ListItem | en=True | name=未分组会话
+  id=Session_session-79ae765a-9c43-439a-bc27-40b7f96d3e1f | ListItem | en=True | name=Use the bash tool to
+  id=SessionMore_session-79ae765a-9c43-439a-bc27-40b7f96d3e1f | Button | en=True | name=会话操作：Use the bash tool to
+  id=Session_session-f6f0fcc7-fb6d-4ad4-923a-89a1192c97a8 | ListItem | en=True | name=新会话
+  id=SessionMore_session-f6f0fcc7-fb6d-4ad4-923a-89a1192c97a8 | Button | en=True | name=会话操作：新会话
+  id=Session_session-b214b56f-c790-451c-bc48-c9a3a8ab9476 | ListItem | en=True | name=创造模式可以修改目前的blade G
+  id=SessionMore_session-b214b56f-c790-451c-bc48-c9a3a8ab9476 | Button | en=True | name=会话操作：创造模式可以修改目前的blade G
+  id=Session_session-472209f6-fb3a-475e-b733-66e425706e1b | ListItem | en=True | name=新会话
+  id=SessionMore_session-472209f6-fb3a-475e-b733-66e425706e1b | Button | en=True | name=会话操作：新会话
+  id=Session_session-24015534-bd54-4822-843b-d3d8c4a54402 | ListItem | en=True | name=已就绪的计划（链接 Gf8ZPstxkhg
+  id=SessionMore_session-24015534-bd54-4822-843b-d3d8c4a54402 | Button | en=True | name=会话操作：已就绪的计划（链接 Gf8ZPstxkhg
+  id=ExpandGroup_ | ListItem | en=True | name=展开其余 147 个会话
+  id=FooterItemsScrollViewer | Pane | en=True | name=
+  id=FooterMenuItemsHost | Group | en=True | name=
+  id=SettingsItem | ListItem | en=True | name=设置
+  id=ChatSessionTitle | Text | en=True | name=当前会话标题
+  id=SubagentList | Button | en=True | name=子代理目录
+  id=ChatList | List | en=True | name=对话消息列表
+  id=ContextExpand | Button | en=True | name=系统提示词
+  id=MessageCopyButton | Button | en=True | name=复制消息
+  id=MessageDetailsButton | Button | en=True | name=消息详情
+  id=ReasoningToggle | Button | en=True | name=思考
+  id=ToolCard | Group | en=True | name=Pwsh Run echo command for smoke test
+  id=ToolCardExpand | Button | en=True | name=Pwsh Run echo command for smoke test
+  id=ToolCardWorkdir | Text | en=True | name=C:\Users\Admin\Documents
+  id=ToolCardDuration | Text | en=True | name=1秒
+  id=ToolCopyJson | Button | en=True | name=复制参数 JSON
+  id=ToolCardPath | Text | en=True | name=C:\Users\Admin\Documents\t36-smoke.txt
+  id=ToolCardDiffStat | Text | en=True | name=+1 -0
+  id=RunStatsTurnsText | Text | en=True | name=1 轮 3 步 · 101 tok/s
+  id=RunStatsTokensText | Text | en=True | name=2.9 万 tok · 缓存命中 52.3%
+  id=InputBox | Edit | en=True | name=消息输入框
+  id=ComposerAddButton | Button | en=True | name=添加附件或操作
+  id=PermissionButton | Button | en=True | name=访问模式，当前：自动审批
+  id=PermissionLabel | Text | en=True | name=自动审批
+  id=ModelButton | Button | en=True | name=模型与推理等级，当前 step-5-preview 高
+  id=ModelEffortLabel | Text | en=True | name=step-5-preview 高
+  id=ContextMeterRing | Button | en=True | name=上下文已用 1%
+  id=SendButton | Button | en=True | name=发送消息
+  id=LayoutSplitterSidebar | Group | en=True | name=调整侧栏宽度
+  unique-ids=57
+PROBE exists id=CordisPanel label=cordis-panel group=cordis count=0 enabled= name= help= => FAIL
+PROBE exists id=CordisApprovalCard label=cordis-approval group=cordis count=0 enabled= name= help= => FAIL
+PROBE exists id=CordisRunStop label=cordis-run-stop group=cordis count=0 enabled= name= help= => FAIL
+PROBE exists id=SubagentList label=subagent-list group=sub count=1 enabled=True name=子代理目录 help= => PASS
+PROBE exists id=SubagentPrompt label=subagent-prompt group=sub count=0 enabled= name= help= => FAIL
+PROBE exists id=SubagentInterrupt label=subagent-interrupt group=sub count=0 enabled= name= help= => FAIL
+PROBE exists id=SubagentParentButton label=subagent-parent group=sub count=0 enabled= name= help= => FAIL
+SEND-SET text-len=101
+INVOKE send-prompt => OK via=InvokePattern
+SEND-OK waiting 90s for tool/question content
+CONTENT tool-card appeared
+CONTENT tool-copy-json appeared
+=== IDS after-send ===
+  id=Minimize | Button | en=True | name=Minimize
+  id=Maximize | Button | en=True | name=Maximize
+  id=Close | Button | en=True | name=Close
+  id=ContentScrollViewer | Pane | en=True | name=
+  id=PrimaryButton | Button | en=True | name=继续
+  id=SessionSearchBox | Group | en=True | name=搜索会话
+  id=TextBox | Edit | en=True | name=搜索会话
+  id=Nav | Custom | en=True | name=
+  id=PaneRoot | Window | en=True | name=
+  id=MenuItemsScrollViewer | Pane | en=True | name=
+  id=MenuItemsHost | Group | en=True | name=
+  id=NewSessionItem | ListItem | en=True | name=新建会话
+  id=WorkspaceSectionItem | ListItem | en=True | name=工作区
+  id=WorkspaceSectionHeaderText | Text | en=True | name=工作区
+  id=WorkspaceViewOptionsButton | Button | en=True | name=视图选项
+  id=AddWorkspaceButton | Button | en=True | name=添加工作区
+  id=Workspace_50141382-d003-41d8-b9a5-51d1be06e0d9 | ListItem | en=True | name=Documents
+  id=UngroupedSessionsItem | ListItem | en=True | name=未分组会话
+  id=Session_session-79ae765a-9c43-439a-bc27-40b7f96d3e1f | ListItem | en=True | name=Use the bash tool to
+  id=SessionMore_session-79ae765a-9c43-439a-bc27-40b7f96d3e1f | Button | en=True | name=会话操作：Use the bash tool to
+  id=Session_session-f6f0fcc7-fb6d-4ad4-923a-89a1192c97a8 | ListItem | en=True | name=新会话
+  id=SessionMore_session-f6f0fcc7-fb6d-4ad4-923a-89a1192c97a8 | Button | en=True | name=会话操作：新会话
+  id=Session_session-b214b56f-c790-451c-bc48-c9a3a8ab9476 | ListItem | en=True | name=创造模式可以修改目前的blade G
+  id=SessionMore_session-b214b56f-c790-451c-bc48-c9a3a8ab9476 | Button | en=True | name=会话操作：创造模式可以修改目前的blade G
+  id=Session_session-472209f6-fb3a-475e-b733-66e425706e1b | ListItem | en=True | name=新会话
+  id=SessionMore_session-472209f6-fb3a-475e-b733-66e425706e1b | Button | en=True | name=会话操作：新会话
+  id=Session_session-24015534-bd54-4822-843b-d3d8c4a54402 | ListItem | en=True | name=已就绪的计划（链接 Gf8ZPstxkhg
+  id=SessionMore_session-24015534-bd54-4822-843b-d3d8c4a54402 | Button | en=True | name=会话操作：已就绪的计划（链接 Gf8ZPstxkhg
+  id=ExpandGroup_ | ListItem | en=True | name=展开其余 147 个会话
+  id=FooterItemsScrollViewer | Pane | en=True | name=
+  id=FooterMenuItemsHost | Group | en=True | name=
+  id=SettingsItem | ListItem | en=True | name=设置
+  id=ChatSessionTitle | Text | en=True | name=当前会话标题
+  id=SubagentList | Button | en=True | name=子代理目录
+  id=ChatList | List | en=True | name=对话消息列表
+  id=ContextExpand | Button | en=True | name=系统提示词
+  id=MessageCopyButton | Button | en=True | name=复制消息
+  id=MessageDetailsButton | Button | en=True | name=消息详情
+  id=ReasoningToggle | Button | en=True | name=思考
+  id=ToolCard | Group | en=True | name=Pwsh Run echo command for smoke test
+  id=ToolCardExpand | Button | en=True | name=Pwsh Run echo command for smoke test
+  id=ToolCardWorkdir | Text | en=True | name=C:\Users\Admin\Documents
+  id=ToolCardDuration | Text | en=True | name=1秒
+  id=ToolCopyJson | Button | en=True | name=复制参数 JSON
+  id=ToolCardPath | Text | en=True | name=C:\Users\Admin\Documents\t36-smoke.txt
+  id=ToolCardDiffStat | Text | en=True | name=+1 -0
+  id=TurnRailHost | Group | en=True | name=历史快速定位
+  id=TurnRailMarks | List | en=True | name=轮次刻度列表
+  id=RunStatsTurnsText | Text | en=True | name=1 轮 3 步 · 101 tok/s
+  id=RunStatsTokensText | Text | en=True | name=2.9 万 tok · 缓存命中 52.3%
+  id=InputBox | Edit | en=True | name=消息输入框
+  id=ComposerAddButton | Button | en=True | name=添加附件或操作
+  id=PermissionButton | Button | en=True | name=访问模式，当前：自动审批
+  id=PermissionLabel | Text | en=True | name=自动审批
+  id=ModelButton | Button | en=True | name=模型与推理等级，当前 step-5-preview 高
+  id=ModelEffortLabel | Text | en=True | name=step-5-preview 高
+  id=ContextMeterRing | Button | en=True | name=上下文已用 1%
+  id=SendButton | Button | en=True | name=停止运行
+  id=LayoutSplitterSidebar | Group | en=True | name=调整侧栏宽度
+  unique-ids=59
+PROBE exists id=ToolCard label=tool-card group=tool count=2 enabled=True name=Pwsh Run echo command for smoke test help= => PASS
+PROBE invoke id=ToolCardExpand label=tool-card-expand via=TogglePattern => PASS
+PROBE exists id=ToolCopyJson label=tool-copy-json group=tool count=3 enabled=True name=复制参数 JSON help= => PASS
+PROBE exists id=ToolCardExitCode label=tool-exit-code group=tool count=1 enabled=True name=退出码 0 help= => PASS
+PROBE exists id=ToolCardStatus label=tool-status group=tool count=1 enabled=True name=执行中 help= => PASS
+INVOKE composer-add-4 => OK via=InvokePattern
+INVOKE open-trajectory-after-content => OK via=InvokePattern
+PROBE exists id=TrajectoryPanel label=trajectory-panel-live group=traj count=0 enabled= name= help= => FAIL
+PROBE exists id=TrajectoryTiming label=trajectory-timing-live group=traj count=0 enabled= name= help= => FAIL
+PROBE exists id=TrajectoryLedger label=trajectory-ledger-live group=traj count=0 enabled= name= help= => FAIL
+INVOKE open-settings => OK via=SelectionItemPattern
+=== IDS settings ===
+  id=Minimize | Button | en=True | name=Minimize
+  id=Maximize | Button | en=True | name=Maximize
+  id=Close | Button | en=True | name=Close
+  id=ContentScrollViewer | Pane | en=True | name=
+  id=PrimaryButton | Button | en=True | name=继续
+  id=SessionSearchBox | Group | en=True | name=搜索会话
+  id=TextBox | Edit | en=True | name=搜索会话
+  id=Nav | Custom | en=True | name=
+  id=PaneRoot | Window | en=True | name=
+  id=MenuItemsScrollViewer | Pane | en=True | name=
+  id=MenuItemsHost | Group | en=True | name=
+  id=NewSessionItem | ListItem | en=True | name=新建会话
+  id=WorkspaceSectionItem | ListItem | en=True | name=工作区
+  id=WorkspaceSectionHeaderText | Text | en=True | name=工作区
+  id=WorkspaceViewOptionsButton | Button | en=True | name=视图选项
+  id=AddWorkspaceButton | Button | en=True | name=添加工作区
+  id=Workspace_50141382-d003-41d8-b9a5-51d1be06e0d9 | ListItem | en=True | name=Documents
+  id=UngroupedSessionsItem | ListItem | en=True | name=未分组会话
+  id=Session_session-79ae765a-9c43-439a-bc27-40b7f96d3e1f | ListItem | en=True | name=Use the bash tool to
+  id=SessionMore_session-79ae765a-9c43-439a-bc27-40b7f96d3e1f | Button | en=True | name=会话操作：Use the bash tool to
+  id=Session_session-f6f0fcc7-fb6d-4ad4-923a-89a1192c97a8 | ListItem | en=True | name=新会话
+  id=SessionMore_session-f6f0fcc7-fb6d-4ad4-923a-89a1192c97a8 | Button | en=True | name=会话操作：新会话
+  id=Session_session-b214b56f-c790-451c-bc48-c9a3a8ab9476 | ListItem | en=True | name=创造模式可以修改目前的blade G
+  id=SessionMore_session-b214b56f-c790-451c-bc48-c9a3a8ab9476 | Button | en=True | name=会话操作：创造模式可以修改目前的blade G
+  id=Session_session-472209f6-fb3a-475e-b733-66e425706e1b | ListItem | en=True | name=新会话
+  id=SessionMore_session-472209f6-fb3a-475e-b733-66e425706e1b | Button | en=True | name=会话操作：新会话
+  id=Session_session-24015534-bd54-4822-843b-d3d8c4a54402 | ListItem | en=True | name=已就绪的计划（链接 Gf8ZPstxkhg
+  id=SessionMore_session-24015534-bd54-4822-843b-d3d8c4a54402 | Button | en=True | name=会话操作：已就绪的计划（链接 Gf8ZPstxkhg
+  id=ExpandGroup_ | ListItem | en=True | name=展开其余 147 个会话
+  id=FooterItemsScrollViewer | Pane | en=True | name=
+  id=FooterMenuItemsHost | Group | en=True | name=
+  id=SettingsItem | ListItem | en=True | name=设置
+  id=ChatSessionTitle | Text | en=True | name=当前会话标题
+  id=SubagentList | Button | en=True | name=子代理目录
+  id=ChatList | List | en=True | name=对话消息列表
+  id=ContextExpand | Button | en=True | name=系统提示词
+  id=MessageCopyButton | Button | en=True | name=复制消息
+  id=MessageDetailsButton | Button | en=True | name=消息详情
+  id=ReasoningToggle | Button | en=True | name=思考
+  id=ToolCard | Group | en=True | name=Pwsh Run echo command for smoke test
+  id=ToolCardExpand | Button | en=True | name=Pwsh Run echo command for smoke test
+  id=ToolCardWorkdir | Text | en=True | name=C:\Users\Admin\Documents
+  id=ToolCardDuration | Text | en=True | name=1秒
+  id=ToolCopyJson | Button | en=True | name=复制参数 JSON
+  id=ToolCardExitCode | Text | en=True | name=退出码 0
+  id=ToolCardPath | Text | en=True | name=C:\Users\Admin\Documents\t36-smoke.txt
+  id=ToolCardDiffStat | Text | en=True | name=+1 -0
+  id=ToolCardResultSummary | Text | en=True | name=<path>C:\Users\Admin\Documents\t36-smoke.txt</pa…
+  id=TurnRailHost | Group | en=True | name=历史快速定位
+  id=TurnRailMarks | List | en=True | name=轮次刻度列表
+  id=RunStatsTurnsText | Text | en=True | name=2 轮 5 步 · 98 tok/s
+  id=RunStatsTokensText | Text | en=True | name=5.9 万 tok · 缓存命中 52.1%
+  id=InputBox | Edit | en=True | name=消息输入框
+  id=ComposerAddButton | Button | en=True | name=添加附件或操作
+  id=PermissionButton | Button | en=True | name=访问模式，当前：自动审批
+  id=PermissionLabel | Text | en=True | name=自动审批
+  id=ModelButton | Button | en=True | name=模型与推理等级，当前 step-5-preview 高
+  id=ModelEffortLabel | Text | en=True | name=step-5-preview 高
+  id=ContextMeterRing | Button | en=True | name=上下文已用 1%
+  id=SendButton | Button | en=True | name=发送消息
+  id=LayoutSplitterSidebar | Group | en=True | name=调整侧栏宽度
+  unique-ids=61
+PROBE exists id=SettingsHost label=settings-host group=settings count=0 enabled= name= help= => FAIL
+PROBE name needle=内测声明 label=brand-internal-test group=settings count=2 => PASS
+PROBE name needle=恢复默认模型 label=restore-default-text group=settings count=0 => FAIL
+=== IDS final ===
+  id=Minimize | Button | en=True | name=Minimize
+  id=Maximize | Button | en=True | name=Maximize
+  id=Close | Button | en=True | name=Close
+  id=ContentScrollViewer | Pane | en=True | name=
+  id=PrimaryButton | Button | en=True | name=继续
+  id=SessionSearchBox | Group | en=True | name=搜索会话
+  id=TextBox | Edit | en=True | name=搜索会话
+  id=Nav | Custom | en=True | name=
+  id=PaneRoot | Window | en=True | name=
+  id=MenuItemsScrollViewer | Pane | en=True | name=
+  id=MenuItemsHost | Group | en=True | name=
+  id=NewSessionItem | ListItem | en=True | name=新建会话
+  id=WorkspaceSectionItem | ListItem | en=True | name=工作区
+  id=WorkspaceSectionHeaderText | Text | en=True | name=工作区
+  id=WorkspaceViewOptionsButton | Button | en=True | name=视图选项
+  id=AddWorkspaceButton | Button | en=True | name=添加工作区
+  id=Workspace_50141382-d003-41d8-b9a5-51d1be06e0d9 | ListItem | en=True | name=Documents
+  id=UngroupedSessionsItem | ListItem | en=True | name=未分组会话
+  id=Session_session-79ae765a-9c43-439a-bc27-40b7f96d3e1f | ListItem | en=True | name=Use the bash tool to
+  id=SessionMore_session-79ae765a-9c43-439a-bc27-40b7f96d3e1f | Button | en=True | name=会话操作：Use the bash tool to
+  id=Session_session-f6f0fcc7-fb6d-4ad4-923a-89a1192c97a8 | ListItem | en=True | name=新会话
+  id=SessionMore_session-f6f0fcc7-fb6d-4ad4-923a-89a1192c97a8 | Button | en=True | name=会话操作：新会话
+  id=Session_session-b214b56f-c790-451c-bc48-c9a3a8ab9476 | ListItem | en=True | name=创造模式可以修改目前的blade G
+  id=SessionMore_session-b214b56f-c790-451c-bc48-c9a3a8ab9476 | Button | en=True | name=会话操作：创造模式可以修改目前的blade G
+  id=Session_session-472209f6-fb3a-475e-b733-66e425706e1b | ListItem | en=True | name=新会话
+  id=SessionMore_session-472209f6-fb3a-475e-b733-66e425706e1b | Button | en=True | name=会话操作：新会话
+  id=Session_session-24015534-bd54-4822-843b-d3d8c4a54402 | ListItem | en=True | name=已就绪的计划（链接 Gf8ZPstxkhg
+  id=SessionMore_session-24015534-bd54-4822-843b-d3d8c4a54402 | Button | en=True | name=会话操作：已就绪的计划（链接 Gf8ZPstxkhg
+  id=ExpandGroup_ | ListItem | en=True | name=展开其余 147 个会话
+  id=FooterItemsScrollViewer | Pane | en=True | name=
+  id=FooterMenuItemsHost | Group | en=True | name=
+  id=SettingsItem | ListItem | en=True | name=设置
+  id=ChatSessionTitle | Text | en=True | name=当前会话标题
+  id=SubagentList | Button | en=True | name=子代理目录
+  id=ChatList | List | en=True | name=对话消息列表
+  id=ContextExpand | Button | en=True | name=系统提示词
+  id=MessageCopyButton | Button | en=True | name=复制消息
+  id=MessageDetailsButton | Button | en=True | name=消息详情
+  id=ReasoningToggle | Button | en=True | name=思考
+  id=ToolCard | Group | en=True | name=Pwsh Run echo command for smoke test
+  id=ToolCardExpand | Button | en=True | name=Pwsh Run echo command for smoke test
+  id=ToolCardWorkdir | Text | en=True | name=C:\Users\Admin\Documents
+  id=ToolCardDuration | Text | en=True | name=1秒
+  id=ToolCopyJson | Button | en=True | name=复制参数 JSON
+  id=ToolCardExitCode | Text | en=True | name=退出码 0
+  id=ToolCardPath | Text | en=True | name=C:\Users\Admin\Documents\t36-smoke.txt
+  id=ToolCardDiffStat | Text | en=True | name=+1 -0
+  id=ToolCardResultSummary | Text | en=True | name=<path>C:\Users\Admin\Documents\t36-smoke.txt</pa…
+  id=TurnRailHost | Group | en=True | name=历史快速定位
+  id=TurnRailMarks | List | en=True | name=轮次刻度列表
+  id=RunStatsTurnsText | Text | en=True | name=2 轮 5 步 · 98 tok/s
+  id=RunStatsTokensText | Text | en=True | name=5.9 万 tok · 缓存命中 52.1%
+  id=InputBox | Edit | en=True | name=消息输入框
+  id=ComposerAddButton | Button | en=True | name=添加附件或操作
+  id=PermissionButton | Button | en=True | name=访问模式，当前：自动审批
+  id=PermissionLabel | Text | en=True | name=自动审批
+  id=ModelButton | Button | en=True | name=模型与推理等级，当前 step-5-preview 高
+  id=ModelEffortLabel | Text | en=True | name=step-5-preview 高
+  id=ContextMeterRing | Button | en=True | name=上下文已用 1%
+  id=SendButton | Button | en=True | name=发送消息
+  id=LayoutSplitterSidebar | Group | en=True | name=调整侧栏宽度
+  unique-ids=61
+--- SUMMARY ---
+TOTAL=88 PASS=45 FAIL=42 PARTIAL=1
+--- BY GROUP ---
+GROUP=boot PASS=1 FAIL=0 PARTIAL=0
+GROUP=cordis PASS=0 FAIL=3 PARTIAL=0
+GROUP=files PASS=4 FAIL=3 PARTIAL=0
+GROUP=model PASS=4 FAIL=1 PARTIAL=0
+GROUP=perm PASS=2 FAIL=3 PARTIAL=0
+GROUP=preview PASS=18 FAIL=17 PARTIAL=0
+GROUP=q PASS=0 FAIL=0 PARTIAL=1
+GROUP=settings PASS=1 FAIL=2 PARTIAL=0
+GROUP=shell PASS=9 FAIL=3 PARTIAL=0
+GROUP=sub PASS=1 FAIL=3 PARTIAL=0
+GROUP=tool PASS=5 FAIL=0 PARTIAL=0
+GROUP=traj PASS=0 FAIL=7 PARTIAL=0
+KILLED
+

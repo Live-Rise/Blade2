@@ -75,6 +75,8 @@ param(
     [string[]]$Invoke = @(),
     [string]$WaitFor = '',
     [string]$WaitForLog = '',
+    [string]$LogCount = '',
+    [int]$LogCountTail = 6,
     [string]$SetText = '',
     [string]$PreInvokeSetText = '',
     [string]$Out = '',
@@ -168,22 +170,87 @@ public struct Win32Uia {
 # 本机主屏 200%：不设 PMv2 时 CopyFromScreen 吃的是虚拟化坐标，截出来的是错位/缩放的图。
 try { [void][Win32Uia]::SetProcessDpiAwarenessContext([IntPtr](-4)) } catch { }
 
-# CopyFromScreen grabs SCREEN PIXELS, so the target must really be on top when we grab.
-# ShowWindow(9)+SetForegroundWindow from a background console process is refused by the
-# foreground lock, which is why shots came back with the user's browser over the app.
-# HWND_TOPMOST (-1) + SWP_NOSIZE|NOMOVE|NOACTIVATE (0x13) does move the window, and
-# SwitchToThisWindow is the one API allowed to break the foreground lock.
-function Raise-For-Shot([IntPtr]$h) {
-    if ($h -eq [IntPtr]::Zero) { return }
+# ---------------------------------------------------------------- foreground breaker (qa4 port)
+# CopyFromScreen grabs SCREEN PIXELS, so the target must really own the foreground at the
+# shutter. ShowWindow+SetForegroundWindow from a background console process is REFUSED by the
+# Windows foreground lock, which is how qa3's screenshots-written check kept coming back with
+# "快门时目标窗不在前台（FOREGROUND=25499618 target=24121402 match=False）" - i.e. a shot of
+# whatever the user was looking at, not of this fork.
+# The breaker that demonstrably works on this machine lives in the git-tracked tool library
+# rust/tests/shot_harness.ps1 - the SAME DIRECTORY as this script, so a sync pass over the
+# gitignored rust/tmp/ cannot eat it (rust/tmp/ has been wiped twice; ledger #143):
+#   Invoke-ShotForeground -Hwnd -Tag -Log -> SendInput one ALT tap to release the foreground
+#     lock, SetForegroundWindow + BringWindowToTop, then READ THE FOREGROUND HWND BACK and
+#     compare; if it is not ours yet it climbs the rung ladder (TechAltForeground /
+#     TechAltActivate / NudgeActivate), logs "FOREGROUND-BREAK <tag> tech=<rung> try=<n>
+#     MATCH target=<hwnd>" and returns the " fg-match=..." note appended below.
+# NO SILENT FALLBACK (task #35 + ledger #143). Until 2026-09-25 this block dot-sourced a
+# helper under rust/tmp/ and, when that file was gone, kept running with a best-effort
+# SwitchToThisWindow/ShowWindow(5) nudge. That nudge cannot beat the Windows foreground lock
+# from a background console parent, so the CopyFromScreen at the -Out block photographed
+# whatever the operator was looking at: a PNG that LOOKS like success but is the wrong window.
+# Fake evidence is worse than no run, so a missing library, an unloadable library or a missing
+# entry point is now a HARD THROW before the target exe is even started (see Fail-ShotHarness).
+# NOTE: only the helper is imported. This script's own admissibility rules stay as they are -
+# the helper can turn a match=False into a match=True by actually raising the window, nothing else.
+$script:ShotHarnessPath = Join-Path $PSScriptRoot 'shot_harness.ps1'
+function Fail-ShotHarness([string]$why) {
+    W ('SHOT-HARNESS=UNUSABLE ' + $why)
+    W 'RESULT=error shot_harness.ps1 unusable - the legacy nudge fallback was removed on purpose (it yields foreground-wrong/stale frames)'
+    throw ('shot_harness.ps1 unusable: ' + $why)
+}
+if (-not (Test-Path -LiteralPath $script:ShotHarnessPath)) {
+    Fail-ShotHarness ('not found at ' + $script:ShotHarnessPath + ' - restore the git-tracked rust/tests/shot_harness.ps1 (git add it if it was never committed). Repointing this at rust/tmp/ is NOT an option: that directory is ignored and gets wiped.')
+}
+try {
+    . $script:ShotHarnessPath
+} catch {
+    Fail-ShotHarness ('dot-source threw: ' + (($_.Exception.Message -replace '\s+', ' ')))
+}
+foreach ($neededShotFn in @('Invoke-ShotForeground', 'Invoke-QaShot', 'Get-QaShotStats')) {
+    if (-not (Get-Command -CommandType Function -Name $neededShotFn -ErrorAction SilentlyContinue)) {
+        Fail-ShotHarness ('entry point ' + $neededShotFn + ' is not defined after loading ' + $script:ShotHarnessPath + ' - that copy of the library is old or incomplete')
+    }
+}
+W ('SHOT-HARNESS=' + $script:ShotHarnessPath + ' loaded (version=' + [string]$script:ShotHarnessVersion + ' api=Invoke-ShotForeground)')
+
+# Brings $h into the foreground and reports whether it actually got there. The FOREGROUND= line
+# is the evidence qa3 parses, so its format is unchanged; the harness verdict is appended as
+# ' fg-match=...' so a reader can tell WHICH rung was used without re-reading the log.
+function Raise-Foreground-For-Shot([IntPtr]$h, [string]$Tag) {
+    if ($h -eq [IntPtr]::Zero) {
+        # keep printing the evidence line the old body always printed, so a run that could not
+        # resolve an hwnd still shows match=False here instead of going silent.
+        W ('FOREGROUND=0 target=0 match=False fg-match=zero-hwnd(no-resolvable-window)')
+        return $false
+    }
+    $note = ''
+    # z-order nudge the old code already had (Drop-After-Shot / Lower-Window undoes it). Kept:
+    # it stops another window sliding over between our read-back and the shutter.
     try { [void][Win32Uia]::SetWindowPos($h, [IntPtr](-1), 0, 0, 0, 0, 0x13) } catch { }
-    try { [Win32Uia]::SwitchToThisWindow($h, $true) } catch { }
-    try { [void][Win32Uia]::ShowWindow($h, 5) } catch { }
-    try { [void][Win32Uia]::SetForegroundWindow($h) } catch { }
-    Start-Sleep -Milliseconds 400
+    # The library and its entry points are a HARD requirement, verified at load time above, so
+    # this call is the only path here: the old `if (<lib loaded>) { harness } else { nudge }`
+    # branch is gone and no code path can reach a screenshot without the harness. A ladder that
+    # throws mid-run is still reported out loud (fg-match=ladder-threw) and the read-back below
+    # decides match= - that is a degraded RUN, which is honest, not a degraded METHOD, which was
+    # the fake-evidence bug.
+    try {
+        $note = [string](Invoke-ShotForeground -Hwnd $h -Tag $Tag -Log { param($m) W $m })
+    } catch {
+        W ('FOREGROUND-BREAK ' + $Tag + ' THREW=' + (($_.Exception.Message -replace '\s+', ' ')))
+        $note = ' fg-match=ladder-threw'
+    }
+    $ok = $false
     try {
         $fg = [Win32Uia]::GetForegroundWindow()
-        W ('FOREGROUND=' + $fg.ToInt64() + ' target=' + $h.ToInt64() + ' match=' + [string]($fg -eq $h))
+        $ok = ($fg -eq $h)
+        W ('FOREGROUND=' + $fg.ToInt64() + ' target=' + $h.ToInt64() + ' match=' + [string]$ok + $note)
     } catch { }
+    return $ok
+}
+
+function Raise-For-Shot([IntPtr]$h) {
+    [void](Raise-Foreground-For-Shot $h 'gui_uia-shot')
 }
 function Drop-After-Shot([IntPtr]$h) {
     if ($h -eq [IntPtr]::Zero) { return }
@@ -387,7 +454,42 @@ function Get-LogHit([string]$needle) {
     return ''
 }
 
+# Same readers, but the COUNT of matching lines instead of the first one. Why this exists: the
+# scroll-route verdicts (#64/#89) are stated as "how many [SCROLL] lines did the app emit", and
+# `Get-LogHit` can only answer "is there at least one". A count of 0 is only evidence when the
+# file was readable and non-empty, so the line also reports the total line count per file -
+# otherwise "hits=0" cannot be told apart from "the app logs went somewhere else".
+# -LogCount may carry several needles separated by ';'.
+function Get-LogCount([string]$needle) {
+    if ($script:LogPaths -eq $null -or $script:LogPaths.Count -eq 0) { return }
+    foreach ($one in ($needle -split ';')) {
+        $ndl = $one.Trim()
+        if ($ndl -eq '') { continue }
+        $hits = @()
+        $sizes = @()
+        foreach ($path in $script:LogPaths) {
+            if (-not (Test-Path -LiteralPath $path)) { $sizes += ([System.IO.Path]::GetFileName($path) + '=missing'); continue }
+            $text = ''
+            try {
+                $fs = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+                try {
+                    $sr = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8)
+                    try { $text = $sr.ReadToEnd() } finally { $sr.Dispose() }
+                } finally { $fs.Dispose() }
+            } catch { $sizes += ([System.IO.Path]::GetFileName($path) + '=open-error'); continue }
+            $lines = @($text -split "`r?`n" | Where-Object { $_ -ne '' })
+            $sizes += ([System.IO.Path]::GetFileName($path) + '=' + $lines.Count + 'lines')
+            foreach ($line in $lines) {
+                if ($line.IndexOf($ndl, [System.StringComparison]::Ordinal) -ge 0) { $hits += $line }
+            }
+        }
+        W ('LOGCOUNT ' + (Format-Name $ndl) + ' hits=' + $hits.Count + ' files=[' + ($sizes -join ' ') + ']')
+        foreach ($l in ($hits | Select-Object -Last $LogCountTail)) { W ('  LOGHIT| ' + $l) }
+    }
+}
+
 # What each polled file looks like right now, for the timeout message: a bare "0 bytes" was
+
 # useless evidence twice over (the directory entry lags behind the stream while the app holds the
 # handle, and the polled path may not even be the file the app writes to). Opens with
 # FileShare=ReadWrite like the poller does, so a live writer's stream length is the honest number.
@@ -582,8 +684,11 @@ if ($hwnd -eq [IntPtr]::Zero) {
     if ($ws.Count -gt 0) { $hwnd = $ws[0].h; if ($title -eq '') { $title = $ws[0].t } }
 }
 
+# qa4: this raise used to be a bare ShowWindow(9)+SetForegroundWindow, which the foreground lock
+# refuses from a background console process - so the window we then walked/focused was not the
+# window on screen. Same ladder as the shutter path; it logs its own FOREGROUND= line.
 try { [void][Win32Uia]::ShowWindow($hwnd, 9) } catch { }
-try { [void][Win32Uia]::SetForegroundWindow($hwnd) } catch { }
+[void](Raise-Foreground-For-Shot $hwnd 'gui_uia-focus')
 W ('WINDOW=' + $title)
 W ('FOUND-VIA=' + $how)
 if ($hwnd -ne [IntPtr]::Zero) { W ('HWND=' + $hwnd.ToInt64()) }

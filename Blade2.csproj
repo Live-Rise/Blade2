@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -15,7 +15,7 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <PublishReadyToRun>false</PublishReadyToRun>
-    <Version>0.8.2.0</Version>
+    <Version>0.8.3.6</Version>
     <AssemblyName>Blade2</AssemblyName>
     <!-- 版本信息里的显示名走品牌名：无包形态下 AppNotificationManager 的无参 Register 让
          shell 解析发送者显示名，取的是 exe 的版本信息（FileDescription 由 AssemblyTitle 生成，
@@ -35,6 +35,13 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250602001" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
+    <!-- T37 路 A：HTML DOM 预览。仅渲染受信工作区/内核本地 HTML；IsScriptEnabled=false、
+         禁外链导航/弹窗/右键/DevTools。运行时依赖 WebView2 Runtime（Win10/11 通常自带 Evergreen）；
+         缺失时回落源码+大纲（路 B）。详见 docs/gap-audit/PARTIAL-CLOSE.md。
+         1.0.2903.40 的 CsWinRT 投影在 WinAppSDK 1.6 自包含下 XamlTypeInfo.InitTypeTables
+         抛 TypeLoadException(GetVirtualMethodTableInfoForKey)，壳直接起不来；钉 WinAppSDK
+         自带基线 1.0.2651.64（NU1605 禁止更低）。 -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2651.64" />
   </ItemGroup>
 
   <!-- 内核自包含：Kernel/（node.exe + dsh 树）原样打进 MSIX。

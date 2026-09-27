@@ -52,8 +52,8 @@ public partial class MainWindow
     private const double TurnRailMaxHeight = 420;
     /// <summary>预览卡标称高度（官方 --turn-preview-height）：卡心对准刻度中心按半值算。</summary>
     private const double TurnRailPreviewHeight = 100;
-    /// <summary>预览卡相对 rail 左缘的左偏移（负值整卡左偏出 rail，官方 right:calc(100% + 10px)）。</summary>
-    private const double TurnRailPreviewLeftOffset = -286;
+    /// <summary>预览卡相对 rail 左缘的左偏移（卡宽 360 + 10 间隙）。</summary>
+    private const double TurnRailPreviewLeftOffset = -370;
 
     /// <summary>构造期一次性挂接 rail 事件与数据源。</summary>
     private void InitTurnRail()
@@ -367,10 +367,12 @@ public partial class MainWindow
         UpdateTurnRailStyles();
 
         // 官方预览卡：prompt 为主行（无 prompt 时回落轮次号），response 为副行
-        TurnRailPreviewPrompt.Text = mark.Prompt.Length > 0 ? mark.Prompt : LF("第 {0} 轮", mark.Turn);
+        // 长路径/长串插入零宽空格作断点，否则 TextWrapping 不会在反斜杠处折行，
+        // 整条路径会在卡宽处被裁成「…approval-」这种半截。
+        TurnRailPreviewPrompt.Text = BreakLongTokens(mark.Prompt.Length > 0 ? mark.Prompt : LF("第 {0} 轮", mark.Turn));
         if (mark.Response.Length > 0)
         {
-            TurnRailPreviewResponse.Text = mark.Response;
+            TurnRailPreviewResponse.Text = BreakLongTokens(mark.Response);
             TurnRailPreviewResponse.Visibility = Visibility.Visible;
         }
         else
@@ -386,13 +388,35 @@ public partial class MainWindow
             var host = TurnRailHost;
             var pos = container.TransformToVisual(host).TransformPoint(new Windows.Foundation.Point(0, 0));
             var center = pos.Y + container.ActualHeight / 2;
-            // 卡高以实测为准（文案 MaxLines 卡住后高度是定的），首帧还没布局时才用标称值
+            // 卡高以实测为准（简介完整换行后高度不定），首帧还没布局时才用标称值
             var cardHeight = TurnRailPreviewCard.ActualHeight > 0 ? TurnRailPreviewCard.ActualHeight : TurnRailPreviewHeight;
             var maxTop = Math.Max(0, host.ActualHeight - cardHeight);
             var y = Math.Clamp(center - cardHeight / 2, 0, maxTop);
             TurnRailPreviewCard.Margin = new Thickness(TurnRailPreviewLeftOffset, y, 0, 0);
         }
         TurnRailPreviewCard.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>
+    /// 给长 token（路径、URL、长标识）插零宽空格，让 TextWrapping 能在 \ / - _ . 等处折行。
+    /// 不改可见字符，只增加合法断点，简介即可完整换行而不是卡宽硬裁。
+    /// </summary>
+    private static string BreakLongTokens(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return text;
+        }
+        var sb = new System.Text.StringBuilder(text.Length * 2);
+        foreach (var ch in text)
+        {
+            sb.Append(ch);
+            if (ch is '\\' or '/' or '-' or '_' or '.' or ':' or '?' or '&' or '=' or '#' or '%')
+            {
+                sb.Append('​'); // ZWSP
+            }
+        }
+        return sb.ToString();
     }
 
     // ---------------- 点击跳转 ----------------

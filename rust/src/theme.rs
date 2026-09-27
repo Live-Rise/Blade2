@@ -603,6 +603,610 @@ pub fn code_block_brush(scheme: Scheme) -> Brush {
     })
 }
 
+// ===================== 高对比度（HC）档：主题色全族 =====================
+//
+// 主干的 HC 档是**一份完整独立的第三档词典**：`Theme/Tokens.xaml:289-343`
+// `<ResourceDictionary x:Key="HighContrast">`，36 发 `SolidColorBrush` + 6 发 `StaticResource`
+// 别名，键集合与 Light(`:158-233`)/Dark(`:236-286`) 逐键对齐（`Tokens.xaml:14-15` 自己声明这条）。
+//
+// **这一档抄不到 ARGB 字面值，而且不该抄**：36 发键的取值全部写成
+// `Color="{ThemeResource SystemColor<槽>Color}"`，而那八颗 `SystemColor*Color` 资源在
+// `generic.xaml` 里**一处字面定义都没有**（逐槽 `grep -c 'x:Key="SystemColor…Color"'` = 0、
+// `grep -cE '<Color x:Key="SystemColor'` = 0）；非 HC 词典里那八支同名**画刷**（`generic.xaml:2130-2137`）
+// 全被框架写成品红 `#FF00FF` 占位，意思就是「非 HC 档别引这些键」。
+// ⇒ 色值由 XAML 框架**运行时**从系统当前高对比度主题调色板注入。这里落的因此是
+// 「逐键 → 系统槽」的**别名表**（`HcToken::slot`）+ 读那八个槽的 Win32 入口
+// （`system_high_contrast`），不是一组自造常量。
+//
+// 词典怎么被选中：主干**从不**把 `RequestedTheme` 设成高对比度
+// （`MainWindow.xaml.cs:18919` 只在 `ElementTheme.Dark`/`ElementTheme.Light` 之间切，
+// `ElementTheme` 也没有 HighContrast 成员 —— 主干注释 `:15790` 明写这条），
+// 全靠框架在系统 HC 生效时优先取 `x:Key="HighContrast"` 那一档。框架自己的
+// `generic.xaml:2793` 那本 HC 词典用的就是同一个键名、同一族 `SystemColor*` 槽，是这条
+// 机制的旁证。应用侧只消费一发布尔：`MainWindow.xaml.cs:15791-15801`
+// `IsHighContrast()` = `new AccessibilitySettings().HighContrast`（读不到 catch ⇒ false），
+// 三处消费点全在「关掉会吃掉对比的装饰」而不是配色：`:15653` 跳过趋势图面积渐变、
+// `:15785-15788` 多序列改由虚线区分、`:18812-18826` 气泡清掉运行时笔刷回落词典纯色。
+//
+// 分叉为什么不能「挂靠主题资源自动走」：reactor 0.100.0 公开 surface 上 HC 相关读数/旋钮
+// 全零（`element.rs` `grep -c 'Contrast'` = 0、`grep -c 'Accessibility'` = 0、
+// `PropertyId` 257 发变体里 `grep -c 'Contrast' generated.rs` = 0、`ColorScheme`
+// 只有 `Light`/`Dark`（`element.rs:1596-1600`）），`UIElement.HighContrastAdjustment` 只在
+// **私有** `mod native`（`lib.rs:7`）的 vtable 里出现（`native/winui/bindings.rs:19597-19598`）
+// ⇒ 够不着。所以 HC 档只能自己按 `HcToken::slot` 去读系统色表，见 `system_high_contrast`。
+
+/// 系统高对比度主题的八个取色槽。名字与主干/框架词典里
+/// `{ThemeResource SystemColor**<本槽>**Color}` 的那个中段一一对应（见 `resource_name`）。
+///
+/// 主干 HC 词典只用到前六颗；`ButtonFace`/`ButtonText` 是主干**没有**独立 HC 键的那几档
+/// （`control_disabled`/`subtle_*`/`control_stroke*`）落到框架 HC 词典时需要的两颗，
+/// 取证行号见 `hc_palette` 里的逐档注释。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum HcSlot {
+    /// `SystemColorWindowColor` ← `COLOR_WINDOW`(5)
+    Window,
+    /// `SystemColorWindowTextColor` ← `COLOR_WINDOWTEXT`(8)
+    WindowText,
+    /// `SystemColorGrayTextColor` ← `COLOR_GRAYTEXT`(17)
+    GrayText,
+    /// `SystemColorHighlightColor` ← `COLOR_HIGHLIGHT`(13)
+    Highlight,
+    /// `SystemColorHighlightTextColor` ← `COLOR_HIGHLIGHTTEXT`(14)
+    HighlightText,
+    /// `SystemColorHotlightColor` ← `COLOR_HOTLIGHT`(26)
+    Hotlight,
+    /// `SystemColorButtonFaceColor` ← `COLOR_BTNFACE`(15)
+    ButtonFace,
+    /// `SystemColorButtonTextColor` ← `COLOR_BTNTEXT`(18)
+    ButtonText,
+}
+
+impl HcSlot {
+    /// 表序即 `HighContrastColors` 的字段序，用例按它逐颗咬八槽的 `GetSysColor` 索引。
+    pub const ALL: [Self; 8] = [
+        Self::Window,
+        Self::WindowText,
+        Self::GrayText,
+        Self::Highlight,
+        Self::HighlightText,
+        Self::Hotlight,
+        Self::ButtonFace,
+        Self::ButtonText,
+    ];
+
+    /// `{ThemeResource SystemColor…​Color}` 的中段名；主干词典与 `generic.xaml` 都拼这个。
+    pub const fn resource_name(self) -> &'static str {
+        match self {
+            Self::Window => "Window",
+            Self::WindowText => "WindowText",
+            Self::GrayText => "GrayText",
+            Self::Highlight => "Highlight",
+            Self::HighlightText => "HighlightText",
+            Self::Hotlight => "Hotlight",
+            Self::ButtonFace => "ButtonFace",
+            Self::ButtonText => "ButtonText",
+        }
+    }
+
+    /// `GetSysColor(nIndex)` 的那发索引。数值取自本机
+    /// `windows-sys-0.61.2/src/Windows/Win32/Graphics/Gdi/mod.rs:771-796`
+    /// （`COLOR_BTNFACE`=15 `:771`、`COLOR_GRAYTEXT`=17 `:780`、`COLOR_HIGHLIGHT`=13 `:781`、
+    /// `COLOR_HIGHLIGHTTEXT`=14 `:782`、`COLOR_HOTLIGHT`=26 `:783`、`COLOR_WINDOW`=5 `:794`、
+    /// `COLOR_WINDOWTEXT`=8 `:796`、`COLOR_BTNTEXT`=18 `:775`）。
+    /// ⚠ 经典索引不是从 1 连排的：`COLOR_WINDOW` 是 5 而不是直觉上的 1，
+    /// `COLOR_HIGHLIGHTTEXT` 是 14 而不是 12 —— 别凭记忆改这两个数。
+    pub const fn sys_color_index(self) -> i32 {
+        match self {
+            Self::Window => 5,
+            Self::WindowText => 8,
+            Self::GrayText => 17,
+            Self::Highlight => 13,
+            Self::HighlightText => 14,
+            Self::Hotlight => 26,
+            Self::ButtonFace => 15,
+            Self::ButtonText => 18,
+        }
+    }
+}
+
+/// 系统 HC 主题的**当前实测**调色板：八颗槽各一个 ARGB。
+///
+/// 只有 `system_high_contrast()` 能填它（读系统），构造出来的值随用户换 HC 主题而变；
+/// 本文件其余部分一律把它当输入参数，不假设任何一颗的具体分量
+/// —— 主干那 36 发键同样不假设（它们只写槽名）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct HighContrastColors {
+    pub window: Color,
+    pub window_text: Color,
+    pub gray_text: Color,
+    pub highlight: Color,
+    pub highlight_text: Color,
+    pub hotlight: Color,
+    pub button_face: Color,
+    pub button_text: Color,
+}
+
+impl HighContrastColors {
+    /// 按槽取色。`HcToken::slot` 与 `HC_TOKEN_KEYS` 的全部下游都走这一发。
+    pub const fn slot(&self, slot: HcSlot) -> Color {
+        match slot {
+            HcSlot::Window => self.window,
+            HcSlot::WindowText => self.window_text,
+            HcSlot::GrayText => self.gray_text,
+            HcSlot::Highlight => self.highlight,
+            HcSlot::HighlightText => self.highlight_text,
+            HcSlot::Hotlight => self.hotlight,
+            HcSlot::ButtonFace => self.button_face,
+            HcSlot::ButtonText => self.button_text,
+        }
+    }
+}
+
+/// 主干 `Tokens.xaml` HC 词典的 36 发语义键。三份表（`slot()` / `name()` / `mainline_line()`）
+/// 都按 `Self::ALL` 的同一序取档，用例 `hc_token_table_matches_the_mainline_dictionary`
+/// 拿它们逐行回核主干词典本体，所以「改了一臂别名」「加一颗键但没登记行号」都会当场红。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum HcToken {
+    /// ← `SystemColorWindowColor`
+    Surface,
+    SurfaceAlt,
+    Card,
+    CardSecondary,
+    /// 分叉 `subtle_hover` 的来源令牌（`Tokens.xaml` 的 `CardHoverBrush`，见 `Palette` 字段注释）
+    CardHover,
+    TextPrimary,
+    TextSecondary,
+    TextTertiary,
+    TextDisabled,
+    Stroke,
+    StrokeSubtle,
+    Accent,
+    AccentHover,
+    AccentPressed,
+    OnAccent,
+    BubbleMica,
+    Success,
+    SuccessBg,
+    Warning,
+    WarningBg,
+    Error,
+    ErrorBg,
+    Info,
+    InfoBg,
+    FocusRing,
+    ControlFill,
+    ControlHover,
+    ControlPressed,
+    ChartSeries1,
+    ChartSeries2,
+    ChartSeries3,
+    ChartSeries4,
+    ChartSeries5,
+    ChartSeries6,
+    ChartHeatEmpty,
+    ChartGrid,
+}
+
+impl HcToken {
+    pub const ALL: [Self; 36] = [
+        Self::Surface,
+        Self::SurfaceAlt,
+        Self::Card,
+        Self::CardSecondary,
+        Self::CardHover,
+        Self::TextPrimary,
+        Self::TextSecondary,
+        Self::TextTertiary,
+        Self::TextDisabled,
+        Self::Stroke,
+        Self::StrokeSubtle,
+        Self::Accent,
+        Self::AccentHover,
+        Self::AccentPressed,
+        Self::OnAccent,
+        Self::BubbleMica,
+        Self::Success,
+        Self::SuccessBg,
+        Self::Warning,
+        Self::WarningBg,
+        Self::Error,
+        Self::ErrorBg,
+        Self::Info,
+        Self::InfoBg,
+        Self::FocusRing,
+        Self::ControlFill,
+        Self::ControlHover,
+        Self::ControlPressed,
+        Self::ChartSeries1,
+        Self::ChartSeries2,
+        Self::ChartSeries3,
+        Self::ChartSeries4,
+        Self::ChartSeries5,
+        Self::ChartSeries6,
+        Self::ChartHeatEmpty,
+        Self::ChartGrid,
+    ];
+
+    /// **本文件唯一的 HC 别名真相**：逐键 → 系统槽。
+    /// 每臂行号 = `Theme/Tokens.xaml` HighContrast 词典里的取证行（`290-330`，词典本体 `289`）。
+    /// 改任何一臂之前先去核那一行；`hc_token_table_matches_the_mainline_dictionary`
+    /// 会把这张表整个对回主干词典，压平/串档当场红。
+    pub const fn slot(self) -> HcSlot {
+        match self {
+            // 表面四档全落窗口底：HC 不做层级（Tokens.xaml:290/291/292/293）
+            Self::Surface => HcSlot::Window, // :290
+            Self::SurfaceAlt => HcSlot::Window, // :291
+            Self::Card => HcSlot::Window, // :292
+            Self::CardSecondary => HcSlot::Window, // :293
+            Self::CardHover => HcSlot::Highlight, // :294
+            // 文本两档同色：HC 里 secondary 不比 primary 淡（:295/:296），三档/禁用才落到 GrayText
+            Self::TextPrimary => HcSlot::WindowText, // :295
+            Self::TextSecondary => HcSlot::WindowText, // :296
+            Self::TextTertiary => HcSlot::GrayText, // :297
+            Self::TextDisabled => HcSlot::GrayText, // :298
+            // 两条描边同色且**与正文同色**：HC 的描边就是要看得见（:299/:300）
+            Self::Stroke => HcSlot::WindowText, // :299
+            Self::StrokeSubtle => HcSlot::WindowText, // :300
+            // 强调三态全落 Highlight：主干明写 HC 不用任何品牌色（:301/:302/:303）
+            Self::Accent => HcSlot::Highlight, // :301
+            Self::AccentHover => HcSlot::Highlight, // :302
+            Self::AccentPressed => HcSlot::Highlight, // :303
+            Self::OnAccent => HcSlot::HighlightText, // :304
+            // 气泡回落纯色窗口底：半透明在 HC 里会吃掉对比（:306，配套 `ApplyBubbleMaterial`
+            // 的 HC 分支 `MainWindow.xaml.cs:18812-18826`）
+            Self::BubbleMica => HcSlot::Window, // :306
+            // 状态色：成功/警告/信息全落窗口文本色，只有**错误**另走 Hotlight（:307-314）
+            Self::Success => HcSlot::WindowText, // :307
+            Self::SuccessBg => HcSlot::Window, // :308
+            Self::Warning => HcSlot::WindowText, // :309
+            Self::WarningBg => HcSlot::Window, // :310
+            Self::Error => HcSlot::Hotlight, // :311
+            Self::ErrorBg => HcSlot::Window, // :312
+            Self::Info => HcSlot::WindowText, // :313
+            Self::InfoBg => HcSlot::Window, // :314
+            Self::FocusRing => HcSlot::WindowText, // :315
+            // 控件填充：静置落窗口底、悬停与按下**同为** Highlight（:318/:319/:320）
+            // ⇒ HC 档**故意**把 hover/pressed 压平（框架自己那三档也是压平成 ButtonFace，
+            // `generic.xaml:4765/4766/4767`）。别按「三态得三颗色」去"修"它。
+            Self::ControlFill => HcSlot::Window, // :318
+            Self::ControlHover => HcSlot::Highlight, // :319
+            Self::ControlPressed => HcSlot::Highlight, // :320
+            // 数据色板六条序列**全压成同一颗**窗口文本色（:323-328）：多序列改由线型区分，
+            // 见 `hc_series_dash` 与主干 `MainWindow.xaml.cs:15785-15788`
+            Self::ChartSeries1 => HcSlot::WindowText, // :323
+            Self::ChartSeries2 => HcSlot::WindowText, // :324
+            Self::ChartSeries3 => HcSlot::WindowText, // :325
+            Self::ChartSeries4 => HcSlot::WindowText, // :326
+            Self::ChartSeries5 => HcSlot::WindowText, // :327
+            Self::ChartSeries6 => HcSlot::WindowText, // :328
+            Self::ChartHeatEmpty => HcSlot::Window, // :329
+            Self::ChartGrid => HcSlot::WindowText, // :330
+        }
+    }
+
+    pub const fn index(self) -> usize {
+        match self {
+            Self::Surface => 0,
+            Self::SurfaceAlt => 1,
+            Self::Card => 2,
+            Self::CardSecondary => 3,
+            Self::CardHover => 4,
+            Self::TextPrimary => 5,
+            Self::TextSecondary => 6,
+            Self::TextTertiary => 7,
+            Self::TextDisabled => 8,
+            Self::Stroke => 9,
+            Self::StrokeSubtle => 10,
+            Self::Accent => 11,
+            Self::AccentHover => 12,
+            Self::AccentPressed => 13,
+            Self::OnAccent => 14,
+            Self::BubbleMica => 15,
+            Self::Success => 16,
+            Self::SuccessBg => 17,
+            Self::Warning => 18,
+            Self::WarningBg => 19,
+            Self::Error => 20,
+            Self::ErrorBg => 21,
+            Self::Info => 22,
+            Self::InfoBg => 23,
+            Self::FocusRing => 24,
+            Self::ControlFill => 25,
+            Self::ControlHover => 26,
+            Self::ControlPressed => 27,
+            Self::ChartSeries1 => 28,
+            Self::ChartSeries2 => 29,
+            Self::ChartSeries3 => 30,
+            Self::ChartSeries4 => 31,
+            Self::ChartSeries5 => 32,
+            Self::ChartSeries6 => 33,
+            Self::ChartHeatEmpty => 34,
+            Self::ChartGrid => 35,
+        }
+    }
+
+    /// 某槽在主干 HC 词典里对应的那句 `{ThemeResource SystemColor…Color}` 原文片段，
+    /// 给用例拿去和 `Tokens.xaml` 的那一行比对。
+    pub const fn mainline_expectation(self) -> (&'static str, &'static str) {
+        (self.name(), self.slot().resource_name())
+    }
+
+    /// 主干资源键名（`Tokens.xaml` 里的 `x:Key`），与 `Self::ALL` 同序。
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Surface => "SurfaceBrush",
+            Self::SurfaceAlt => "SurfaceAltBrush",
+            Self::Card => "CardBrush",
+            Self::CardSecondary => "CardSecondaryBrush",
+            Self::CardHover => "CardHoverBrush",
+            Self::TextPrimary => "TextPrimaryBrush",
+            Self::TextSecondary => "TextSecondaryBrush",
+            Self::TextTertiary => "TextTertiaryBrush",
+            Self::TextDisabled => "TextDisabledBrush",
+            Self::Stroke => "StrokeBrush",
+            Self::StrokeSubtle => "StrokeSubtleBrush",
+            Self::Accent => "AccentBrush",
+            Self::AccentHover => "AccentHoverBrush",
+            Self::AccentPressed => "AccentPressedBrush",
+            Self::OnAccent => "OnAccentBrush",
+            Self::BubbleMica => "BubbleMicaBrush",
+            Self::Success => "SuccessBrush",
+            Self::SuccessBg => "SuccessBgBrush",
+            Self::Warning => "WarningBrush",
+            Self::WarningBg => "WarningBgBrush",
+            Self::Error => "ErrorBrush",
+            Self::ErrorBg => "ErrorBgBrush",
+            Self::Info => "InfoBrush",
+            Self::InfoBg => "InfoBgBrush",
+            Self::FocusRing => "FocusRingBrush",
+            Self::ControlFill => "ControlFillBrush",
+            Self::ControlHover => "ControlHoverBrush",
+            Self::ControlPressed => "ControlPressedBrush",
+            Self::ChartSeries1 => "ChartSeries1Brush",
+            Self::ChartSeries2 => "ChartSeries2Brush",
+            Self::ChartSeries3 => "ChartSeries3Brush",
+            Self::ChartSeries4 => "ChartSeries4Brush",
+            Self::ChartSeries5 => "ChartSeries5Brush",
+            Self::ChartSeries6 => "ChartSeries6Brush",
+            Self::ChartHeatEmpty => "ChartHeatEmptyBrush",
+            Self::ChartGrid => "ChartGridBrush",
+        }
+    }
+
+    /// 取证行号（`Theme/Tokens.xaml`）。
+    pub const fn mainline_line(self) -> &'static str {
+        match self {
+            Self::Surface => "Tokens.xaml:290",
+            Self::SurfaceAlt => "Tokens.xaml:291",
+            Self::Card => "Tokens.xaml:292",
+            Self::CardSecondary => "Tokens.xaml:293",
+            Self::CardHover => "Tokens.xaml:294",
+            Self::TextPrimary => "Tokens.xaml:295",
+            Self::TextSecondary => "Tokens.xaml:296",
+            Self::TextTertiary => "Tokens.xaml:297",
+            Self::TextDisabled => "Tokens.xaml:298",
+            Self::Stroke => "Tokens.xaml:299",
+            Self::StrokeSubtle => "Tokens.xaml:300",
+            Self::Accent => "Tokens.xaml:301",
+            Self::AccentHover => "Tokens.xaml:302",
+            Self::AccentPressed => "Tokens.xaml:303",
+            Self::OnAccent => "Tokens.xaml:304",
+            Self::BubbleMica => "Tokens.xaml:306",
+            Self::Success => "Tokens.xaml:307",
+            Self::SuccessBg => "Tokens.xaml:308",
+            Self::Warning => "Tokens.xaml:309",
+            Self::WarningBg => "Tokens.xaml:310",
+            Self::Error => "Tokens.xaml:311",
+            Self::ErrorBg => "Tokens.xaml:312",
+            Self::Info => "Tokens.xaml:313",
+            Self::InfoBg => "Tokens.xaml:314",
+            Self::FocusRing => "Tokens.xaml:315",
+            Self::ControlFill => "Tokens.xaml:318",
+            Self::ControlHover => "Tokens.xaml:319",
+            Self::ControlPressed => "Tokens.xaml:320",
+            Self::ChartSeries1 => "Tokens.xaml:323",
+            Self::ChartSeries2 => "Tokens.xaml:324",
+            Self::ChartSeries3 => "Tokens.xaml:325",
+            Self::ChartSeries4 => "Tokens.xaml:326",
+            Self::ChartSeries5 => "Tokens.xaml:327",
+            Self::ChartSeries6 => "Tokens.xaml:328",
+            Self::ChartHeatEmpty => "Tokens.xaml:329",
+            Self::ChartGrid => "Tokens.xaml:330",
+        }
+    }
+
+    /// 逐键取色：`HcToken::slot` 的便利外壳，也是 `hc_palette` 唯一的取色通道。
+    pub const fn color(self, colors: &HighContrastColors) -> Color {
+        colors.slot(self.slot())
+    }
+}
+
+/// HC 档的整套语义画刷：把主干 Light/Dark 那本 `Palette` 的**每一档**改写成
+/// 「系统槽的当前实测值」，别名关系逐键照抄 `Tokens.xaml` 的 HighContrast 词典。
+///
+/// `scheme` 参数**不参与取色**（HC 词典里没有任何一档按深浅分叉），只填进
+/// `Palette::scheme` 让下游那些「按深浅兜底」的分支不至于读到 `Default`；
+/// 传调用方原本的 `self.scheme` 即可。气泡在 HC 档按主干口径落回纯色
+/// （`Tokens.xaml:306`），所以 [`Palette::bubble_with`] 在这套笔刷上**不该再被调用**
+/// —— 主干 `ApplyBubbleMaterial` 的 HC 分支（`MainWindow.xaml.cs:18812-18826`）就是
+/// 清掉运行时笔刷、回落词典纯色，接线侧必须同样跳过那次覆写。
+///
+/// 主干**没有**独立 HC 键、只能落框架 HC 词典的那六档，注释里各挂 `generic.xaml` 的行号：
+/// · `control_disabled` = `ControlFillColorDisabled` → ButtonFace（`generic.xaml:4768`）
+/// · `subtle_rest` = `SubtleFillColorTransparent` → 字面 `Transparent`（`:4774`）
+/// · `subtle_pressed` = `SubtleFillColorTertiary` → ButtonFace（`:4776`）
+/// · `subtle_disabled` = `SubtleFillColorDisabled` → ButtonFace（`:4777`）
+/// · `control_stroke` = `ControlStrokeColorSecondary` → ButtonText（`:4793`）
+/// · `control_stroke_pressed` = `ControlStrokeColorDefault` → ButtonText（`:4792`）
+/// · `accent_disabled` = `AccentFillColorDisabled` → Window（`:4791`）
+///
+/// ⚠ 与 Light/Dark 那条「Subtle 链静置/禁用是全透明」的观感**相反**：HC 档里
+/// `subtle_pressed`/`subtle_disabled` 是**实心** ButtonFace。这不是笔误，
+/// 框架就是这么定的那两档（上面两个行号）。
+pub fn hc_palette(scheme: Scheme, colors: &HighContrastColors) -> Palette {
+    let solid = |token: HcToken| Brush::Solid(token.color(colors));
+    let c = |token: HcToken| token.color(colors);
+    let on_accent = c(HcToken::OnAccent);
+    Palette {
+        scheme,
+        surface: solid(HcToken::Surface),
+        surface_alt: solid(HcToken::SurfaceAlt),
+        card: solid(HcToken::Card),
+        card_secondary: solid(HcToken::CardSecondary),
+        stroke: solid(HcToken::Stroke),
+        stroke_subtle: solid(HcToken::StrokeSubtle),
+        text_primary: solid(HcToken::TextPrimary),
+        text_secondary: solid(HcToken::TextSecondary),
+        text_tertiary: solid(HcToken::TextTertiary),
+        text_disabled: solid(HcToken::TextDisabled),
+        accent: solid(HcToken::Accent),
+        on_accent: Brush::Solid(on_accent),
+        on_accent_color: on_accent,
+        control_fill: solid(HcToken::ControlFill),
+        control_hover: solid(HcToken::ControlHover),
+        control_pressed: solid(HcToken::ControlPressed),
+        // 主干无 HC 键：框架 HC 词典 ControlFillColorDisabled = ButtonFace（generic.xaml:4768）
+        control_disabled: Brush::Solid(colors.slot(HcSlot::ButtonFace)),
+        control_stroke: Brush::Solid(colors.slot(HcSlot::ButtonText)), // generic.xaml:4793
+        control_stroke_pressed: Brush::Solid(colors.slot(HcSlot::ButtonText)), // generic.xaml:4792
+        accent_disabled: Brush::Solid(colors.slot(HcSlot::Window)), // generic.xaml:4791
+        control_fill_color: c(HcToken::ControlFill),
+        subtle_hover_color: c(HcToken::CardHover),
+        subtle_pressed_color: colors.slot(HcSlot::ButtonFace), // generic.xaml:4776
+        // 主干 CardHoverBrush = Highlight（Tokens.xaml:294），压过框架那档 ButtonFace（:4775）
+        subtle_hover: solid(HcToken::CardHover),
+        // SubtleFillColorTransparent 在框架 HC 词典里就是字面 Transparent（:4774）
+        subtle_rest: TRANSPARENT,
+        subtle_pressed: Brush::Solid(colors.slot(HcSlot::ButtonFace)), // generic.xaml:4776
+        subtle_disabled: Brush::Solid(colors.slot(HcSlot::ButtonFace)), // generic.xaml:4777
+        bubble: solid(HcToken::BubbleMica),
+        info: solid(HcToken::Info),
+        info_bg: solid(HcToken::InfoBg),
+        success: solid(HcToken::Success),
+        warning: solid(HcToken::Warning),
+        warning_bg: solid(HcToken::WarningBg),
+        error: solid(HcToken::Error),
+        transparent: TRANSPARENT,
+    }
+}
+
+/// HC 档的图表色板：主干把六条序列**全压成同一颗**窗口文本色（`Tokens.xaml:323-328`），
+/// 所以这里六颗**必须**一样，靠 [`hc_series_dash`] 的线型区分序列。
+/// 别「顺手」给它们配六色 —— 那是主干明确不要的（词典上方注释 `:321-322`）。
+pub fn hc_chart_palette(colors: &HighContrastColors) -> Vec<Brush> {
+    [
+        HcToken::ChartSeries1,
+        HcToken::ChartSeries2,
+        HcToken::ChartSeries3,
+        HcToken::ChartSeries4,
+        HcToken::ChartSeries5,
+        HcToken::ChartSeries6,
+    ]
+    .iter()
+    .map(|token| Brush::Solid(token.color(colors)))
+    .collect()
+}
+
+/// 多序列的线型档：主干 `MainWindow.xaml.cs:15785-15788` 的 `SeriesDash`
+/// （`IsHighContrast() && index % 3 > 0 ? new DoubleCollection { 3 * (index % 3), 2 } : null`）。
+/// HC 下序列色全同 ⇒ 序列 1（index 0）实线，index%3>0 的按 `{3*(i%3), 2}` 加虚线。
+/// 只在 HC 档调用：非 HC 档主干一律给 `null`，不加虚线。
+pub const fn hc_series_dash(index: usize) -> Option<[f64; 2]> {
+    let phase = index % 3;
+    if phase > 0 {
+        Some([3.0 * phase as f64, 2.0])
+    } else {
+        None
+    }
+}
+
+/// 代码块底色：主干这一档**不是令牌**（`theme.rs:576` 那颗 `CODE_BLOCK_BG` 按
+/// `IsDarkTheme` 二选一），HC 词典里没有对应物 ⇒ 没有可抄的行号。
+/// 这里落到 `SystemColorWindowColor`，与 `SurfaceBrush` 同槽（`Tokens.xaml:290`），
+/// 是为了「底板不比窗口更亮、字形仍是窗口文本色」这条 HC 底线。
+/// ⚠ 这一发是**推断**、不是主干取证，见报告 §6。
+pub fn hc_code_block_bg(colors: &HighContrastColors) -> Brush {
+    Brush::Solid(colors.slot(HcSlot::Window))
+}
+
+// ---- 运行时读数：八颗槽从哪来 ----
+
+#[repr(C)]
+#[allow(dead_code, reason = "`cbSize`/`lpszDefaultScheme` 只喂给 user32 与由它写回，Rust 侧只读 `dwFlags`")]
+struct HighContrastW {
+    cb_size: u32,
+    dw_flags: u32,
+    lpsz_default_scheme: *mut u16,
+}
+
+/// `SPI_GETHIGHCONTRAST`（本机 `windows-sys-0.61.2/.../UI/WindowsAndMessaging/mod.rs:3082` = 66）
+const SPI_GETHIGHCONTRAST: u32 = 66;
+/// `HCF_HIGHCONTRASTON`（本机 `windows-sys-0.61.2/.../UI/Accessibility/mod.rs:444` = 1）
+const HCF_HIGHCONTRASTON: u32 = 1;
+
+// 零依赖口径同 `keys.rs:35-42`：裸 `extern "system"` + `#[link]` 自声明，不新增 Cargo 依赖。
+// `GetSysColor` 在 **user32**（`windows-sys-0.61.2/.../Graphics/Gdi/mod.rs:213`），不在 gdi32。
+#[link(name = "user32")]
+unsafe extern "system" {
+    fn GetSysColor(n_index: i32) -> u32;
+    fn SystemParametersInfoW(
+        ui_action: u32,
+        ui_param: u32,
+        pv_param: *mut core::ffi::c_void,
+        ui_win_ini: u32,
+    ) -> i32;
+}
+
+/// 某一槽的当前系统色。`GetSysColor` 返回 `0x00BBGGRR`（没有 alpha 那一字节），
+/// HC 档全程实心 ⇒ alpha 一律 255，与主干 HC 词典「不做任何半透明」的约定同向
+/// （`Tokens.xaml:316-317`、`MainWindow.xaml.cs:15652` 那条注释）。
+pub fn sys_color(slot: HcSlot) -> Color {
+    let bgr = unsafe { GetSysColor(slot.sys_color_index()) };
+    Color {
+        a: 255,
+        r: (bgr & 0xFF) as u8,
+        g: ((bgr >> 8) & 0xFF) as u8,
+        b: (bgr >> 16) as u8,
+    }
+}
+
+/// 系统高对比度开关现在是不是**开着**。读不到就按「没开」处理 ——
+/// 与主干 `MainWindow.xaml.cs:15797-15799` 那个 `catch (Exception) => false` 同方向。
+pub fn high_contrast_active() -> bool {
+    let mut info = HighContrastW {
+        cb_size: core::mem::size_of::<HighContrastW>() as u32,
+        dw_flags: 0,
+        lpsz_default_scheme: core::ptr::null_mut(),
+    };
+    let ok = unsafe {
+        SystemParametersInfoW(
+            SPI_GETHIGHCONTRAST,
+            info.cb_size,
+            &mut info as *mut HighContrastW as *mut core::ffi::c_void,
+            0,
+        )
+    };
+    ok != 0 && (info.dw_flags & HCF_HIGHCONTRASTON) != 0
+}
+
+/// 整套系统 HC 调色板的当前实测值；**开关没开就返回 `None`**（此时分叉该继续用
+/// `Palette::for_scheme`，与主干「HC 词典只在系统 HC 生效时被选中」同构）。
+pub fn system_high_contrast() -> Option<HighContrastColors> {
+    if !high_contrast_active() {
+        return None;
+    }
+    Some(HighContrastColors {
+        window: sys_color(HcSlot::Window),
+        window_text: sys_color(HcSlot::WindowText),
+        gray_text: sys_color(HcSlot::GrayText),
+        highlight: sys_color(HcSlot::Highlight),
+        highlight_text: sys_color(HcSlot::HighlightText),
+        hotlight: sys_color(HcSlot::Hotlight),
+        button_face: sys_color(HcSlot::ButtonFace),
+        button_text: sys_color(HcSlot::ButtonText),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -867,5 +1471,350 @@ mod tests {
             rgb(bubble_brush(Scheme::Light, BubbleMaterial::Acrylic, WindowMaterial::MicaAlt, 0.6)),
             (0xF3, 0xF3, 0xF3)
         );
+    }
+
+    // ===================== HC 档 =====================
+    //
+    // 八槽的**夹具值**：每颗 RGB 互不相同、alpha 一律 255（HC 全程实心）。
+    // 逐键断言全部拿这套夹具去核「等于哪一颗槽」，**不核任何一颗 ARGB 的真值** ——
+    // 真值由 `GetSysColor` 在运行时给（见文件头 HC 段），在这里钉死就等于自造值。
+    fn hc_fixture() -> HighContrastColors {
+        HighContrastColors {
+            window: argb(0xFF, 0x0A_0B_0C),
+            window_text: argb(0xFF, 0x1D_1E_1F),
+            gray_text: argb(0xFF, 0x2E_2F_30),
+            highlight: argb(0xFF, 0x3F_40_41),
+            highlight_text: argb(0xFF, 0x4C_4D_4E),
+            hotlight: argb(0xFF, 0x5A_5B_5C),
+            button_face: argb(0xFF, 0x6B_6C_6D),
+            button_text: argb(0xFF, 0x7C_7D_7E),
+        }
+    }
+
+    /// `GetSysColor` 那一发索引必须逐颗等于本机 `windows-sys-0.61.2` 里的常量
+    /// （`Graphics/Gdi/mod.rs:771-796`）：经典索引**不是从 1 连排的**，
+    /// `COLOR_WINDOW`=5 不是 1、`COLOR_HIGHLIGHTTEXT`=14 不是 12 —— 记错了这里就红。
+    #[test]
+    fn hc_slots_carry_distinct_syscolor_indices() {
+        let want = [
+            (HcSlot::Window, "Window", 5),
+            (HcSlot::WindowText, "WindowText", 8),
+            (HcSlot::GrayText, "GrayText", 17),
+            (HcSlot::Highlight, "Highlight", 13),
+            (HcSlot::HighlightText, "HighlightText", 14),
+            (HcSlot::Hotlight, "Hotlight", 26),
+            (HcSlot::ButtonFace, "ButtonFace", 15),
+            (HcSlot::ButtonText, "ButtonText", 18),
+        ];
+        assert_eq!(HcSlot::ALL.len(), 8);
+        for (slot, name, index) in want {
+            assert_eq!(slot.resource_name(), name, "槽名拼错 = 词典里引不到那一句");
+            assert_eq!(slot.sys_color_index(), index, "COLOR_* 索引记错了：{name}");
+        }
+        // 反向半边：八颗索引两两不同（撞号就是两档被并成一颗系统色）
+        for (i, a) in HcSlot::ALL.iter().enumerate() {
+            for (j, b) in HcSlot::ALL.iter().enumerate() {
+                if i != j {
+                    assert_ne!(a.sys_color_index(), b.sys_color_index());
+                }
+            }
+        }
+    }
+
+    /// 逐键回核主干词典本体：`Theme/Tokens.xaml` 的 HighContrast 词典里那一行
+    /// 必须**同时**对上①键名 ②`HcToken::slot()` 给的槽 ③`mainline_line()` 给的行号。
+    /// 三样里任一样漂了就红 —— 主干词典是权威，本文件那张表只是它的抄本。
+    #[test]
+    fn hc_token_table_matches_the_mainline_dictionary() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../Theme/Tokens.xaml");
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("读主干词典失败 {path:?}：{e}"));
+        let opener = r#"<ResourceDictionary x:Key="HighContrast">"#;
+        let start = text
+            .find(opener)
+            .expect("主干 Tokens.xaml 里没有 x:Key=\"HighContrast\" 词典");
+        let block_start = text[..start].matches('\n').count() + 1;
+        let block = &text[start..start + text[start..].find("</ResourceDictionary>").expect("HC 词典没收尾")];
+        // 词典里画刷行的总数 = 表长：主干加一颗而分叉没登记 ⇒ 这里红
+        let solid_rows = block.lines().filter(|l| l.contains("<SolidColorBrush")).count();
+        assert_eq!(solid_rows, HcToken::ALL.len(), "主干 HC 词典的画刷数与本表不齐");
+        for token in HcToken::ALL {
+            let key = format!("x:Key=\"{}\"", token.name());
+            let slot = format!("{{ThemeResource SystemColor{}Color}}", token.slot().resource_name());
+            let hit = block
+                .lines()
+                .enumerate()
+                .find(|(_, line)| line.contains(&key))
+                .unwrap_or_else(|| panic!("主干 HC 词典里没有 {}", token.name()));
+            let line = block_start + hit.0;
+            let recorded: usize = token
+                .mainline_line()
+                .strip_prefix("Tokens.xaml:")
+                .unwrap_or_else(|| panic!("行号串形状不对：{}", token.mainline_line()))
+                .parse()
+                .expect("主干行号不是数字");
+            assert_eq!(
+                line, recorded,
+                "{} 的行号漂了：本表记 {}、主干在 L{line}",
+                token.name(),
+                token.mainline_line(),
+            );
+            assert!(
+                hit.1.contains(&slot),
+                "{} 的槽对不上：本表给 {}，主干那行是 {}",
+                token.name(),
+                slot,
+                hit.1.trim(),
+            );
+        }
+    }
+
+    /// 逐键 ARGB 逐字节：`hc_palette` 每一档必须**正好**等于它声明的那颗槽的夹具值，
+    /// 一字节都不能差。反向半边两头都咬：
+    /// ① 别名不同（三档灰 ≠ 两档正文）的两档必须真的不等 —— 压平就红；
+    /// ② 主干**故意**压平的两档（HC 的 hover/pressed 同为 Highlight，`Tokens.xaml:319/320`）
+    ///    必须相等 —— 有人"顺手修成三态三颗色"也红。
+    #[test]
+    fn hc_palette_is_byte_equal_to_its_declared_slot() {
+        let c = hc_fixture();
+        let p = hc_palette(Scheme::Dark, &c);
+        let face = |brush: Brush| match brush {
+            Brush::Solid(color) => (color.a, color.r, color.g, color.b),
+            Brush::Theme(_) => panic!("HC 档不许留主题画刷：它跟着的是非 HC 词典"),
+        };
+        let want = |slot: HcSlot| {
+            let color = c.slot(slot);
+            (color.a, color.r, color.g, color.b)
+        };
+        // 主干 36 键里落在 Palette 上的每一档
+        assert_eq!(face(p.surface), want(HcSlot::Window)); // Tokens.xaml:290
+        assert_eq!(face(p.surface_alt), want(HcSlot::Window)); // :291
+        assert_eq!(face(p.card), want(HcSlot::Window)); // :292
+        assert_eq!(face(p.card_secondary), want(HcSlot::Window)); // :293
+        assert_eq!(face(p.subtle_hover), want(HcSlot::Highlight)); // :294
+        assert_eq!(face(p.text_primary), want(HcSlot::WindowText)); // :295
+        assert_eq!(face(p.text_secondary), want(HcSlot::WindowText)); // :296
+        assert_eq!(face(p.text_tertiary), want(HcSlot::GrayText)); // :297
+        assert_eq!(face(p.text_disabled), want(HcSlot::GrayText)); // :298
+        assert_eq!(face(p.stroke), want(HcSlot::WindowText)); // :299
+        assert_eq!(face(p.stroke_subtle), want(HcSlot::WindowText)); // :300
+        assert_eq!(face(p.accent), want(HcSlot::Highlight)); // :301
+        assert_eq!(face(p.on_accent), want(HcSlot::HighlightText)); // :304
+        assert_eq!(face(p.bubble), want(HcSlot::Window)); // :306
+        assert_eq!(face(p.success), want(HcSlot::WindowText)); // :307
+        assert_eq!(face(p.warning), want(HcSlot::WindowText)); // :309
+        assert_eq!(face(p.warning_bg), want(HcSlot::Window)); // :310
+        assert_eq!(face(p.error), want(HcSlot::Hotlight)); // :311
+        assert_eq!(face(p.info), want(HcSlot::WindowText)); // :313
+        assert_eq!(face(p.info_bg), want(HcSlot::Window)); // :314
+        assert_eq!(face(p.control_fill), want(HcSlot::Window)); // :318
+        assert_eq!(face(p.control_hover), want(HcSlot::Highlight)); // :319
+        assert_eq!(face(p.control_pressed), want(HcSlot::Highlight)); // :320
+        // 主干无 HC 键、落框架 HC 词典的那五档
+        assert_eq!(face(p.control_disabled), want(HcSlot::ButtonFace)); // generic.xaml:4768
+        assert_eq!(face(p.control_stroke), want(HcSlot::ButtonText)); // :4793
+        assert_eq!(face(p.control_stroke_pressed), want(HcSlot::ButtonText)); // :4792
+        assert_eq!(face(p.accent_disabled), want(HcSlot::Window)); // :4791
+        assert_eq!(face(p.subtle_pressed), want(HcSlot::ButtonFace)); // :4776
+        assert_eq!(face(p.subtle_disabled), want(HcSlot::ButtonFace)); // :4777
+        // Color 那几档也得同槽（resource_overrides 只吃 Color）
+        assert_eq!(p.on_accent_color, c.slot(HcSlot::HighlightText));
+        assert_eq!(p.control_fill_color, c.slot(HcSlot::Window));
+        assert_eq!(p.subtle_hover_color, c.slot(HcSlot::Highlight));
+        assert_eq!(p.subtle_pressed_color, c.slot(HcSlot::ButtonFace));
+        // ① 反向半边：别名不同的档必须不等
+        assert_ne!(face(p.text_tertiary), face(p.text_primary), "三档灰被压成正文了");
+        assert_ne!(face(p.error), face(p.success), "Hotlight 被压成窗口文本色了");
+        assert_ne!(face(p.on_accent), face(p.accent), "反白字被压成底色了");
+        assert_ne!(face(p.control_fill), face(p.control_hover), "静置被压成悬停了");
+        assert_ne!(face(p.subtle_hover), face(p.subtle_disabled));
+        assert_ne!(face(p.control_stroke), face(p.control_fill), "描边化进底里了");
+        // ② 主干故意压平的档必须相等（引号里是主干行号）
+        assert_eq!(face(p.control_hover), face(p.control_pressed), "Tokens.xaml:319/320 本就同颗");
+        assert_eq!(face(p.text_primary), face(p.text_secondary), "Tokens.xaml:295/296 本就同颗");
+        assert_eq!(face(p.stroke), face(p.stroke_subtle), "Tokens.xaml:299/300 本就同颗");
+    }
+
+    /// **三档不压平**：同一颗键在 Light / Dark / HC 三档下必须各有其值。
+    /// 判据用 HC 夹具的 alpha=255 + 独有 RGB 去撞浅深两档的字面常量，
+    /// 任一档被当成另一档抄（例如 HC 忘了覆写、落回 `Palette::for_scheme`）就红。
+    /// 表里只挑**浅深两档都是实心且互不相同**的键：`stroke`/`error` 那种两档同为
+    /// `Brush::Theme` 的不能进来，否则 `face()` 把它们都折成同一颗，三档判据成假绿。
+    #[test]
+    fn hc_light_and_dark_are_three_distinct_tiers() {
+        let c = hc_fixture();
+        let hc = hc_palette(Scheme::Dark, &c);
+        let light = Palette::for_scheme(Scheme::Light);
+        let dark = Palette::for_scheme(Scheme::Dark);
+        let face = |brush: Brush| match brush {
+            Brush::Solid(color) => (color.a, color.r, color.g, color.b),
+            Brush::Theme(_) => panic!("这一档浅/深两档必须都是实心，否则表里的判据是假的"),
+        };
+        // 每一行 = (HC, Light, Dark) 三档同键；HC 那颗来自夹具
+        let rows: [(&str, (u8, u8, u8, u8), (u8, u8, u8, u8), (u8, u8, u8, u8)); 6] = [
+            (
+                "surface_alt",
+                face(hc.surface_alt),
+                face(light.surface_alt),
+                face(dark.surface_alt),
+            ),
+            (
+                "card_secondary",
+                face(hc.card_secondary),
+                face(light.card_secondary),
+                face(dark.card_secondary),
+            ),
+            (
+                "text_tertiary",
+                face(hc.text_tertiary),
+                face(light.text_tertiary),
+                face(dark.text_tertiary),
+            ),
+            (
+                "control_hover",
+                face(hc.control_hover),
+                face(light.control_hover),
+                face(dark.control_hover),
+            ),
+            ("bubble", face(hc.bubble), face(light.bubble), face(dark.bubble)),
+            (
+                "warning_bg",
+                face(hc.warning_bg),
+                face(light.warning_bg),
+                face(dark.warning_bg),
+            ),
+        ];
+        for (key, hc_face, light_face, dark_face) in rows {
+            assert_ne!(hc_face, light_face, "{key}：HC 档与 Light 档压平了");
+            assert_ne!(hc_face, dark_face, "{key}：HC 档与 Dark 档压平了");
+            // 反向半边：浅深两档本身也不许被并成一颗（并了的话上面两条会同时假绿）
+            assert_ne!(light_face, dark_face, "{key}：Light 与 Dark 档压平了");
+        }
+        // 重点核：HC 的三档灰就是系统灰字色（`Tokens.xaml:297`），浅深两档都是带
+        // alpha 的叠加黑/白 —— 夹具那颗撞不上任何字面常量
+        assert_eq!(hc.text_tertiary, Brush::Solid(c.slot(HcSlot::GrayText)));
+        // 反向半边：HC 忘了覆写、整包落回 `for_scheme` 就红
+        assert_ne!(hc.bubble, dark.bubble, "HC 气泡落回深色档常量了");
+        assert_ne!(hc.bubble, light.bubble, "HC 气泡落回浅色档常量了");
+        assert_ne!(hc.control_hover, light.control_hover);
+        assert_ne!(hc.control_hover, dark.control_hover);
+    }
+
+    /// HC 档整套笔刷里**一支都不许留** `Brush::Theme`：主题画刷跟着的是非 HC 词典，
+    /// 在 HC 档留着它就是那一档没被系统色接管（`surface`/`card`/`stroke`/`text_primary`/
+    /// `accent`/`info`/`error` 六档在 Light/Dark 里原本全是 Theme 画刷）。
+    /// 反向半边：Light 档**确实**有 Theme 画刷，否则这个循环是空转。
+    #[test]
+    fn hc_palette_leaves_no_theme_brush_behind() {
+        let c = hc_fixture();
+        let p = hc_palette(Scheme::Light, &c);
+        let brushes = [
+            p.surface,
+            p.surface_alt,
+            p.card,
+            p.card_secondary,
+            p.stroke,
+            p.stroke_subtle,
+            p.text_primary,
+            p.text_secondary,
+            p.text_tertiary,
+            p.text_disabled,
+            p.accent,
+            p.on_accent,
+            p.control_fill,
+            p.control_hover,
+            p.control_pressed,
+            p.control_disabled,
+            p.control_stroke,
+            p.control_stroke_pressed,
+            p.accent_disabled,
+            p.subtle_hover,
+            p.subtle_rest,
+            p.subtle_pressed,
+            p.subtle_disabled,
+            p.bubble,
+            p.info,
+            p.info_bg,
+            p.success,
+            p.warning,
+            p.warning_bg,
+            p.error,
+            p.transparent,
+        ];
+        assert_eq!(brushes.len(), 31, "Palette 的 31 支画刷得全在这");
+        for brush in brushes {
+            assert!(matches!(brush, Brush::Solid(_)), "HC 档漏了一支主题画刷");
+        }
+        // 实心那半边：除 `transparent`/`subtle_rest`（框架 HC 词典就是字面 Transparent，
+        // generic.xaml:4774）之外，所有档 alpha 必须 255 —— HC 全程不做半透明
+        // （`Tokens.xaml:316-317` 那两行注释、`MainWindow.xaml.cs:15652` 同一条约定）。
+        let solid_only = [p.surface, p.card, p.text_tertiary, p.error, p.control_hover];
+        assert!(
+            solid_only.iter().all(|b| matches!(b, Brush::Solid(x) if x.a == 255)),
+            "HC 档出现了带 alpha 的档"
+        );
+        assert!(matches!(p.subtle_rest, Brush::Solid(x) if x.a == 0));
+        // 反向半边：Light 档有 Theme 画刷 ⇒ 上面那个循环不是空转
+        let light = Palette::for_scheme(Scheme::Light);
+        assert!(matches!(light.surface, Brush::Theme(_)));
+        assert!(matches!(light.accent, Brush::Theme(_)));
+        assert!(matches!(light.error, Brush::Theme(_)));
+    }
+
+    /// 数据色板：主干 HC 词典把六条序列**全压成同一颗**窗口文本色（`Tokens.xaml:323-328`），
+    /// 代价由线型补：`hc_series_dash` 照抄主干 `SeriesDash`（`MainWindow.xaml.cs:15785-15788`）。
+    /// 反向半边两头：六颗必须**全等**（有人顺手配六色就红），线型必须**不全等**。
+    #[test]
+    fn hc_chart_series_flatten_to_one_color_and_separate_by_dash() {
+        let c = hc_fixture();
+        let series = hc_chart_palette(&c);
+        assert_eq!(series.len(), 6);
+        let face = |brush: Brush| match brush {
+            Brush::Solid(color) => (color.a, color.r, color.g, color.b),
+            Brush::Theme(_) => panic!("HC 图表色板不许是主题画刷"),
+        };
+        let one = face(c.slot(HcSlot::WindowText).into());
+        for brush in &series {
+            assert_eq!(face(*brush), one, "六条序列在 HC 必须同色（Tokens.xaml:323-328）");
+        }
+        assert_eq!(face(hc_chart_palette(&c)[0]), face(hc_chart_palette(&c)[5]));
+        // 线型档：index 0/3/6 实线，其余 {3*(i%3), 2}
+        assert_eq!(hc_series_dash(0), None);
+        assert_eq!(hc_series_dash(3), None);
+        assert_eq!(hc_series_dash(6), None);
+        assert_eq!(hc_series_dash(1), Some([3.0, 2.0]));
+        assert_eq!(hc_series_dash(2), Some([6.0, 2.0]));
+        assert_eq!(hc_series_dash(4), Some([3.0, 2.0]));
+        assert_eq!(hc_series_dash(5), Some([6.0, 2.0]));
+        assert_ne!(hc_series_dash(1), hc_series_dash(2), "序列 2/3 撞线型了就分不开");
+        // 发数与浅深档对齐（`main.rs` 那侧按索引取色，少发就错位）
+        assert_eq!(
+            series.len(),
+            chart_palette(Scheme::Light).len(),
+            "HC 色板发数与浅深档不齐"
+        );
+        assert_eq!(
+            chart_palette(Scheme::Light).len(),
+            chart_palette(Scheme::Dark).len()
+        );
+        // 反向半边：浅深两档的六条序列**不**同色，否则上面那个"HC 全压成一颗"没参照
+        let light_series = chart_palette(Scheme::Light);
+        assert_ne!(
+            face(light_series[0]),
+            face(light_series[1]),
+            "浅档自己就压平了，HC 的压平判据成假绿"
+        );
+        assert_ne!(face(light_series[0]), one, "HC 序列色撞进浅档常量了");
+        // 热力图空档与网格线：一落窗口底、一落窗口文本（Tokens.xaml:329/330）
+        assert_eq!(HcToken::ChartHeatEmpty.color(&c), c.slot(HcSlot::Window));
+        assert_eq!(HcToken::ChartGrid.color(&c), c.slot(HcSlot::WindowText));
+        assert_eq!(face(HcToken::ChartGrid.color(&c).into()), one);
+        // 反向半边：空档与网格线在 HC 也必须分得开（一底一线，压平了图上就看不见网格）
+        assert_ne!(
+            HcToken::ChartHeatEmpty.color(&c),
+            HcToken::ChartGrid.color(&c)
+        );
+        assert_eq!(HcToken::ChartSeries1.slot(), HcSlot::WindowText);
+        assert_eq!(HcToken::ChartSeries6.slot(), HcSlot::WindowText);
     }
 }

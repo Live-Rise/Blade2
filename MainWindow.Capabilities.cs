@@ -13,7 +13,8 @@ namespace Blade2;
 public sealed partial class MainWindow
 {
     private bool _capabilityPanelOpen;
-    private string CapabilityText(string zh, string en) => L(zh);
+    /// <summary>中文键 + ShellEnglish 优先；字典未收录时非中文界面用 en 兜底（轨迹等新域文案）。</summary>
+    private string CapabilityText(string zh, string en) => TrajText(zh, en);
 
     /// <summary>Native entry points only; the caller attaches this flyout to a button.</summary>
     public MenuFlyout BuildCapabilityMenu()
@@ -38,9 +39,68 @@ public sealed partial class MainWindow
             menu.Items.Add(item);
         }
         Add("目标", "Goal", ShowCapabilityGoalAsync);
+        Add("任务", "To-dos", ShowTodosPanelAsync);
         Add("计划（只读）", "Schedules (read-only)", ShowCapabilitySchedulesAsync);
         Add("技能", "Skills", ShowCapabilitySkillsAsync);
+        Add("轨迹", "Trajectory", ShowCapabilityTrajectoryAsync);
+        Add("Cordis 插件", "Cordis plugins", ShowCordisPanelAsync);
         return menu;
+    }
+
+    private bool _capabilityFlyoutWired;
+
+    /// <summary>
+    /// 把能力面板入口挂进 ComposerAddFlyout。此前 BuildCapabilityMenu 无人挂接，
+    /// Cordis/技能/计划在运行时不可达；轨迹/任务各自有旁路入口，这里补齐其余项并幂等。
+    /// </summary>
+    private void EnsureCapabilityUiEntries()
+    {
+        if (_capabilityFlyoutWired)
+        {
+            return;
+        }
+        try
+        {
+            void AddEntry(string automationId, string zh, string en, Func<Task> action)
+            {
+                var item = new MenuFlyoutItem { Text = CapabilityText(zh, en) };
+                // 菜单关闭动画期间直接 ShowAsync(ContentDialog) 会静默失败；
+                // 编队到下一 UI 帧再开面板。
+                item.Click += (_, _) => DispatcherQueue.TryEnqueue(async () =>
+                {
+                    if (_capabilityPanelOpen) return;
+                    _capabilityPanelOpen = true;
+                    try { await action(); }
+                    catch (Exception ex)
+                    {
+                        try { await ShowErrorAsync(ex.Message); }
+                        catch (Exception) { }
+                    }
+                    finally { _capabilityPanelOpen = false; }
+                });
+                Aut(item, automationId, CapabilityText(zh, en));
+                var items = ComposerAddFlyout.Items;
+                var at = items.Count;
+                for (var i = 0; i < items.Count; i++)
+                {
+                    if (items[i] is MenuFlyoutItem mi && mi.Text == L("会话反馈"))
+                    {
+                        at = i;
+                        break;
+                    }
+                }
+                items.Insert(at, item);
+            }
+
+            AddEntry("SchedulesMenuItem", "计划（只读）", "Schedules (read-only)", ShowCapabilitySchedulesAsync);
+            AddEntry("SkillsMenuItem", "技能", "Skills", ShowCapabilitySkillsAsync);
+            AddEntry("CordisMenuItem", "Cordis 插件", "Cordis plugins", ShowCordisPanelAsync);
+            _capabilityFlyoutWired = true;
+        }
+        catch (Exception)
+        {
+            // 入口挂接失败不阻塞聊天
+        }
     }
 
     private ContentDialog CapabilityDialog(string title, object content) => new()
@@ -123,6 +183,8 @@ public sealed partial class MainWindow
                     "pause" => loaded && phase == "active" && activation == "armed",
                     "resume" => loaded && (phase == "paused" || phase == "active" && activation == "disarmed"),
                     "complete" => loaded && hasGoal && phase != "complete",
+                    // P1-14 goals/clear：有未完结目标即可清除（官方 action.clear / /goal clear）
+                    "clear" => loaded && hasGoal && phase != "complete",
                     _ => false,
                 };
                 pair.Value.IsEnabled = !busy && !closed && _activeSessionId == sessionId && allowed;
@@ -185,6 +247,11 @@ public sealed partial class MainWindow
                 mutationAttempted = true;
                 await rpc.CallOkAsync("goals/" + verb, args, lifetime.Token);
                 await Refresh();
+                // P1-14：clear 成功后目标条应立即收起（Refresh 已把空目标写进 _goalSummary）
+                if (verb == "clear")
+                {
+                    PostUi(ApplyGoalBar);
+                }
             }
             catch (Exception ex)
             {
@@ -209,6 +276,7 @@ public sealed partial class MainWindow
             ("get", "刷新", "Refresh"), ("create", "创建目标", "Create goal"),
             ("edit", "保存编辑", "Save edits"), ("pause", "暂停", "Pause"),
             ("resume", "恢复", "Resume"), ("complete", "标记完成", "Mark complete"),
+            ("clear", "清除目标", "Clear goal"),
         })
         {
             var verb = entry.Item1;

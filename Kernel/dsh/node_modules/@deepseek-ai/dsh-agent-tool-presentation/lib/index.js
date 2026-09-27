@@ -12,8 +12,8 @@ import z from "@deepseek-ai/schemastery";
 * joined to that preset and a PTC mode preset runs beside native ones in one
 * process. One row per composition, not one per session.
 *
-* A PTC mode needs a TypeScript code runtime, which is a host-plane service
-* ([`dsh-code-runtime-worker-thread`](../../code-runtime/code-runtime-worker/README.md)).
+* A PTC mode needs a TypeScript PTC runtime, which is a host-plane service
+* ([`dsh-ptc-runtime-node`](../../../ptc-runtime/ptc-runtime-node/README.md)).
 * This row therefore waits for it rather than assuming it: a preset selecting
 * PTC mode against a deployment that composes no runtime fails at mount, named
 * in the preset's own activation audit, instead of at the first prompt.
@@ -22,7 +22,7 @@ import z from "@deepseek-ai/schemastery";
 /** Cordis plugin name. */
 const name = "tool-presentation";
 /**
-* Required services. `codeRuntime` is NOT listed: a `native` row must mount in
+* Required services. `ptcRuntime` is NOT listed: a `native` row must mount in
 * a deployment that composes no runtime, and the mode-dependent wait is
 * declared inside {@link apply} instead.
 */
@@ -43,7 +43,7 @@ function apply(ctx, config) {
 		ctx.tools.presentAs("native");
 		return;
 	}
-	ctx.inject(["codeRuntime"], (runtimeCtx) => {
+	ctx.inject(["ptcRuntime"], (runtimeCtx) => {
 		runtimeCtx.tools.presentAs(config.mode);
 	});
 }

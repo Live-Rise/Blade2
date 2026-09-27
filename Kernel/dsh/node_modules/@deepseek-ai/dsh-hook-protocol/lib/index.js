@@ -197,7 +197,7 @@ async function runHook(bash, hook, options, now) {
 		...options.env !== void 0 ? { env: options.env } : {}
 	};
 	try {
-		const result = await bash.run(bash.resolve(request));
+		const result = await (await bash.execute(bash.resolve(request))).result();
 		return {
 			output: parseHookOutput(result.exitCode ?? void 0, result.stdout.text, result.stderr.text, options.expectedEventName),
 			durationMs: now() - started

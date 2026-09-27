@@ -3,7 +3,9 @@
 //   1. 用户消息操作行：时间戳 + 复制（官方 UserStyleBubble 的 clock:"start" chrome）
 //   2. 助手操作行扩充：复制 / 在新对话中分支 / 时间戳 / 本轮用时（官方 TurnTailNodeView）
 //   3. 推理块：可折叠「思考」行（官方 ReasoningRow，默认折叠、首行作摘要）
-//   4. 工具调用行：图标 + 工具标题 + 参数摘要（官方 ToolRow / toolRowModel）
+//   4. 工具调用卡：keyed 定制卡（图标/标题/摘要 + bash 退出码/信号、str-replace 差异、
+//      fs/web/skill/todo/subagent/workflow 关键字段 + 参数/结果 JSON 复制）——装配在
+//      MainWindow.ToolCards.cs（BuildToolCard），本文件只留装载钩子与 ToolRowModel。
 // 分支走内核 session/fork { sessionId, atSeq }（dsh-client-connection：边界 = atSeq 之后
 // 第一个 turn/end），子会话标题按官方 increasedForkTitle 追加序号后经 session/rename 回写。
 
@@ -88,6 +90,10 @@ public sealed partial class MainWindow
             });
         }
         row.Children.Add(MakeCopyButton(bubble.Text));
+        // P1-1：消息 Details（元数据/附加块/上下文注入/召回清单）
+        row.Children.Add(MakeMessageDetailsButton(bubble));
+        // P1-4：@ 引用会话 chips（来自会话 / 引用会话 · labels，可点开）
+        AppendReferenceChips(row, bubble);
         // 撤回编辑：进程还在跑、本轮又没动过文件时，才允许把这条提问收回去重编
         if (CanWithdrawEdit(bubble))
         {
@@ -240,6 +246,41 @@ public sealed partial class MainWindow
                 }
             }
             return null;
+        }
+    }
+
+    /// <summary>P1-4：用户消息下的跨会话引用 chips（「来自会话 {session}」/「引用会话 · {labels}」可点开）。</summary>
+    private void AppendReferenceChips(StackPanel row, ChatBubble bubble)
+    {
+        if (!_messageDetails.TryGetValue(bubble, out var st)) return;
+        if (st.RelaySessionId is { Length: > 0 } relay)
+        {
+            var link = new HyperlinkButton
+            {
+                Content = DetFormat("来自会话 {0}", "From session {0}", ShortSessionLabel(relay)),
+                Padding = new Thickness(0),
+                Margin = new Thickness(Sp4, 0, 0, 0),
+                FontSize = 11,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            Aut(link, "UserRelayLink", DetFormat("来自会话 {0}", "From session {0}", relay));
+            link.Click += (_, _) => _ = OpenReferencedSessionAsync(relay);
+            row.Children.Add(link);
+        }
+        else if (st.References.Count > 0)
+        {
+            var labels = string.Join(DetText("、", ", "), st.References.Select(r => r.Label));
+            var link = new HyperlinkButton
+            {
+                Content = DetFormat("引用会话 · {0}", "Referenced session · {0}", labels),
+                Padding = new Thickness(0),
+                Margin = new Thickness(Sp4, 0, 0, 0),
+                FontSize = 11,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            Aut(link, "UserReferenceLink", DetFormat("引用会话 · {0}", "Referenced session · {0}", labels));
+            link.Click += (_, _) => ShowSessionReferenceFlyout(link, st.References);
+            row.Children.Add(link);
         }
     }
 
@@ -547,73 +588,8 @@ public sealed partial class MainWindow
         {
             return;
         }
-        // 同气泡再来（result 到、状态翻转）：行内容不变，只按执行态起停扫光。
-        // 整行重建会让 sweep Rectangle 连着 Storyboard 一起被丢弃，在跑的动画就此野跑。
-        if (host.Content is Grid reuseRoot &&
-            reuseRoot.Tag is (ChatBubble sameBubble, Rectangle reuseSweep, Grid reuseClip) &&
-            ReferenceEquals(sameBubble, bubble))
-        {
-            SyncToolSweep(bubble, reuseSweep, reuseClip);
-            return;
-        }
-        // 回收容器换了气泡：旧行的扫光若还在跑（异常路径未收尾），换内容前停掉。
-        if (host.Content is Grid oldRoot && oldRoot.Tag is (_, Rectangle oldSweep, _))
-        {
-            StopSweep(oldSweep);
-        }
-        var (glyph, title, summary) = ToolRowModel(bubble.ToolName ?? "", bubble.ToolArgs ?? "");
-        var row = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = TokenDouble("Space6", 6),
-            Padding = new Thickness(6, 2, 6, 2),
-            Opacity = 0.72,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-        };
-        row.Children.Add(new FontIcon { Glyph = glyph, FontSize = 12, Opacity = 0.8 });
-        row.Children.Add(new TextBlock
-        {
-            Text = title,
-            Style = Application.Current.Resources.TryGetValue("CaptionTextStyle", out var caption) && caption is Style cs ? cs : null,
-            VerticalAlignment = VerticalAlignment.Center,
-        });
-        if (summary.Length > 0)
-        {
-            row.Children.Add(new TextBlock
-            {
-                Text = "·",
-                Style = Application.Current.Resources.TryGetValue("CaptionTextStyle", out var sep) && sep is Style ss ? ss : null,
-                Opacity = 0.5,
-                VerticalAlignment = VerticalAlignment.Center,
-            });
-            row.Children.Add(new TextBlock
-            {
-                Text = summary,
-                Style = Application.Current.Resources.TryGetValue("CaptionTextStyle", out var hint2) && hint2 is Style hs2 ? hs2 : null,
-                Opacity = 0.85,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                TextWrapping = TextWrapping.NoWrap,
-                VerticalAlignment = VerticalAlignment.Center,
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-            });
-        }
-        Aut(row, "ToolCallRow", bubble.Text);
-        // 扫光层：行外包一层裁剪 Grid，高光 Rectangle 盖在上（IsHitTestVisible 不抢点击）。
-        // 执行中（IsToolRunning）起扫，result 到/轮尾收尾即停——与 reasoning 行同机制。
-        var clip = new Grid { HorizontalAlignment = HorizontalAlignment.Stretch };
-        clip.Children.Add(row);
-        var sweep = new Rectangle
-        {
-            HorizontalAlignment = HorizontalAlignment.Left,
-            VerticalAlignment = VerticalAlignment.Stretch,
-            Width = 140,
-            Opacity = 0,
-            IsHitTestVisible = false,
-        };
-        clip.Children.Add(sweep);
-        clip.Tag = (bubble, sweep, clip);
-        host.Content = clip;
-        SyncToolSweep(bubble, sweep, clip);
+        // keyed 定制卡装配（bash/diff/专用字段/JSON 复制）：见 MainWindow.ToolCards.cs
+        BuildToolCard(host, bubble);
     }
 
     /// <summary>工具行扫光跟随执行态：tool/call 后起，tool/result 到（或轮尾收尾）即停。</summary>
@@ -644,7 +620,12 @@ public sealed partial class MainWindow
         ("glob",        "\uE721", "Glob",     "search"),
         ("write",       "\uE70F", "写入",      "write"),
         ("edit",        "\uE70F", "编辑",      "edit"),
+        ("str_replace_editor", "\uE70F", "编辑", "edit"),
         ("run_code",    "\uE943", "代码",      "code"),
+        ("skill",       "\uE8BC", "调用技能",  "others"),
+        ("todo_write",  "\uE73E", "待办",      "others"),
+        ("subagent",    "\uE716", "子代理",    "others"),
+        ("workflow",    "\uE945", "工作流",    "others"),
     };
 
     /// <summary>tool/call 气泡的 Text（=「标题 · 摘要」）：Adjacent 去重与 UIA 名称的数据源。
@@ -1420,8 +1401,8 @@ public sealed partial class MainWindow
     }
 
     /// <summary>经内核把工作区路径交给宿主桌面（默认程序打开；官方 SessionOpenWorkspacePath
-    /// 契约：path + 可选 action:'reveal'，缺省即打开）。</summary>
-    private async Task OpenProducedPathAsync(string path)
+    /// 契约：path + 可选 action:'reveal'，缺省即打开）。reveal=true 时在文件资源管理器中显示。</summary>
+    private async Task OpenProducedPathAsync(string path, bool reveal = false)
     {
         if (_rpc is null || path.Length == 0)
         {
@@ -1429,7 +1410,8 @@ public sealed partial class MainWindow
         }
         try
         {
-            await _rpc.CallOkAsync("session/openWorkspacePath", new { request = new { path } });
+            object request = reveal ? new { path, action = "reveal" } : new { path };
+            await _rpc.CallOkAsync("session/openWorkspacePath", new { request });
         }
         catch (DshRpcException ex)
         {

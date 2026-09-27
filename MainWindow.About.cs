@@ -100,6 +100,9 @@ public partial class MainWindow
             L("随包发行的 dsh 内核版本"),
             SelectableVersionText(KernelVersionText())));
 
+        // P2-6 品牌/内测声明：预览版 · DSH 本地构建 + 内测声明正文（文案位对齐官方 locale）
+        AppendAboutBrandNotices(SettingsHost);
+
         var updCard = NewCard(L("更新"), null);
         _aboutUpdateStatus = new TextBlock
         {

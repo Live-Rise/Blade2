@@ -1,4 +1,4 @@
-import { access, lstat, readFile, readdir, stat } from "node:fs/promises";
+import { access, lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
 import { unwatchFile, watchFile } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { homedir } from "node:os";
@@ -127,7 +127,7 @@ var FileSystemSkillProvider = class {
 				kind: "directory",
 				path: locator.directory
 			},
-			path: locator.path,
+			path: parsed.path,
 			...parsed.metadata !== void 0 ? { metadata: parsed.metadata } : {},
 			content: parsed.content
 		};
@@ -606,7 +606,7 @@ async function discoverRoot(root, ctx, provider) {
 				kind: "directory",
 				path: locator.directory
 			},
-			path: locator.path,
+			path: parsed.path,
 			...parsed.metadata !== void 0 ? { metadata: parsed.metadata } : {}
 		});
 	}
@@ -667,7 +667,7 @@ async function parseSkillFile(path, ctx, signal, trustedHost = false) {
 	if (raw === void 0) return;
 	let parsed;
 	try {
-		parsed = parseFrontmatter(raw);
+		parsed = parseFrontmatter(raw.content);
 	} catch (error) {
 		ctx.logger.warn(`skill file ${path} ignored: invalid YAML frontmatter: ${errorMessage(error)}`);
 		return;
@@ -699,6 +699,7 @@ async function parseSkillFile(path, ctx, signal, trustedHost = false) {
 		...optionalString(parsed.data, "whenToUse"),
 		invocation,
 		...optionalMetadata(parsed.data),
+		path: raw.path,
 		content: parsed.body.trim()
 	};
 }
@@ -710,10 +711,14 @@ async function readSkillText(ctx, path, signal, trustedHost = false) {
 	const fs = optionalFileSystem(ctx);
 	if (fs !== void 0 && !trustedHost) return await readSkillTextFromFileSystem(ctx, fs, path, signal);
 	try {
-		return await readFile(path, {
-			encoding: "utf8",
-			signal
-		});
+		const resolvedPath = await realpath(path);
+		return {
+			path: resolvedPath,
+			content: await readFile(resolvedPath, {
+				encoding: "utf8",
+				signal
+			})
+		};
 	} catch (error) {
 		signal?.throwIfAborted();
 		if (isAbsentSkillPathError(error)) return void 0;
@@ -740,7 +745,10 @@ async function readSkillTextFromFileSystem(ctx, fs, path, signal) {
 	}
 	if (info === void 0 || info.type !== "file") return void 0;
 	try {
-		return await fs.readText(target, signal);
+		return {
+			path: fs.processPath(target),
+			content: await fs.readText(target, signal)
+		};
 	} catch (error) {
 		signal?.throwIfAborted();
 		if (isAbsentSkillPathError(error)) return void 0;

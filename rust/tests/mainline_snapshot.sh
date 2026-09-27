@@ -6,17 +6,17 @@
 set -uo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
-out="$root/rust/tmp/mainline-snapshot.txt"
+# 基线不能放 rust/tmp/：同步盘会把整个 tmp/ 清空，哨兵就长期空转（2026-09-26 RT6 X-6）。
+out="$root/rust/tests/mainline-snapshot.txt"
 
 snap() {
   local f
-  for f in "$root"/*.xaml "$root"/*.cs "$root"/Theme/*.xaml "$root"/Dsh/*.cs "$root"/Assets/i18n/*.json; do
+  for f in "$root"/*.xaml "$root"/*.cs "$root"/Pages/*.cs "$root"/Pages/*.xaml "$root"/Theme/*.xaml "$root"/Dsh/*.cs "$root"/Dsh/*.xaml "$root"/Assets/i18n/*.json; do
     [[ -f "$f" ]] || continue
     printf '%s\t%s\t%s\n' "$(sha256sum "$f" | cut -c1-16)" "$(wc -l <"$f")" "${f#"$root"/}"
   done
 }
 
-mkdir -p "$root/rust/tmp"
 if [[ "${1:-}" == "--check" ]]; then
   if [[ ! -f "$out" ]]; then
     echo "NO-BASELINE 先不带 --check 跑一次"

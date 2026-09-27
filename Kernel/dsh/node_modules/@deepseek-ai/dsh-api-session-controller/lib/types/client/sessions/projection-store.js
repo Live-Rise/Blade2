@@ -1,10 +1,14 @@
 import { Notifier } from "./notifier.js";
 /**
  * One session's projection values. Framework semantics, uniform across every
- * key: a baseline seeds rows at its cut, a push frame updates one row, and in
- * both paths a lower-or-equal seq loses — a replayed frame cannot regress a
- * value, a stale baseline cannot overwrite a newer frame. A key the store has
- * never seen reads `undefined` (capability absent). Faces are identity-stable
+ * key. Sequenced writes (a baseline seeds rows at its cut, a push frame
+ * updates one row) compare seqs among themselves: a lower-or-equal seq within
+ * the Host generation loses, so a replayed frame cannot regress a value and a
+ * stale baseline cannot overwrite a newer frame. Cached writes (the session
+ * list's zero-I/O block) only fill keys no sequenced row holds, and a baseline
+ * discards every cached row before it seeds, regardless of seq: the connected
+ * Session is the truth and a cached value never outranks it. A key the store
+ * has never seen reads `undefined` (capability absent). Faces are identity-stable
  * per key (create-on-demand, cached) so the React side binds each exactly
  * once; the store-level channel (`subscribeAny`) serves coarse consumers (the
  * manager's list projection reads the `title` key).
@@ -35,6 +39,15 @@ export class ProjectionValueStore {
         return this.rows.get(key)?.value;
     }
     /**
+     * Read the accepted Host watermark without subscribing or copying a value.
+     * @param key - projection key.
+     * @returns the current sequence, or undefined for absent and cached values.
+     */
+    seqOf(key) {
+        const row = this.rows.get(key);
+        return row?.kind === 'sequenced' ? row.seq : undefined;
+    }
+    /**
      * Read every current projection value as one reference-stable snapshot.
      * @returns The same frozen value map until a row changes.
      */
@@ -61,20 +74,46 @@ export class ProjectionValueStore {
      */
     apply(key, value, seq) {
         const row = this.rows.get(key);
-        if (row !== undefined && seq <= row.seq)
-            return; // higher seq wins; replays and stale frames drop
-        this.rows.set(key, { value, seq });
+        // higher seq wins among sequenced rows; replays and stale frames drop. A
+        // cached row has no comparable seq and always yields.
+        if (row?.kind === 'sequenced' && seq <= row.seq)
+            return;
+        this.rows.set(key, { kind: 'sequenced', value, seq });
         this.changed(key);
     }
     /**
-     * Seed from a history tail page's projections block: every carried key
-     * lands under the same seq rule as frames; a key the block omits is
-     * capability-absent as of the cut — its row clears unless a newer frame
-     * already superseded the cut (a stale baseline can neither overwrite nor
-     * clear newer values).
+     * Fill keys from a session-list block the Host labeled `cached`: a zero-I/O
+     * view of the persisted checkpoint. A cached value lands only where no
+     * sequenced row exists: a connected Session has already answered for such
+     * a key, and the list's view of the persisted checkpoint cannot be newer
+     * than it.
+     * @param values - whole values by key viewed from the persisted checkpoint.
+     */
+    applyCached(values) {
+        for (const key of Object.keys(values)) {
+            if (this.rows.get(key)?.kind === 'sequenced')
+                continue;
+            this.rows.set(key, { kind: 'cached', value: values[key] });
+            this.changed(key);
+        }
+    }
+    /**
+     * Seed from a history tail page's projections block. Every cached row is
+     * discarded first, regardless of seq: the block comes from the connected
+     * Session, and a value viewed from the persisted checkpoint never outranks
+     * it. Then every carried key lands under the same seq rule as frames, and a
+     * key the block omits is capability-absent as of the cut — its row clears
+     * unless a newer frame already superseded the cut (a stale baseline can
+     * neither overwrite nor clear newer sequenced values).
      * @param baseline - the response's projections block.
      */
     seed(baseline) {
+        for (const [key, row] of this.rows) {
+            if (row.kind !== 'cached')
+                continue;
+            this.rows.delete(key);
+            this.changed(key);
+        }
         // Erased walk: the framework crosses the open key space; per-key typing
         // is re-established at the consumer (useProjection's map lookup).
         const values = baseline.values;
@@ -83,23 +122,17 @@ export class ProjectionValueStore {
         for (const [key, row] of this.rows) {
             if (Object.hasOwn(values, key))
                 continue;
-            if (row.seq > baseline.asOfSeq)
+            // Every cached row was deleted above; the kind test only narrows the
+            // type so `row.seq` is readable.
+            if (row.kind === 'sequenced' && row.seq > baseline.asOfSeq)
                 continue;
             this.rows.delete(key);
             this.changed(key);
         }
     }
-    /**
-     * Drop rows beyond a replacement control baseline. Such rows describe
-     * process state the Host lost before persisting it and would otherwise
-     * outrank recomputed lower-seq values forever. The caller seeds the new
-     * baseline immediately afterward.
-     * @param lastSeq - highest durable sequence reflected by the baseline.
-     */
-    truncate(lastSeq) {
-        for (const [key, row] of this.rows) {
-            if (row.seq <= lastSeq)
-                continue;
+    /** Discard one Host generation's values and watermarks while preserving subscribed faces. */
+    clear() {
+        for (const key of this.rows.keys()) {
             this.rows.delete(key);
             this.changed(key);
         }

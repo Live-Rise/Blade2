@@ -88,6 +88,10 @@ public sealed partial class DshKernelHost : IDisposable
             CreateNoWindow = true,
         };
         psi.EnvironmentVariables["DSH_HOME"] = dshHome;
+        // V8 编译缓存（node ≥ 22.1）：内核模块树大，冷编译占启动的大头。缓存落 DSH_HOME
+        // （随包家隔离），node 按 hash 自校验/自失效（内核或 node 升级自动重建），写失败
+        // 静默忽略——第一次启动没有缓存照常起，第二次起模块加载显著提速。
+        psi.EnvironmentVariables["NODE_COMPILE_CACHE"] = Path.Combine(dshHome, "kernel-compile-cache");
         // 自带 pnpm 优先（Kernel\bin\pnpm.cmd → 内置 node + pnpm.cjs）：
         // 内核 plugin-manager 与 `dsh plugin` 都经 PATH 解析 pnpm，
         // Blade² 承诺零环境要求，不能假设用户机器装了 pnpm。
@@ -96,8 +100,10 @@ public sealed partial class DshKernelHost : IDisposable
         _process = new Process { StartInfo = psi, EnableRaisingEvents = true };
         if (!_process.Start())
         {
+            DiagLine("spawn FAILED");
             return null;
         }
+        DiagLine($"spawn pid={_process.Id} node={launcher.Value.fileName}");
         AttachToKillJob();
         var tcs = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var regex = UrlPattern();
@@ -108,9 +114,11 @@ public sealed partial class DshKernelHost : IDisposable
             {
                 return;
             }
+            DiagLine($"[line] {line}");
             var match = regex.Match(line);
             if (match.Success)
             {
+                DiagLine($"[url-captured] {match.Groups[1].Value}");
                 tcs.TrySetResult(match.Groups[1].Value);
             }
         }
@@ -119,11 +127,18 @@ public sealed partial class DshKernelHost : IDisposable
         _process.ErrorDataReceived += (_, e) => OnLine(e.Data);
         _process.BeginOutputReadLine();
         _process.BeginErrorReadLine();
-        _process.Exited += (_, _) => tcs.TrySetResult(null);
+        _process.Exited += (_, _) =>
+        {
+            int code = -1;
+            try { if (_process.HasExited) { code = _process.ExitCode; } } catch (Exception) { }
+            DiagLine($"[exited] code={code}");
+            tcs.TrySetResult(null);
+        };
 
         var completed = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(90), ct)).ConfigureAwait(false);
         if (completed != tcs.Task)
         {
+            DiagLine("[timeout] no url in 90s, killing");
             try { _process.Kill(entireProcessTree: true); } catch (Exception) { }
             return null;
         }
@@ -133,6 +148,22 @@ public sealed partial class DshKernelHost : IDisposable
             return null; // 进程已退出；日志由 _process.ExitCode/诊断覆盖
         }
         return url;
+    }
+
+    /// <summary>内核启动观测仪：0.8.3.3 起的"Unable to connect"失败卡需要内核侧 stdout/
+    /// stderr 逐行现场（打包环境与开发环境差异无法离线复现）。无条件落 %TEMP%，量级是
+    /// 每次启动几十行，定位后移除。</summary>
+    internal static void DiagLine(string line)
+    {
+        try
+        {
+            File.AppendAllText(Path.Combine(Path.GetTempPath(), "blade2-kernel-boot.log"),
+                $"{DateTime.Now:HH:mm:ss.fff} {line}\r\n");
+        }
+        catch (Exception)
+        {
+            // 诊断写不进去不影响主流程
+        }
     }
 
     public void Dispose()
@@ -292,7 +323,14 @@ public sealed partial class DshKernelHost : IDisposable
                 {
                     continue;
                 }
-                if (HasLiveAppAncestor(proc.Id, parents))
+                // 祖先链未知（进程在快照之后才 spawn，快照里没有它的条目）一律跳过：
+                // 本轮刚拉起的内核/子进程绝不能凭"查不到父进程"处决——真孤儿（上次崩溃
+                // 残留）在快照时点就已存在，条目齐全，照常可杀。
+                if (HasLiveAppAncestor(proc.Id, parents) is var verdict && verdict is null)
+                {
+                    continue;
+                }
+                if (verdict.Value)
                 {
                     continue; // 还有活着的壳在撑它：不是孤儿
                 }
@@ -343,15 +381,16 @@ public sealed partial class DshKernelHost : IDisposable
     }
 
     /// <summary>沿父链往上找活着的 Blade²：内核必然由壳（直系或 cmd.exe 壳）启动，
-    /// 找不到活壳就是崩溃残留。深度封顶防 PID 回环。</summary>
-    private static bool HasLiveAppAncestor(int pid, Dictionary<int, int> parents)
+    /// 找不到活壳就是崩溃残留。深度封顶防 PID 回环。返回 null = 祖先链未知
+    /// （进程不在快照里，spawn 晚于快照）：不能判死，调用方必须跳过。</summary>
+    private static bool? HasLiveAppAncestor(int pid, Dictionary<int, int> parents)
     {
         var visited = new HashSet<int>();
         for (var depth = 0; depth < 16; depth++)
         {
             if (!parents.TryGetValue(pid, out var parent) || parent <= 0 || !visited.Add(pid))
             {
-                return false;
+                return null; // 不在快照内：本轮 spawn 的新进程，不可判孤儿
             }
             if (IsAppProcess(parent))
             {
