@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -27,6 +28,78 @@ public sealed partial class MainWindow
     /// 记 id 一笔，就绪后按最新清单找到就打开；基线里已消失（被删）则作废。</summary>
     private volatile string? _pendingOpenSessionId;
 
+    // ---------------- 内核引导里程碑（设置页「关于」的「内核加载」行） ----------------
+
+    /// <summary>本次启动的引导里程碑表：阶段文案 + 累计耗时。阶段文案在记录时按当前语言
+    /// 定稿（语言切换不回溯改写历史行）。锁保护：引导链大多在 UI 线程续跑，但认证重试、
+    /// 插件进度回调来自线程池。</summary>
+    private readonly object _bootTrailLock = new();
+    private readonly List<string> _kernelBootTrail = new();
+    private System.Diagnostics.Stopwatch? _kernelBootClock;
+
+    /// <summary>瞬态行（如「默认插件安装 3/9」）：渲染时排在里程碑表末尾，不进历史。</summary>
+    private string? _bootTransientLine;
+
+    /// <summary>新的一轮引导：清空里程碑表、计时归零（StartKernelBoot 每轮调一次）。</summary>
+    private void ResetKernelBootTrail()
+    {
+        lock (_bootTrailLock)
+        {
+            _kernelBootTrail.Clear();
+            _bootTransientLine = null;
+            _kernelBootClock = System.Diagnostics.Stopwatch.StartNew();
+        }
+        RefreshAboutKernelBootText();
+    }
+
+    /// <summary>记录一个引导里程碑：落诊断日志 + 进里程碑表 + 刷新「关于」页内核加载行。</summary>
+    private void BootMilestone(string label)
+    {
+        double seconds;
+        lock (_bootTrailLock)
+        {
+            seconds = _kernelBootClock?.Elapsed.TotalSeconds ?? 0;
+            _kernelBootTrail.Add($"{label} · {seconds.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}s");
+        }
+        DshKernelHost.DiagLine($"[boot] {label} (t={seconds:0.0}s)");
+        RefreshAboutKernelBootText();
+    }
+
+    /// <summary>默认插件安装进度（EnsureAsync 每 250ms 一报）：只改写瞬态行，不进里程碑历史。</summary>
+    private void BootPluginProgress(int ready, int total)
+    {
+        lock (_bootTrailLock)
+        {
+            _bootTransientLine = $"{L("默认插件安装")} {ready}/{total}";
+        }
+        RefreshAboutKernelBootText();
+    }
+
+    private string RenderKernelBootTrail()
+    {
+        lock (_bootTrailLock)
+        {
+            if (_kernelBootTrail.Count == 0)
+            {
+                return L("尚未开始");
+            }
+            var text = string.Join("\n", _kernelBootTrail);
+            return _bootTransientLine is null ? text : text + "\n" + _bootTransientLine;
+        }
+    }
+
+    private void RefreshAboutKernelBootText()
+    {
+        var text = RenderKernelBootTrail();
+        PostUi(() =>
+        {
+            if (_aboutKernelBootText is { } tb)
+            {
+                tb.Text = text;
+            }
+        });
+    }
+
     /// <summary>
     /// 引导失败：原因摆在主页正中的失败卡上 + 重试钮，再走系统通知——内核起不来是
     /// 用户必须知道的事。detail 是异常原文（本地化不了的排障信息），reasonKey 是壳可翻译的失败定性。
@@ -36,6 +109,15 @@ public sealed partial class MainWindow
         _kernelBootFailure = (reasonKey, detail ?? "");
         var message = L(reasonKey);
         var full = string.IsNullOrEmpty(detail) ? message : $"{message}：{detail}";
+        // 里程碑表补失败行：设置页「内核加载」能看出停在哪一步、走到多少秒
+        double seconds;
+        lock (_bootTrailLock)
+        {
+            seconds = _kernelBootClock?.Elapsed.TotalSeconds ?? 0;
+            _kernelBootTrail.Add($"{L("失败")}：{message} · {seconds.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}s");
+        }
+        DshKernelHost.DiagLine($"[boot] FAILED {reasonKey} (t={seconds:0.0}s)");
+        RefreshAboutKernelBootText();
         PostUi(() =>
         {
             KernelBootPanel.Visibility = Visibility.Visible;
@@ -94,6 +176,7 @@ public sealed partial class MainWindow
     private void StartKernelBoot()
     {
         HideKernelBootPanel(); // 重试入口：先撤掉上一轮的失败卡，回到正常界面静默等结果
+        ResetKernelBootTrail(); // 里程碑表归零：每一轮引导独立记录（设置页「内核加载」行可见）
         var cts = new CancellationTokenSource();
         _kernelBootCts = cts;
         // 异常已在 RunKernelBootAsync 内部全数收敛（失败态/取消），这里不需要再兜一层

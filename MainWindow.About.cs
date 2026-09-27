@@ -39,6 +39,10 @@ public partial class MainWindow
     private bool _aboutDownloadIsDirect;
     private bool _aboutBusy;
 
+    /// <summary>「内核加载」行的实时文本（内核引导里程碑表）：引导链各阶段经
+    /// RefreshAboutKernelBootText 回写；离开关于页置 null 防写死控件。</summary>
+    private TextBlock? _aboutKernelBootText;
+
     /// <summary>壳版本号：打包形态取包版本（manifest Identity，发布口径），开发形态回落程序集版本。</summary>
     private static string ShellVersionText()
     {
@@ -85,6 +89,7 @@ public partial class MainWindow
         _aboutCheckButton = null;
         _aboutDownloadButton = null;
         _aboutDownloadUrl = null;
+        _aboutKernelBootText = null;
 
         SettingsHost.Children.Add(MakeSectionDesc(
             L("Blade² 的版本信息与更新。更新通过覆盖安装新版本 MSIX 完成（安装前需先退出应用）。")));
@@ -99,6 +104,16 @@ public partial class MainWindow
             L("内核版本"),
             L("随包发行的 dsh 内核版本"),
             SelectableVersionText(KernelVersionText())));
+
+        // 内核加载：本次启动的引导里程碑（阶段 · 累计耗时），引导期间实时刷新，
+        // 失败时补一行「失败：<原因> · 秒」——排障时一眼看出停在哪一步。
+        AddDivider(verCard);
+        _aboutKernelBootText = SelectableVersionText(RenderKernelBootTrail());
+        _aboutKernelBootText.TextWrapping = TextWrapping.Wrap;
+        verCard.Children.Add(MakeRow(
+            L("内核加载"),
+            L("本次启动内核引导里程碑（阶段 · 累计耗时）"),
+            _aboutKernelBootText));
 
         // P2-6 品牌/内测声明：预览版 · DSH 本地构建 + 内测声明正文（文案位对齐官方 locale）
         AppendAboutBrandNotices(SettingsHost);

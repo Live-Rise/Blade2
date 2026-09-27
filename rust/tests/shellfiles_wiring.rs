@@ -355,12 +355,54 @@ fn the_two_tick_messages_are_declared_and_dispatched() {
     assert_eq!(count("Msg::SkinOpacityTick => "), 1);
 }
 
-/// `shell.json` 的触发点总数：三发（材质 / 托盘 / 气泡不透明度），不多不少。
+/// `shell.json` 的触发点总数：**四发**（材质 / 托盘 / 气泡不透明度 / 静默检查更新的去重旗），
+/// 不多不少，且**逐发点名**。
+///
+/// 口径变更备案：#160 UK3 落了第四发 —— `Msg::UpdateSilentOutcome(Ok(Some(hit)))` 里
+/// 「置 `reminded_update_tag` ⇒ 立刻 `write_shell_json()`」，对齐主干 `SetRemindedUpdateTag(tag)`
+/// 紧邻 `ShellToast.Show(...)` **之前**的顺序硬约束（那一格在 main.rs 的调用点注释里已写明）。
+/// 这是产品码的**合法新增**，不是漏接。
+///
+/// ⚠ 判据是「点名 + 计数」双向闭合：四枚窗口各含 1 发、总数也是 4 ⇒ 第五发若藏在四个窗口
+///   之外，总数那条立刻红；放松成 `>= 3` 就是假绿。
 #[test]
-fn shell_json_has_exactly_three_triggers() {
+fn shell_json_has_four_triggers() {
+    // (点名, 窗口起锚, 窗口止锚) —— 起锚止锚都实测为 main.rs 全文件唯一串。
+    const SITES: &[(&str, &str, &str)] = &[
+        (
+            "材质两档（`Msg::Pick` 的 SHELL/BUBBLE_MATERIAL_KEY 臂）",
+            "SHELL_MATERIAL_KEY | BUBBLE_MATERIAL_KEY =>",
+            "TRAY_SHOW_ICON_KEY | TRAY_MINIMIZE_KEY | TRAY_CLOSE_KEY",
+        ),
+        (
+            "托盘四键（`Msg::Toggle` 的 TRAY_* 臂体）",
+            "TRAY_NOTIFICATIONS_KEY => {",
+            "Msg::Note(text)",
+        ),
+        (
+            "气泡不透明度滑杆（`Msg::Number` 的 bubble 支，明说不防抖）",
+            "if !shellfiles::bubble_opacity_unchanged(written.bubble_opacity, next) {",
+            "Msg::InstructionsTick =>",
+        ),
+        (
+            "静默检查更新的去重旗（`Msg::UpdateSilentOutcome` 的 Ok(Some) 支，#160 UK3）",
+            "self.reminded_update_tag = hit.tag.clone();",
+            "DIAG: UPDATE silent flagged tag",
+        ),
+    ];
+
+    for (name, start, end) in SITES {
+        assert_eq!(count(start), 1, "{name} 的起锚不唯一：{start}");
+        assert_eq!(count(end), 1, "{name} 的止锚不唯一：{end}");
+        assert_eq!(
+            window(SRC, start, end).matches("self.write_shell_json()").count(),
+            1,
+            "{name} 这一发的落盘调用不是一枚"
+        );
+    }
     assert_eq!(
         count("self.write_shell_json()"),
-        3,
+        4,
         "落盘出口的发数变了：要么漏了一处触发点，要么把同一处写了两遍"
     );
     assert_eq!(count("fn write_shell_json(&mut self)"), 1);

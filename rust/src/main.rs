@@ -119,6 +119,9 @@ use blade2_rs::tokens::{
     SETTINGS_SECTIONS, SETTINGS_THEME_CUBES, STATS_KPI_CARDS, TOOL_TABLE, camel, glyph, pad,
     radius, size, space, type_ramp,
 };
+// #160 UK2：更新检查那条腿的纯层（四段比较 / 回执解析 / WinHTTP 执行腿）。文案一律留在本文件
+// 过 `catalog`，本模块只给结构化事实（`updatecheck.rs` 模块头「只算不画」）。
+use blade2_rs::updatecheck::{self, UpdateOutcome};
 use serde_json::{Map, Value, json};
 use windows_reactor::*;
 
@@ -165,6 +168,26 @@ enum Msg {
     /// 上面那发的回执：`Ok` 主干什么都不说（编辑器在**内核主机**那边被拉起）；
     /// `Err` 落 `打开设置文档失败：{0}`。
     SettingsDocument(Result<(), String>),
+    /// #160 UK2 S2：关于页「检查更新」那颗的**手动那一发**，直译主干 `MainWindow.About.cs`
+    /// 的 `CheckUpdateAsync()`（忙碌闸 → 状态「正在检查更新…」→ 联网 → 三分支 → 复位）。
+    AboutCheckUpdate,
+    /// 上面那发的回执。`Err(String)` = 主干 `catch (Exception ex)` 递进来的 `ex.Message`
+    /// ⇒ 文案走 `检查更新失败：{0}`。
+    /// ⚠ 载荷为什么是 `(tag, Option<UpdateOutcome>)` 而不是裸 `Option<UpdateOutcome>`：主干对**手动**
+    /// 这一遍要分诊两句不同文案（`tag` 空 = `检查更新失败：Release 返回缺少 tag_name。`；`tag`
+    /// 非空但不更新 = `已是最新版本。`），而 `updatecheck::outcome_from_receipt` 把这两档压成
+    /// 同一个 `None`（它对静默遍忠实，接手动遍就不够用）。
+    AboutCheckDone(Result<(String, Option<UpdateOutcome>), String>),
+    /// #160 UK2 S3：启动静默那一发（主干 `MainWindow.UpdateCheck.cs` `ScheduleUpdateCheck()` →
+    /// `Task.Delay(UpdateCheckDelayMs)`）的到点投弹。分叉睡法 = [`Shell::arm_update_check_tick`]
+    /// （形状照 [`Shell::arm_instructions_tick`]），延迟数值用 `updatecheck::UPDATE_CHECK_DELAY_MS`，
+    /// **不在这里再钉第二份 6000**（简报 §2.1）。
+    UpdateSilentTick,
+    /// 静默遍的回执：worker 线程跑合流的 `updatecheck::check_update_now`（主干静默遍对
+    /// 「缺 tag / 不可比 / 等值更旧」一律 `return`，正是 `Ok(None)` 的合流语义 —— 与手动遍相反，
+    /// 那一遍要分诊两句文案才绕开合流函数，见 [`Msg::AboutCheckDone`] 头顶的理由）。
+    /// `Err(String)` = 主干 `catch (Exception)` 那一臂（断网 / 限流 / 无包身份都不打扰用户）。
+    UpdateSilentOutcome(Result<Option<UpdateOutcome>, String>),
     /// #136 R1（MR3，RD3 的 R1）：`settings/describe` 的回帧 ⇒ 主干 `_settingsSnapshot` 那棵树
     /// （`MW:16836-16843`；类型 = `Vec<SettingsNamespace>`，逐字同构于主干
     /// `Dictionary<string, (JsonElement Value, double Revision)>`，见 `kernel.rs:10912-10940`）。
@@ -6502,6 +6525,266 @@ impl PaletteState {
     }
 }
 
+// ===================== #73 刀 1：@ 引用浮层 `ReferencePalette` 的状态机与纯判据 =====================
+//
+// 母本 = `MainWindow.xaml.cs` 的「@ 输入引用」那一域（现测域头 18205-18216、字段 18218-18221、
+// 判据 18223-18242、入口 18245-18273、上屏 18275-18397、关 18399-18406、采纳 18457-18477）。
+// **本刀只落状态机与纯判据**：不接 RPC 臂（刀 2）、不画 View、不借键盘格（刀 3），
+// 故下面这些项眼下零读者 ⇒ 各挂一枚 `#[allow(dead_code)]` 并注明未来的读者（成规先例：
+// [`session_subtitle`] 头上那枚「唯一的读者在…那片补」）。
+//
+// 与命令面板的三处**实质差异**（照抄 [`PaletteState`] 会全错，见 RP1 §A.6）：
+// ① 采纳不执行任何东西、只改写输入框文本；② 替换的是 `@query` **那一段**（不是整串赋值）；
+// ③ 采纳串尾**多一枚半角空格**（功能件，见 [`ReferenceState::take_accept`]）。
+
+/// 主干 `ReferenceVm`（`MW:206-216`）：候选表的一行，文件路与会话路共用同一枚形状。
+/// `insert` = 采纳时整段替换进去的文本 —— 文件 = 相对路径；会话 = **内核给好的**
+/// `@[标签](dsh-session:<base64>)` mention 串（主干域头 `MW:18212-18213` 原话：不自行拼装，
+/// 内核解析器是唯一权威）。
+/// ⚠ 主干那枚 `IsSession` **不 port**：交稿实测 `grep -n "IsSession\b" MainWindow.xaml.cs`
+///   只有声明 `:212` 与赋值 `:18344` 两处、全仓零读取 ⇒ 死字段（RP1 §8 纠正 6 复核成立）。
+#[allow(dead_code)] // 读者在刀 2（两路回执各填一枚形状）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ReferenceVm {
+    /// `Glyph`：目录 `E8B7` / 文件 `E8A5`（`MW:18311`）、会话固定 `E8BD`（`MW:18340`）。
+    glyph: &'static str,
+    /// `Label`：列 1。文件 = `path`；会话 = `label` 非空则 `label`，否则 `sessionId`（`MW:18344`）。
+    label: String,
+    /// `Detail`：列 2 = `目录` / `文件` / `会话` / `会话 · 同工作区`。
+    detail: String,
+    /// `Insert`：只喂采纳，不上屏（上屏三列是 `Glyph`/`Label`/`Detail`）。
+    insert: String,
+}
+
+/// 主干 `TryGetReferenceTrigger`（`MW:18223-18242`）的纯函数版：**从光标往前扫、遇空白即停**，
+/// 见到的第一个 `@` 就是 `atIndex`，`@` 与光标之间那段就是 query。返回 `(atIndex, query)`。
+/// 三条最容易抄反的，逐条钉主干：
+/// · `@` **不要求在词首** —— `"a@b"` 照样触发（→ `(1,"b")`）。域头那句「光标前的当前"词"以 @
+///   开头」（`MW:18207`）是**注释比代码严**，落地判据是那圈 `while`（`MW:18232-18240`）。
+/// · 看的是**光标位置**不是整串 —— `"x /compact @ma"` 光标在末尾 ⇒ 开引用浮层，前导 `/` 不相干
+///   （与 [`palette_trigger`]「只看首字符」是两套判据）。
+/// · 空白用 `char::is_whitespace`（Unicode 集），与主干 `char.IsWhiteSpace` 同集 ⇒ 全角空格
+///   `U+3000` 一样「遇空白即停」（`MW:18233`）。
+///
+/// ⚠ **有意的形制偏差**（登记报告 §1）：主干这一发的锚点是 `InputBox.SelectionStart`
+/// （`MW:18229` 那句 `Math.Clamp(SelectionStart, 0, text.Length)`），而分叉那颗输入框是受控件、
+/// 写口只有 [`Msg::Input`] 一枚纯文本回调，**reactor 不给壳读回 caret 与选区** ⇒ 分叉只能把
+/// 「插入点」钉在**串尾**（调用方一律传 `input.len()`，即 RP1 §7「刀 1 前置决定」的选项 1）。
+/// 同一根因已有两处备案，口吻照抄它们：[`skill_token_insert`] 头上那段与
+/// `the_token_insert_keeps_the_draft_and_pads_only_when_needed` 那条注释。
+/// 真机差异只在「用户把光标移到串中间再打 `@`」这一档，且方向是**分叉不弹**（不是弹错位置）。
+/// 不许改成「取整串最后一个 `@`」—— 那是主干明令「遇空白即停」的反面。
+#[allow(dead_code)] // 读者在刀 2 的 `refresh_reference`。
+fn reference_trigger(text: &str, caret: usize) -> Option<(usize, &str)> {
+    // 主干那句 `Math.Clamp`：越界一律夹回，且分叉的 `caret` 是**字节**下标 ⇒ 还要落到字符边界上
+    // （C# 按 UTF-16 码元索引，天生不会劈开字符；Rust 切片会 panic，这一发只是补等价护栏）。
+    let mut caret = caret.min(text.len());
+    while !text.is_char_boundary(caret) {
+        caret -= 1;
+    }
+    // `text[..caret]` 倒着走：先撞空白 ⇒ `None`；先撞 `@` ⇒ 命中。
+    let mut hit: Option<(usize, usize)> = None;
+    for (index, ch) in text[..caret].char_indices().rev() {
+        if ch.is_whitespace() {
+            break;
+        }
+        if ch == '@' {
+            // `@` 是 ASCII ⇒ `index + 1` 必是字符边界。
+            hit = Some((index, index + 1));
+            break;
+        }
+    }
+    let (at, query_start) = hit?;
+    Some((at, &text[query_start..caret]))
+}
+
+/// @ 引用浮层的全部状态（字段一一对 `MW:18218-18221` 那五枚 + §A.5 的显隐位）。
+/// 命名与形制口径照 [`PaletteState`]；那五枚之外的 `query/list_visible/showing/notes` 是
+/// 分叉把主干「控件属性」折成状态格的结果（reactor 没有 `Visibility`/`ItemsSource`）。
+#[allow(dead_code)] // 读者在刀 2（RPC 臂）与刀 3（View + 借格）。
+struct ReferenceState {
+    /// 本次触发 `@` 之后那段（主干把它当 `ShowReferencePaletteAsync` 的形参送进去）。
+    query: String,
+    /// `_referenceMatches`：当前候选表（文件块在前、会话块后，**追加序，不排序**）。
+    matches: Vec<ReferenceVm>,
+    /// `_referenceIndex`：`-1` = 没有选中项（主干初值与收起态都是这个数）。
+    index: i32,
+    /// `_referenceSpan`（`MW:18221`）：`(起点, 含 @ 的待替换长度)`。主干是枚不可空的
+    /// `(int,int)` 元组、初值 `(0,0)`；分叉用 `Option` 把「还没 arm 过」与「span 是 0 长」
+    /// 分开 —— 只影响 [`ReferenceState::take_accept`] 那第二道守卫能不能成立，语义不外露。
+    span: Option<(usize, usize)>,
+    /// `_referenceGeneration`（`MW:18218`）。
+    generation: u64,
+    /// `_referenceBusy`（`MW:18221`）：唯一的那枚节流闸 —— 在途就**排队不补发**。
+    busy: bool,
+    /// `ReferencePalette.Visibility == Visible`。
+    showing: bool,
+    /// `ReferenceList.Visibility == Visible`：两路都失败时**列表收起、标题那行还在**（T2 档）。
+    list_visible: bool,
+    /// 那发 `notes`（`MW:18288` 起的两路各自 `catch` 里 `notes.Add(...)`）：失败原因，
+    /// 条数与连接符由刀 2 的 `header()` 落（本刀零新增 i18n 键）。
+    notes: Vec<String>,
+}
+
+#[allow(dead_code)] // 整块：读者在刀 2 / 刀 3。
+impl ReferenceState {
+    /// 初值 = 主干 XAML 那句 `Visibility="Collapsed"` + `_referenceIndex = -1`（口径照
+    /// [`PaletteState::idle`]）。
+    fn idle() -> Self {
+        ReferenceState {
+            query: String::new(),
+            matches: Vec::new(),
+            index: -1,
+            span: None,
+            generation: 0,
+            busy: false,
+            showing: false,
+            // 列表那一格本身是可见的（收起的是整层外壳）。
+            list_visible: true,
+            notes: Vec::new(),
+        }
+    }
+
+    /// 主干 `HideReferencePalette`（`MW:18399-18406`）**恰好那四件**：`_referenceGeneration++`、
+    /// `_referenceMatches = new()`、`_referenceIndex = -1`、`ReferencePalette.Visibility = Collapsed`
+    /// （第五句 `ReferenceList.ItemsSource = null` 在分叉不占格：候选表随 `showing` 一起缺席）。
+    /// ⚠ **刻意不多铺**（RP1 §8 纠正 4）：主干 `span` / `busy` / 标题一个字都不清，
+    ///   所以这里的 `query` / `span` / `busy` / `notes` / `list_visible` 也一律留着 ——
+    ///   按命令面板那套模板顺手补齐就是把行为做改（`busy` 尤其要紧：清了它就等于把主干那枚
+    ///   「在途不补发」的节流闸拆了）。
+    fn hide(&mut self) {
+        self.generation += 1;
+        self.matches.clear();
+        self.index = -1;
+        self.showing = false;
+    }
+
+    /// 主干 `UpdateReferencePalette`（`MW:18245-18273`）= 输入变化的同步入口，**T0 档全在这里**：
+    /// · `armed` 是前三道闸的合取（`_rpc` 在位 `:18249` ∧ 有活动会话 ∧ **命令浮层没开着**
+    ///   `:18255`「命令浮层优先」）。那三件读的是 `Shell` 的状态，只有调用方拿得到；
+    ///   任一条不成立 ⇒ `hide()`，与主干那三处 `HideReferencePalette(); return;` 同形。
+    /// · 第四道 = [`reference_trigger`] 不成立 ⇒ `hide()`（`:18260-18264`）。
+    /// · 过了才抬代次、写 `query` 与 `span = (atIndex, query.len() + 1)`
+    ///   （`:18265-18266`，原注释「含 @ 的待替换长度」—— **那个 +1 就是 `@` 本身**）。
+    /// caret 按上面备案取串尾。
+    /// 返回 `Some((generation, query))` = 该发那一发 RPC；`None` = 已经收掉了。
+    fn arm(&mut self, input: &str, armed: bool) -> Option<(u64, String)> {
+        if !armed {
+            self.hide();
+            return None;
+        }
+        let Some((at, query)) = reference_trigger(input, input.len()) else {
+            self.hide();
+            return None;
+        };
+        self.generation += 1;
+        self.query = query.to_string();
+        self.span = Some((at, query.len() + 1));
+        Some((self.generation, self.query.clone()))
+    }
+
+    /// **T1 档** = 主干 `ShowReferencePaletteAsync` 开头那三行（`MW:18277-18281`）：
+    /// 已经有一发在途就**直接返回，什么都不改**（浮层留在上一屏的内容上），
+    /// 抢到才置 `busy`。主干那枚闸只这一处用，且**排队不补发**（RP1 §A.4：@ 浮层一个字的
+    /// 缓存都没有，唯一节流就是它 + 代次那道丢弃闸）。
+    fn claim_fetch(&mut self) -> bool {
+        if self.busy {
+            return false;
+        }
+        self.busy = true;
+        true
+    }
+
+    /// 主干 `ShowReferencePaletteAsync` 里两次 `await` 之后那一段（`MW:18354-18391`）
+    /// 加 `finally`（`MW:18394-18396`）= **T2/T3/T4 三档全在这里**（可离线测、不起 GUI，
+    /// 口径同 [`PaletteState::apply`]）：
+    /// · 代次不符 ⇒ **整段丢弃**、连收浮层都不做（`:18354-18357`「已有更新的按键」）；
+    /// · `Err` = 主干那发外层 `catch (Exception) { HideReferencePalette(); }`（`:18389-18392`）；
+    /// · **T2** 零候选 + `notes` 非空 ⇒ 列表收起、原因摊在浮层上、**浮层照样上屏**
+    ///   （`:18358-18371` 原注释「两路都失败：把原因摊在浮层上（不静默收起——用户需要知道
+    ///   为什么没有候选）」）；
+    /// · **T3** 零候选 + 无 notes ⇒ `hide()`（`:18372-18375`）—— 主干**没有**「无匹配」占位行；
+    /// · **T4** 有候选 ⇒ 列表可见、`index = 0`、上屏（`:18378-18385`）。
+    /// ⚠ 显隐方向两处最易抄反：T2 是「**列表**收、**浮层**开」，T3 才是整层收。
+    /// ⚠ 这里**不重算 span、也不复查触发**：主干的 span 是在 `UpdateReferencePalette` 那一刻
+    ///   钉下的，回填只认代次；触发复查住在 [`ReferenceState::arm`]（每次文本改写都会走它）。
+    /// ⚠ 候选数**无上限**：主干那段没有 `Take(N)`，内核返回多少就列多少（对照命令面板的 20）。
+    fn apply(&mut self, generation: u64, outcome: Result<(Vec<ReferenceVm>, Vec<String>), String>) {
+        // `finally { _referenceBusy = false; }`：不论走到哪一档都要交还那枚闸，
+        // 故这一发必须在代次判定**之前**。
+        self.busy = false;
+        if generation != self.generation {
+            return;
+        }
+        let (matches, notes) = match outcome {
+            Ok(pair) => pair,
+            Err(_) => {
+                self.hide();
+                return;
+            }
+        };
+        if matches.is_empty() {
+            self.matches.clear();
+            self.index = -1;
+            self.list_visible = false;
+            self.notes = notes;
+            if self.notes.is_empty() {
+                self.hide();
+            } else {
+                self.showing = true;
+            }
+            return;
+        }
+        self.matches = matches;
+        self.notes = notes;
+        self.index = 0;
+        self.list_visible = true;
+        self.showing = true;
+    }
+
+    /// 主干 `AcceptReferenceSelection`（`MW:18457-18477`）里纯判据那半截：返回
+    /// `(span 起点, 待替换长度, 插入串)`；三段拼接由调用方落 —— 主干原句
+    /// `InputBox.Text = text[..start] + inserted + text[(start + length)..]`（`:18474`），
+    /// **光标前后的两段尾巴都得留着**（命令面板那侧是整串赋值/清空，照抄就把用户半句话吞了）。
+    /// 两条独立越界守卫，都只 `hide()`、不报错：
+    /// · `_referenceIndex` 越界（`:18459-18464`）—— 含 `-1`；鼠标点选找不到那一枚
+    ///   （`IndexOf` 给 `-1`，`:18486`）也落在这条里；
+    /// · `start + length > text.Length`（`:18466-18470`）—— span 是**上一次 arm** 时钉的，
+    ///   回填之后输入可能已经变短。分叉按字节索引 ⇒ 再补一道字符边界护栏（只为防 panic）。
+    /// ⚠ 返回的 `insert` **末尾多一枚半角空格**（`:18471-18473` 原注释「引用后缀补一个空格：
+    ///   紧接着继续输入时不会粘成同一段引用」）。那枚空格是**功能件不是装饰**：采纳改写的是
+    ///   `self.input`，而分叉与主干一样「任何一次文本改写都重判触发」⇒ 没有它，光标前那段
+    ///   仍以一个 `@…` 收尾、浮层自己把自己重新点开 = 自循环（RP1 §7 刀 2 已证）。
+    /// 主干最后一句 `InputBox.SelectionStart = start + inserted.Length`（`:18475`）分叉**做不到**
+    /// —— 同一根因（无 caret 写回通道），偏差已备案在 [`reference_trigger`] 头上。
+    fn take_accept(&mut self, text: &str) -> Option<(usize, usize, String)> {
+        // 守卫一：`index < 0 || index >= matches.Count` ⇒ 只收浮层。
+        let index = usize::try_from(self.index).unwrap_or(usize::MAX);
+        let Some(pick) = self.matches.get(index) else {
+            self.hide();
+            return None;
+        };
+        // 守卫二：`start < 0 || start + length > text.Length` ⇒ 只收浮层。
+        // （`start` 是分叉的 `usize`，负数那一半天生不成立；`checked_add` 补的是溢出那一档。）
+        let Some((start, length)) = self.span else {
+            self.hide();
+            return None;
+        };
+        let Some(end) = start.checked_add(length) else {
+            self.hide();
+            return None;
+        };
+        if end > text.len() || !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+            self.hide();
+            return None;
+        }
+        // `:18473`：`var inserted = pick.Insert + " ";` —— 半角空格。
+        let inserted = format!("{} ", pick.insert);
+        self.hide();
+        Some((start, length, inserted))
+    }
+}
+
 /// 主干 `DshRpcClient` 的重连退避（`DshRpcClient.cs:50-51`）：第一次 0.5s，每次翻倍，封顶 30s。
 const RECONNECT_INITIAL_DELAY: Duration = Duration::from_millis(500);
 const RECONNECT_MAX_DELAY: Duration = Duration::from_secs(30);
@@ -8126,6 +8409,18 @@ struct Shell {
     /// #140 刀2（MW2）：主干 `Pet.cs:726-731 PetInstallSay` 的那一行常驻状态
     /// （`(已解析文本, warn)`；`None` = 还没点过安装那颗 ⇒ 不入树）。
     pet_status: Option<(String, bool)>,
+    /// #160 UK2 S1：主干 `_aboutUpdateStatus` 的**文本覆盖位**（`SetAboutStatus(text)` 的落点）。
+    /// `None` = 这一轮还没点过「检查更新」⇒ 卡内那一格回主干的初值 `LF("更新源：{0}", …)`
+    /// （`About.cs:104-110`：`_aboutUpdateStatus` 这颗 TextBlock 的初值**就是**「更新源」那句，
+    /// 所以分叉复用同一格、不另插一行 —— 插第二行 = 主干没有的文案位）。
+    /// 无 `warn` 旗：主干这颗全程 `CardDescriptionTextStyle` 一档色，失败与成功同色（`SetAboutStatus`
+    /// 只改 `.Text`）⇒ 不照搬宠物卡的 `(String, bool)` 两元组。
+    about_status: Option<String>,
+    /// #160 UK2 S2：主干 `_aboutBusy` —— `CheckUpdateAsync()` 的重入闸，`finally` 复位。
+    /// ⚠ 已知偏差（今天唯一可观察的等价物）：主干运行期还把那颗钮 `IsEnabled = false`，
+    /// 分叉的 `settings_action_button` 没有 is_enabled 档，为它加一枚参数会把六颗兄弟一起卷进
+    /// 另一格债 ⇒ 本刀用「`about_busy` 早退 + 状态文案」当等价物，不复现禁用态。
+    about_busy: bool,
     /// 最近一次从窗口读到的系统配色，供「跟随系统」回落。
     system_scheme: Scheme,
     /// 运行中的会话 id，只由 `$events` 的 api-session/status 驱动。
@@ -14680,6 +14975,10 @@ impl Component for Shell {
             skin_path: mw2_saved_skin_path(&shellfiles::data_home()),
             // #140 刀2：`PetInstallSay` 那行初值是「还没点过那颗」⇒ 不入树（主干是空 Text，同相）。
             pet_status: None,
+            // #160 UK2 S1：关于页手动那一发的两位。初值 = 主干「还没点过那颗」那一帧
+            // （`_aboutUpdateStatus.Text` = 「更新源：{0}」、`_aboutBusy` = false）。
+            about_status: None,
+            about_busy: false,
         };
         // 关于页「内核版本」那行的读盘**预读在这里**（缺口 #72）：`kernel_version()` 内部是一颗
         // `OnceLock`，此处把唯一那次文件 IO 花掉，之后 `view()` 每帧都只是 `OnceLock::get`，
@@ -14707,6 +15006,10 @@ impl Component for Shell {
         // 主干在窗口构造末尾 `_ = StartKernelBoot()`（MainWindow.xaml.cs:2381）：内核自己起，
         // 界面上没有任何「连接」入口，启动期只有内容面正中那张加载卡（旧的整窗遮罩已删，见 `kernel_boot_panel`）。
         shell.start_kernel(context);
+        // #160 UK2 S3：主干同一位置的 `ScheduleUpdateCheck(); // 启动静默检查更新：有新版本且未提醒过 →
+        // 系统通知一次`（`MainWindow.xaml.cs` 构造尾部）。分叉这一发今天只到「检查 + 落去重旗」，
+        // 通知腿归 S4（简报 §2.6：托盘底座 + 用户对真发通知的裁定）。
+        Self::arm_update_check_tick(context);
         // 键盘钩子 = 分叉唯一的按键通路（`blade2_rs::keys`）：**组件建好之后**装，回投句柄用
         // `context.sender()`（`Rc<RefCell<…>>`、非 `Send`，与钩子同线程）。
         // 闭包里的铁律：先 clone 句柄、把借用丢掉，**再** send —— 钩子在消息泵里会重入，
@@ -17156,6 +17459,14 @@ impl Component for Shell {
                 // 主干 `RenderSectionAsync` 开头就 `ResetSettingsSubPages()`：换分区必回一级页。
                 self.section = id;
                 self.sub = None;
+                // #160 UK2：主干 `RenderSectionAsync` 的 `case AboutSectionId: RenderAboutSection();`
+                // （`xaml.cs:10659-10661`）每次进这一节都重跑，而 `RenderAboutSection()` 开头就把
+                // `_aboutUpdateStatus = null; _aboutDownloadUrl = null;` 清掉再按初值重建
+                // （`About.cs:82-86`）⇒ 「正在检查更新…/发现新版本…」这类覆盖文本**不跨节存活**。
+                // ⚠ `_aboutBusy` 不在那四枚清零位里（只在 `finally` 复位）⇒ 分叉同样不清它。
+                if self.section == "about" {
+                    self.about_status = None;
+                }
                 // 主干 `RenderUsageSectionAsync` → `LoadUsageStatsAsync(force: _statsDirty)`
                 // （`MainWindow.xaml.cs:14935`）：切进「用量」这一页才决定要不要打内核。
                 if self.section == "usage" {
@@ -17329,6 +17640,80 @@ impl Component for Shell {
                 self.push_log(self.catalog.lf("打开设置文档失败：{0}", &[error]));
             }
             Msg::SettingsDocument(Ok(())) => {}
+            // #160 UK2 S2：关于页「检查更新」的手动那一发（主干 `MainWindow.About.cs`
+            // `CheckUpdateAsync()`）。`_aboutBusy` 早退 + 清忙都在这张臂上，联网在 worker 线程。
+            Msg::AboutCheckUpdate => self.about_check_update(context),
+            Msg::AboutCheckDone(outcome) => {
+                // 主干 `finally { _aboutBusy = false; }` —— 三条出口（成功 / 无新版 / 异常）都过这里。
+                self.about_busy = false;
+                let text = match outcome {
+                    // 主干 `catch (Exception ex) { SetAboutStatus(LF("检查更新失败：{0}", ex.Message)); }`
+                    Err(error) => self.catalog.lf("检查更新失败：{0}", &[error]),
+                    Ok((tag, hit)) => match hit {
+                        Some(hit) => {
+                            // 主干 `About.cs:190-200`：只有「直链 .msix 且拿到体积」那一档才报「约 {size}」，
+                            // 其余（含只有 Release 页面）一句裸版本串。
+                            if hit.size > 0 && hit.is_direct() {
+                                self.catalog.lf(
+                                    "发现新版本：{0}（约 {1}）。",
+                                    &[hit.tag.clone(), updatecheck::format_bytes(hit.size)],
+                                )
+                            } else {
+                                self.catalog.lf("发现新版本：{0}。", &[hit.tag.clone()])
+                            }
+                        }
+                        // 主干 `if (string.IsNullOrEmpty(tag))` 那一发在联网**之后**、版本比较**之前**
+                        // 就 `SetAboutStatus(…); return;` 了 ⇒ 它是「拿到回执但 tag 空」的唯一出口；
+                        // 主干最后那支（「安装包缺失」那一句）要 tag 为空，已被这里截走 = 死支，
+                        // 分叉照旧不接活（简报 §4 T-1，本文件里那句原文一处都不许出现）。
+                        None if tag.is_empty() => self
+                            .catalog
+                            .l("检查更新失败：Release 返回缺少 tag_name。"),
+                        // 主干 `else if (!string.IsNullOrEmpty(tag))`：等值 / 更旧 / **不可比**三档
+                        // 全落这一句（主干版本解析失败时 `latest > current` 就是不成立）⇒ 不可比档
+                        // 不许单开文案（简报 §4 T-2）。
+                        None => self.catalog.l("已是最新版本。"),
+                    },
+                };
+                self.about_status = Some(text);
+            }
+            // #160 UK2 S3：启动静默那一发。到点 ⇒ worker 线程跑合流的 `check_update_now`
+            // （主干 `CheckUpdateSilentlyAsync` 体内那条「构造请求 → 拉回执 → 比版本」的直译；
+            // 网络必须离开 UI 线程，简报 §4 T-12）。
+            Msg::UpdateSilentTick => self.update_silent_check(context),
+            Msg::UpdateSilentOutcome(outcome) => match outcome {
+                // 主干 `catch (Exception) { Debug.WriteLine("[update-check] silent check skipped") }`
+                // —— 断网 / 限流 / 无包身份都不打扰用户 ⇒ 分叉只落一行 `DIAG:`，画面什么都不画。
+                Err(error) => {
+                    self.push_log(format!("DIAG: UPDATE silent check skipped: {error}"));
+                }
+                // 主干三态早退（未配置源 / 缺 tag / 不可比 / 等值更旧）合流成 `Ok(None)`：
+                // 同样一行 `DIAG:`，不画、不清旗、不排下一次。
+                Ok(None) => {
+                    self.push_log("DIAG: UPDATE silent check: no newer release");
+                }
+                Ok(Some(hit)) => {
+                    if updatecheck::should_remind(&hit.tag, &self.reminded_update_tag) {
+                        // 顺序硬约束（简报 §1.4 已证）：`SetRemindedUpdateTag(tag);` 紧邻在
+                        // `ShellToast.Show(...)` **之前** ⇒ 旗先过 [`Shell::write_shell_json`] 落盘，
+                        // 之后才轮到通知腿；这一刀到此为止（S4 才接 `toast::show`，见上方备案）。
+                        self.reminded_update_tag = hit.tag.clone();
+                        self.write_shell_json();
+                        self.push_log(format!(
+                            "DIAG: UPDATE silent flagged tag={} (notify leg deferred to S4)",
+                            hit.tag
+                        ));
+                    } else {
+                        // 主干 `if (_shellOptions.RemindedUpdateTag == tag) return;`：同一版本
+                        // 只提醒一次，命中去重时**不写盘**（写后不清 = 简报 §4 T-6，全文件这一格
+                        // 只有上面一处写点）。
+                        self.push_log(format!(
+                            "DIAG: UPDATE silent already reminded tag={}",
+                            hit.tag
+                        ));
+                    }
+                }
+            },
             Msg::FontStep(step) => {
                 self.font_size =
                     (self.font_size + step).clamp(size::FONT_SIZE_MIN, size::FONT_SIZE_MAX);
@@ -26446,7 +26831,7 @@ impl Shell {
             "browser-control" => self.settings_browser_control(context, p),
             "usage" => self.settings_usage(p),
             "pet" => self.settings_pet(context, p),
-            "about" => self.settings_about(p),
+            "about" => self.settings_about(context, p),
             _ => Vec::new(),
         }
     }
@@ -27307,17 +27692,33 @@ impl Shell {
     /// `KernelVersionText()`：读 `Kernel/dsh/package.json` 的 `version`，非空字符串才用，
     /// 其余任何形状（含读不到文件）都退回 `L_static("未知")`。显示的是**裸串**，不加前后缀
     /// （主干 `:98-101` 就是 `SelectableVersionText(KernelVersionText())`）。
-    fn settings_about(&self, p: Palette) -> Vec<KeyedView> {
+    fn settings_about(
+        &self,
+        context: &mut ViewContext<Shell>,
+        p: Palette,
+    ) -> Vec<KeyedView> {
         let version_text =
             |text: &str, p: Palette| -> View { self.settings_code_text(text.to_string(), p) };
         // 主干 `About.cs:101` 显示的就是裸版本串：不加前缀、不加后缀，读不到才轮到「未知」。
         let kernel_version_text = kernel_version()
             .map(str::to_string)
             .unwrap_or_else(|| self.catalog.l("未知"));
+        // 主干 `About.cs:112-131`：`row` 是**一颗横向 StackPanel 装两颗钮**——「检查更新」
+        // （CompactButtonStyle）+「下载并安装」（AccentButtonStyle，初值 `Visibility.Collapsed`）。
+        // 分叉今天只有第一颗：reactor 没有 `Visibility` setter，而第二颗的点击腿（`Add-AppxPackage`
+        // 覆盖安装 / 开浏览器）属 S6，未获用户裁定 ⇒ 画一颗没人点的钮 = 会骗人的面，宁摘勿留
+        // （见报告 §6）。
         let actions: View = StackPanel::new()
             .orientation(Orientation::Horizontal)
             .spacing(space::S8)
-            .children((self.settings_button("检查更新", "检查更新", "AboutCheckUpdateButton", false),))
+            .children((self.settings_action_button(
+                "检查更新",
+                "检查更新",
+                "AboutCheckUpdateButton",
+                false,
+                Msg::AboutCheckUpdate,
+                context,
+            ),))
             .into();
         vec![
             self.settings_section_desc(DESC_ABOUT, p),
@@ -27349,16 +27750,12 @@ impl Shell {
                 "更新",
                 "",
                 vec![
-                    // 主干 `MainWindow.About.cs:104-110`：`UpdateRepo` 非空 ⇒ `LF("更新源：{0}",
-                    // $"github.com/{UpdateRepo}")`，仓库常量在 `:25`。旧的「尚未配置」那句是漂移前文案。
-                    self.settings_line(
-                        "repo",
-                        &self.catalog.lf(
-                            "更新源：{0}",
-                            &[format!("github.com/{ABOUT_UPDATE_REPO}")],
-                        ),
-                        p,
-                    ),
+                    // 主干 `About.cs:104-110` 的 `_aboutUpdateStatus`：**这一格本身就是状态位**，
+                    // 它的初值正是 `LF("更新源：{0}", $"github.com/{UpdateRepo}")`（仓库常量在 `:25`；
+                    // 旧的「尚未配置」那句是漂移前文案）。`SetAboutStatus` 之后同一格被覆盖 ⇒ 分叉
+                    // 复用同一格，不另插第二行（多一行 = 主干没有的文案位）；`KeyedView` 的键沿用
+                    // `repo`（→ UIA `line-repo`），它不是主干有的名字，改叫 `status` 等于自造 id。
+                    self.settings_line("repo", &self.about_status_text(), p),
                     self.settings_row("release", "GitHub Release", "", actions, p),
                 ],
                 p,
@@ -29075,6 +29472,83 @@ impl Shell {
         });
     }
 
+    /// #160 UK2 S1：主干 `SetAboutStatus` 的宿主 = 关于卡内 `_aboutUpdateStatus` **那一格**
+    /// （这颗 TextBlock 的初值就是 `LF("更新源：{0}", …)`，见 `About.cs:104-110`）⇒ 有覆盖文本
+    /// 用覆盖，没有就回初值。全程只有这一格，不插第二行（多一行 = 主干没有的文案位），
+    /// 也不加 warn 双色（主干失败与成功同 `CardDescriptionTextStyle`）。
+    fn about_status_text(&self) -> String {
+        self.about_status.clone().unwrap_or_else(|| {
+            self.catalog
+                .lf("更新源：{0}", &[format!("github.com/{ABOUT_UPDATE_REPO}")])
+        })
+    }
+
+    /// #160 UK2 S3：主干 `ScheduleUpdateCheck()` 里 `await Task.Delay(UpdateCheckDelayMs)` 那一觉的
+    /// 分叉落点 —— 形状逐字照 [`Shell::arm_instructions_tick`]（`spawn_background` + 线程级 `sleep`，
+    /// 睡在非 UI 线程，一个帧都不挡，简报 §4 T-12 的「唯一合法睡法」）。延迟取
+    /// `updatecheck::UPDATE_CHECK_DELAY_MS`（主干 `UpdateCheck.cs` 的 6000ms 只住在 lib 侧那一枚，
+    /// 本文件不重钉数值，简报 §2.1）。开机只武装这一发（主干也只有构造尾部一处调用）。
+    fn arm_update_check_tick(context: &ComponentContext<Shell>) {
+        let _task = context.spawn_background(move |_token| {
+            std::thread::sleep(Duration::from_millis(updatecheck::UPDATE_CHECK_DELAY_MS));
+            Msg::UpdateSilentTick
+        });
+    }
+
+    /// #160 UK2 S3：静默遍的联网腿 = **直接**用合流的 `updatecheck::check_update_now`
+    /// （简报 §2.1 的分派裁定：主干静默遍对「缺 tag / 不可比 / 无新版」一律 `return`，正是
+    /// `Ok(None)` 的合流语义；手动遍要分诊两句文案才绕开它，见 [`Msg::AboutCheckDone`]）。
+    /// 「未配置更新源」的早退在 lib 侧就完成（`build_release_request` 对空 repo 给 `None` ⇒
+    /// `Ok(None)`，**不联网**），与主干 `CheckUpdateSilentlyAsync` 开头那道闸同一终点。
+    /// 回执三分支（`Err` / `Ok(None)` / `Ok(Some)`）全在 `update` 的那张臂上落，worker 不造文案
+    /// （简报 §4 T-13）。
+    fn update_silent_check(&self, context: &ComponentContext<Shell>) {
+        let _task = context.spawn_background(move |_token| {
+            Msg::UpdateSilentOutcome(updatecheck::check_update_now(
+                ABOUT_UPDATE_REPO,
+                SHELL_VERSION,
+            ))
+        });
+    }
+
+    /// #160 UK2 S2：主干 `MainWindow.About.cs` `CheckUpdateAsync()`（`:160-215`）的直译，逐段对表：
+    /// · `if (_aboutBusy) return;` ⇒ `about_busy` 早退。⚠ 主干随后还 `_aboutCheckButton.IsEnabled
+    /// = false`，分叉的 `settings_action_button` 没有 is_enabled 档，为它加一枚参数会把六颗兄弟
+    /// 一起卷进另一格债 ⇒ 今天唯一可观察的等价物 = 这一发早退 + 下面那行状态文案（备案见报告 §6）。
+    /// · `SetAboutStatus(L("正在检查更新…"))` ⇒ 覆盖卡内那一格。
+    /// · 联网段 = `updatecheck` 的「手动腿四段」（`build_release_request` → `fetch_release_body`
+    /// → `parse_release_receipt` → `tag()` / `outcome_from_receipt`），**必须离开 UI 线程**
+    /// （UC-K1 §6-4-2）；睡法照 [`Shell::mw2_open_settings_document`] 那一发 `spawn_background`。
+    /// ⚠ 不用合流的 `check_update_now`：它把「tag 空」与「不更新」压成同一个 `None`，而手动遍要
+    /// 分诊 `检查更新失败：Release 返回缺少 tag_name。` 与 `已是最新版本。` 两句（简报 §2.1 的裁定）。
+    /// ⚠ 主干开头的 `string.IsNullOrEmpty(UpdateRepo)` 早退在分叉**不可达** —— `ABOUT_UPDATE_REPO`
+    /// 是硬编码非空常量 ⇒ `build_release_request` 恒 `Some`，那句「更新源尚未配置」不接成活分支。
+    fn about_check_update(&mut self, context: &ComponentContext<Shell>) {
+        if self.about_busy {
+            return;
+        }
+        self.about_busy = true;
+        self.about_status = Some(self.catalog.l("正在检查更新…"));
+        let _task = context.spawn_background(move |_token| {
+            let outcome: Result<(String, Option<UpdateOutcome>), String> = (|| {
+                let Some(req) = updatecheck::build_release_request(ABOUT_UPDATE_REPO) else {
+                    // 今天不可达（常量非空）；真走到这里就按「没有回执可读」回，不编成功文案。
+                    return Ok((String::new(), None));
+                };
+                let body = updatecheck::fetch_release_body(&req)?;
+                let receipt = updatecheck::parse_release_receipt(&body)?;
+                // `outcome_from_receipt` 只在「tag 非空 **且** verdict == Newer」时给 `Some`；
+                // 「tag 空」与「等值 / 更旧 / 不可比」都压成 `None` ⇒ 把 `tag` 一起带回 UI 线程，
+                // 两句文案在那一臂分诊（worker 拿不到 `catalog`，T-13：lib 侧不造 UI 文案）。
+                Ok((
+                    receipt.tag().to_string(),
+                    updatecheck::outcome_from_receipt(&receipt, SHELL_VERSION),
+                ))
+            })();
+            Msg::AboutCheckDone(outcome)
+        });
+    }
+
     // ---- #136 A 档三发（MR3）：单向 RPC 的派发口 -------------------------------------------
     //
     // 三条的**共同口径**（逐条抄 `run_workspace_write` / `run_directory_pick` 那两处的既有形状）：
@@ -30478,6 +30952,69 @@ mod about_copy_tests {
     fn about_page_literals_match_mainline() {
         assert_eq!(SHELL_VERSION, "0.8.2.0");
         assert_eq!(ABOUT_UPDATE_REPO, "Live-Rise/Blade2");
+    }
+
+    /// #160 UK2 S2：关于页「检查更新」那颗的接线形状 + 手动那一发的三档出口。
+    /// 为什么在 `tests/mw2_deadbuttons.rs` 已有正锁之外再立这一颗：那颗只钉「这颗钮是活的」，
+    /// 钉不到**三条出口各落主干哪一句**。而「手动遍不能用合流函数」正是这一刀最容易被人
+    /// 「简化」掉的一格（`check_update_now` 会把「缺 tag」与「不更新」压成同一个 `None`，
+    /// 两句文案静默合一句，UI 上看不出来）。另附两枚反向哨兵 = 简报 §4 的 T-1 / T-2。
+    #[test]
+    fn about_check_update_keeps_the_three_trunk_exits_apart() {
+        let source = include_str!("main.rs");
+        let about = slice(source, "fn settings_about(", "fn settings_pet(");
+        assert!(
+            about.contains("\"AboutCheckUpdateButton\"")
+                && about.contains("self.settings_action_button(")
+                && about.contains("Msg::AboutCheckUpdate,"),
+            "检查更新钮没走接了 action 的姊妹助手 / 没投手动那一发：{about}"
+        );
+        // 主干 `_aboutUpdateStatus` 的初值就是「更新源」那句 ⇒ 状态位与它是**同一格**，
+        // 分叉不许插出第二行（多一行 = 主干没有的文案位）。
+        assert!(
+            about.contains("&self.about_status_text(), p)"),
+            "卡内那一格又写回静态初行了 ⇒ 主干 `SetAboutStatus` 覆盖的就是这一格"
+        );
+        let worker = slice(source, "fn about_check_update(", "// ---- #136 A");
+        for stage in [
+            "updatecheck::build_release_request(",
+            "updatecheck::fetch_release_body(",
+            "updatecheck::parse_release_receipt(",
+            "updatecheck::outcome_from_receipt(",
+        ] {
+            assert!(worker.contains(stage), "手动腿缺四段之一 {stage}");
+        }
+        assert!(
+            !worker.contains("updatecheck::check_update_now("),
+            "合流函数把「缺 tag」与「不更新」压成一个 `None` ⇒ 手动遍用它就丢一句文案"
+        );
+        for shape in ["self.about_busy", "正在检查更新…", "spawn_background"] {
+            assert!(worker.contains(shape), "手动腿缺形状 {shape}");
+        }
+        let arm = slice(source, "Msg::AboutCheckDone(outcome) =>", "Msg::FontStep(step) =>");
+        for sentence in [
+            "检查更新失败：Release 返回缺少 tag_name。",
+            "已是最新版本。",
+            "发现新版本：{0}。",
+            "发现新版本：{0}（约 {1}）。",
+            "检查更新失败：{0}",
+        ] {
+            assert!(arm.contains(sentence), "回执臂缺主干那句文案 {sentence}");
+        }
+        assert!(
+            arm.contains("self.about_busy = false;"),
+            "回执臂没复位忙碌闸 = 主干 `finally` 那一发丢了"
+        );
+        // 反向哨兵 T-1：主干进不到的死支（要 tag 空，已被上一发 `return` 截走）不许接活。
+        assert!(
+            !source.contains(concat!("未找到可用的", "安装包")),
+            "把主干的死支接成了活分支"
+        );
+        // 反向哨兵 T-2：不可比档在主干没有单独文案（`latest > current` 不成立就统一「已是最新」）。
+        assert!(
+            !source.contains(concat!("NotCom", "parable")),
+            "给不可比档单开了文案 = 主干没有的第三态"
+        );
     }
 
     /// 从 `start` 之后切到 `end` 之前：本 mod 的源码级断言共用这一把刀（`tests` mod 里有同名
@@ -49082,5 +49619,469 @@ mod confirm_family_tests {
             "那一枚不许进 `ConfirmFace`：两发都是 `取消`，串只在共享卡体那一枚脚钮里出现一次才是唯一真相\
              （针里点名族 A 那枚 dismiss 消息，别的族 `foot` 里同字的 `取消` 一处也不算进来）"
         );
+    }
+}
+
+// ============================================================================================
+// UK3 · #160 S3 静默那一发（启动延时检查 + shell.json 去重旗）的源码锁。
+// 规矩（见文件里前几枚尾部 mod 的头注）：本 mod 追加在**全文件最末尾** —— 本文件那批
+// `include_str!("main.rs")` 源码锁按「起始锚 → 其后第一枚结束锚」切窗，测试若嵌在中段、注释里
+// 又裸写别人的锚串，就会把窗抢歪 / 把计数洗脏；凡拿源码当证据的 needle 一律 `concat!` 现拆。
+// 本片为什么只能锁源码：静默遍的「真到点 → 联网 → 落旗」整链要窗口 + 网络，离线机两样都不给
+// （简报 §2.1：`check_update_now` 的联网腿单测一律绕开）⇒ 判据全部落在**文本形状 + 一枚不碰
+// 网络的合流早退**（见最后一颗），与 `about_copy_tests` 的既有口径同形。
+// ============================================================================================
+
+#[cfg(test)]
+mod uk3_silent_check_tests {
+    use super::*;
+
+    /// 三行切窗刀：与本文件其余几处私有助手同口径（mod 间借不到，按成规就地再写一份）。
+    fn cut<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
+        let at = source.find(start).expect(start);
+        let tail = &source[at + start.len()..];
+        let end_at = tail.find(end).expect(end);
+        &source[at..at + start.len() + end_at]
+    }
+
+    /// 判据①（定时器形状）：开机那一觉逐字照 [`Shell::arm_instructions_tick`] ——
+    /// `spawn_background` + 线程级 `std::thread::sleep`（睡在非 UI 线程），时长只取
+    /// `updatecheck::UPDATE_CHECK_DELAY_MS`（主干 6000 只钉在 lib 侧那一枚；简报 §2.1 明令
+    /// `main.rs` 不许再钉第二份数值），到点投 `Msg::UpdateSilentTick`。
+    /// 武装点只有一处 = `create()` 尾部（主干 `ScheduleUpdateCheck()` 也只被 ctor 调一发）。
+    #[test]
+    fn the_startup_tick_sleeps_the_lib_delay_and_arms_once() {
+        let source = include_str!("main.rs");
+        let code = code_only(source);
+        let armer = cut(
+            &code,
+            concat!("fn arm_update_check", "_tick("),
+            concat!("fn update_silent_", "check("),
+        );
+        for shape in [
+            "spawn_background",
+            "std::thread::sleep",
+            concat!("updatecheck::UPDATE_CHECK", "_DELAY_MS"),
+            concat!("Msg::Update", "SilentTick"),
+        ] {
+            assert!(armer.contains(shape), "睡发缺一枚形状 {shape}：{armer}");
+        }
+        // 定义一枚 + 调用一枚 = 两枚（与 `arm_instructions_tick(` 的两枚口径一致）。
+        assert_eq!(
+            code.matches(concat!("arm_update_check_tick", "(")).count(),
+            2,
+            "武装枚数漂了：定义与 create 调用点各恰一枚"
+        );
+        assert!(
+            !code.contains(concat!("const UPDATE_CHECK_DELAY", "_MS")),
+            "在 main.rs 重钉延迟常量 = 第二份数值（简报 §2.1 不许重钉）"
+        );
+    }
+
+    /// 判据②（入口分派）：静默遍**直接**用合流的 `check_update_now(ABOUT_UPDATE_REPO, SHELL_VERSION)`
+    /// （简报 §2.1：主干静默遍对「缺 tag / 不可比 / 等值更旧」一律 `return` = `Ok(None)` 的合流
+    /// 语义）；回执投 `Msg::UpdateSilentOutcome`。反向哨兵：worker 不碰 catalog（T-13 lib/worker
+    /// 不造 UI 文案）、不写盘（落旗在回执臂，顺序由判据③钉）。
+    #[test]
+    fn the_silent_worker_uses_the_converged_entry_off_the_ui_thread() {
+        let source = include_str!("main.rs");
+        let code = code_only(source);
+        let worker = cut(
+            &code,
+            concat!("fn update_silent_", "check("),
+            concat!("fn about_check", "_update("),
+        );
+        for stage in [
+            concat!("updatecheck::check_update_", "now("),
+            "ABOUT_UPDATE_REPO",
+            "SHELL_VERSION",
+            concat!("Msg::UpdateSilent", "Outcome("),
+            "spawn_background",
+        ] {
+            assert!(worker.contains(stage), "静默 worker 缺一枚 {stage}：{worker}");
+        }
+        assert!(
+            !worker.contains("self.catalog"),
+            "worker 线程里造 UI 文案 = T-13（文案全在 UI 臂 / lib 只交结构化事实）"
+        );
+        assert!(
+            !worker.contains("write_shell_json"),
+            "落旗不排在 worker 里 —— §1.4 的顺序是「旗在通知之前」，写点在回执臂"
+        );
+    }
+
+    /// 判据③（顺序硬约束）：去重闸 → 写旗 → `write_shell_json()` 依次成立；旗先落盘这一格从
+    /// S3 起就在架上，S4 接通知时必须继续排在这道写盘**之后**（主干 `SetRemindedUpdateTag(tag);`
+    /// 紧邻在 `ShellToast.Show(...)` 之前，简报 §1.4）。反向哨兵四枚：本片不发通知（`toast::show`
+    /// 零出现 —— S4 落地时按事实同步这一枚）、静默遍不碰关于卡状态位（主干那一遍完全不碰
+    /// `SetAboutStatus`）、不加 `should_notify` 门（T-5）、不提前抄 S4 的 toast 文案（§1.6）。
+    /// 末附 T-6：全文件的旗只有**一处写点**（置旗），任何「清旗 / 复位」回路都是主干没有的。
+    #[test]
+    fn the_flag_lands_before_any_notification_and_paints_nothing() {
+        let source = include_str!("main.rs");
+        let code = code_only(source);
+        let arm = cut(
+            &code,
+            concat!("Msg::UpdateSilentOutcome(", "outcome) =>"),
+            concat!("Msg::FontStep(", "step) =>"),
+        );
+        let gate = arm
+            .find(concat!("updatecheck::should_", "remind("))
+            .expect("回执臂缺去重闸");
+        let flagged = arm
+            .find(concat!("self.reminded_update", "_tag = hit.tag.clone();"))
+            .expect("缺置旗写点");
+        let saved = arm
+            .find(concat!("self.write_shell_json", "();"))
+            .expect("缺落盘那一发（旗不落盘 = 重启后又提醒一遍）");
+        assert!(
+            gate < flagged && flagged < saved,
+            "顺序必须是 闸 → 置旗 → 写盘（§1.4 旗在通知之前）：{arm}"
+        );
+        for banned in [
+            concat!("toast::", "show"),
+            "about_status",
+            concat!("should_", "notify"),
+            concat!("点击查看并", "更新"),
+        ] {
+            assert!(!arm.contains(banned), "静默回执臂多做了一枚 {banned}");
+        }
+        assert_eq!(
+            code.matches(concat!("self.reminded_update_ta", "g =")).count(),
+            1,
+            "旗只有置这一枚写点；枚数变了 = 有人加了清旗 / 复位回路（T-6）"
+        );
+    }
+
+    /// 判据④（早退纪律）：四出口（`Err` / `Ok(None)` / 置旗 / 命中去重）各恰**一行** `DIAG:`、
+    /// 一律走 `push_log`（既有成规：`push_log` 自补 `DIAG:` 前缀），画面什么都不画 —— 主干
+    /// `catch` 只 `Debug.WriteLine`、三态早退连日志都不留，分叉把「留一行诊断」当既有成规的
+    /// 偏差登记（简报 §3-S3 明令的分叉出口形状）。DIAG 走裸串 ⇒ 本片 i18n 净新增键 = 0。
+    #[test]
+    fn every_early_exit_leaves_one_diag_line_and_no_paint() {
+        let source = include_str!("main.rs");
+        let code = code_only(source);
+        let arm = cut(
+            &code,
+            concat!("Msg::UpdateSilentOutcome(", "outcome) =>"),
+            concat!("Msg::FontStep(", "step) =>"),
+        );
+        assert_eq!(
+            arm.matches("DIAG: UPDATE silent").count(),
+            4,
+            "四出口各留一行（skipped / no newer / flagged / already reminded），枚数漂 = 早退纪律歪了"
+        );
+        assert_eq!(
+            arm.matches("push_log").count(),
+            4,
+            "诊断只走 push_log 这一条通道，不许开第二份"
+        );
+        assert!(!arm.contains("catalog"), "DIAG 成规是裸串，不为诊断登记 i18n 键");
+    }
+
+    /// 判据⑤（离线可验）：行为级只测「未配置源」这一档 —— `check_update_now("")` 在
+    /// `build_release_request` 就断（空 repo ⇒ `None` ⇒ `Ok(None)`），**一个网络包都不发**，
+    /// 正是主干 `UpdateCheck.cs` 开头那道「未配置更新源」早退的合流等价。⚠ 不许拿
+    /// `ABOUT_UPDATE_REPO` 在单测里调这一发：联网腿按既有成规只在单测绕开（UC-K1 §6-4-2）。
+    #[test]
+    fn the_unconfigured_exit_returns_none_without_touching_the_network() {
+        assert!(
+            matches!(updatecheck::check_update_now("", SHELL_VERSION), Ok(None)),
+            "未配置源必须不联网就 Ok(None)（主干同档 return）"
+        );
+    }
+}
+
+// ===================== #73 刀 1 的单测（RP1 §7「测试判据」第 1/2/3 条） =====================
+
+#[cfg(test)]
+mod reference_palette_tests {
+    use super::*;
+
+    /// 候选行的测试构造器：只有 `insert` 参与本刀的判据，其余三列是刀 2 的事。
+    fn reference(insert: &str) -> ReferenceVm {
+        ReferenceVm {
+            glyph: "",
+            label: insert.to_string(),
+            detail: String::new(),
+            insert: insert.to_string(),
+        }
+    }
+
+    /// 主干那句拼接（`MW:18474` `text[..start] + inserted + text[(start + length)..]`）的抄本，
+    /// 只给单测用：刀 2 落 `self.input` 时写的是同一行。
+    fn splice(text: &str, start: usize, length: usize, insert: &str) -> String {
+        format!("{}{}{}", &text[..start], insert, &text[start + length..])
+    }
+
+    /// **判据 1** —— 主干 `TryGetReferenceTrigger`（`MW:18223-18242`）逐字节：从光标往前扫、
+    /// 遇空白即停、见到的第一个 `@` 就是 `atIndex`。
+    #[test]
+    fn reference_trigger_scans_back_from_the_caret_and_stops_at_whitespace() {
+        // 空 query 与带 query 两档（`MW:18235` 那句 `query = text[(i + 1)..caret]`）。
+        assert_eq!(reference_trigger("@", 1), Some((0, "")));
+        assert_eq!(reference_trigger("@ma", 3), Some((0, "ma")));
+        // ⚠ `@` **不要求在词首**（域头 `:18207` 那句「以 @ 开头」比代码严，代码不判）：
+        assert_eq!(reference_trigger("a@b", 3), Some((1, "b")));
+        // 最近的 `@` 赢，不是最左那个（`MW:18232-18240` 那圈 while 从右往左、命中即 break）。
+        assert_eq!(reference_trigger("@a@b", 4), Some((2, "b")));
+        // 遇空白即停：空白四型 + 全角空格 `U+3000`（`char::is_whitespace` 与 `char.IsWhiteSpace`
+        // 同为 Unicode 空白集）一律停 ⇒ 前导那个 `@` 追不到。
+        assert_eq!(reference_trigger("@a b", 4), None);
+        assert_eq!(reference_trigger("@a\n", 3), None);
+        assert_eq!(reference_trigger("@a\tb", 4), None);
+        assert_eq!(reference_trigger("@a\u{3000}b", 5), None);
+        // 中文不是空白 ⇒ 继续往前扫，撞到 `@` 就触发。
+        assert_eq!(reference_trigger("中文@b", 8), Some((6, "b")));
+        // 光标之前什么都没有（含「光标就在串首」）⇒ 不算触发（主干 `i = caret - 1` 那一档）。
+        assert_eq!(reference_trigger("@ma", 0), None);
+        assert_eq!(reference_trigger("", 0), None);
+        // 串里根本没有 `@`（caret 越界先夹回串尾再扫）。
+        assert_eq!(reference_trigger("看 一下", 10), None);
+    }
+
+    /// **判据 1 的反向半边**：触发看的是**光标位置**、不是整串（RP1 §A.1 原话），且 caret
+    /// 越界要像主干 `Math.Clamp(SelectionStart, 0, text.Length)`（`MW:18229`）那样夹回来。
+    /// 分叉的 caret 恒为串尾（备案见 [`reference_trigger`] 头上那段），这两把是那条备案的尺。
+    #[test]
+    fn reference_trigger_reads_the_caret_not_the_whole_string() {
+        // 前导 `/` 不相干：光标停在 `@ma` 之后 ⇒ 引用浮层开（命令面板那条判据这里不适用）。
+        assert_eq!(reference_trigger("x /compact @ma", 14), Some((11, "ma")));
+        // 同一个串、光标挪到 `@` 之前 ⇒ 什么都不触发（主干也是 false）。
+        assert_eq!(reference_trigger("x /compact @ma", 10), None);
+        // caret 落在 query 中间 ⇒ query 只到光标为止，不含光标之后的字。
+        assert_eq!(reference_trigger("@mac", 3), Some((0, "ma")));
+        // 分叉 caret 恒取串尾那一格备案的**代价**（报告 §1）：`@query` 后面还挂着字时，
+        // 主干按真光标判 ⇒ 触发，分叉按串尾判 ⇒ 被尾巴挡住 ⇒ **不弹**（方向是少弹，不是弹错）。
+        assert_eq!(reference_trigger("看 @ma 里的", 14), None);
+        assert_eq!(reference_trigger("看 @ma", 7), Some((4, "ma")));
+        // `Math.Clamp` 那一档：越界的大 caret 夹回串尾，结果与 caret = len 同。
+        assert_eq!(reference_trigger("@ma", 99), Some((0, "ma")));
+        // 分叉独有的一道护栏（C# 按 UTF-16 码元索引、天生不会劈开字符）：非字符边界的 caret
+        // 向下夹到边界，不 panic。
+        assert_eq!(reference_trigger("@中", 2), Some((0, "")));
+    }
+
+    /// **判据 2（上）** —— 主干 `UpdateReferencePalette` 的四道闸 + 代次与 span 落位
+    /// （`MW:18245-18273`）。**T0 档**：`armed`（rpc 在位 ∧ 有活动会话 ∧ 命令浮层没开着）不成立
+    /// 或触发不成立 ⇒ 一律收浮层，且**不抬代次**（那两处主干是 `Hide` 里抬的）。
+    /// `span` 那个 **+1 就是 `@` 本身**（`:18266` 原注释「含 @ 的待替换长度」）。
+    #[test]
+    fn reference_arm_gates_the_tier_zero_and_pins_the_span_including_the_at() {
+        let mut state = ReferenceState::idle();
+        // 初值：整层收着、没有选中项。
+        assert_eq!((state.showing, state.index, state.span), (false, -1, None));
+
+        // 前三道闸任一不成立 ⇒ 收，且不发 RPC。
+        assert_eq!(state.arm("看 @ma", false), None);
+        assert!(!state.showing);
+        assert_eq!(state.generation, 1, "收浮层那一句里代次 +1（主干 Hide 第一句）");
+
+        // 第四道：触发不成立 ⇒ 收。
+        assert_eq!(state.arm("看 一下", true), None);
+        assert_eq!(state.generation, 2);
+
+        // 过了才抬代次并钉 span。`看 @ma`：`@` 在第 4 字节，待替换 = `@ma` = 3 字节。
+        let (generation, query) = state.arm("看 @ma", true).expect("该发那一发 RPC");
+        assert_eq!(generation, 3);
+        assert_eq!(state.generation, 3);
+        assert_eq!(query, "ma");
+        assert_eq!(state.query, "ma");
+        assert_eq!(
+            state.span,
+            Some((4, 3)),
+            "长度得含 `@` 本身：query 2 字节 + 1 = 3，起点 4 ⇒ 正好覆盖 `@ma`"
+        );
+        // 空 query 那一档：`@` 自己占 1。
+        let (generation, query) = state.arm("看 @", true).expect("只打了个 @ 也触发");
+        assert_eq!(query, "");
+        assert_eq!(state.span, Some((4, 1)));
+        assert_eq!(generation, 4, "每次过闸都抬一代");
+    }
+
+    /// **判据 2（中）** —— **T1 档**（`MW:18277-18281`）：已经有一发在途 ⇒ 直接返回、
+    /// **一个字节都不改**（浮层留在上一屏的内容上），主干那枚闸**排队不补发**。
+    #[test]
+    fn reference_claim_fetch_leaves_the_previous_screen_untouched() {
+        let mut state = ReferenceState::idle();
+        let (generation, _) = state.arm("看 @ma", true).unwrap();
+        state.apply(generation, Ok((vec![reference("E:\\x")], vec![])));
+        let before = (state.matches.len(), state.index, state.showing, state.list_visible);
+
+        assert!(state.claim_fetch(), "第一发该抢到");
+        // 在途期间又改写字重开一次 arm（刀 2 的 `refresh_reference` 会走到这一步）：
+        let second = state.arm("看 @mac", true).expect("闸是 T1 那一发用的，arm 照旧抬代次");
+        assert!(second.0 > generation);
+        assert!(
+            !state.claim_fetch(),
+            "在途 ⇒ 第二发压根不发（主干那三行 `if (_referenceBusy) return;`）"
+        );
+        assert_eq!(
+            (state.matches.len(), state.index, state.showing, state.list_visible),
+            before,
+            "T1 那一档什么都不改 ⇒ 浮层留在上一屏内容上"
+        );
+    }
+
+    /// **判据 2（下）** —— 主干 `ShowReferencePaletteAsync` 回填那一段（`MW:18354-18396`）
+    /// 的 **T2/T3/T4 三档 + 代次丢弃 + 外层 catch**。显隐方向两处最容易抄反：
+    /// T2 是「**列表**收、**浮层**照上屏」，T3 才是整层收。
+    #[test]
+    fn reference_apply_walks_the_five_tiers_in_the_mainline_direction() {
+        // ---- T4：有候选 ⇒ 列表可见、选中落到 0、上屏（`MW:18376-18385`）----
+        let mut state = ReferenceState::idle();
+        let generation = state.arm("看 @ma", true).unwrap().0;
+        assert!(state.claim_fetch());
+        state.apply(generation, Ok((vec![reference("E:\\x"), reference("@[a](dsh-session:YQ)")], vec![])));
+        assert_eq!((state.showing, state.list_visible, state.index), (true, true, 0));
+        assert_eq!(state.matches.len(), 2);
+        assert!(!state.busy, "`finally` 那一句（`:18393-18396`）必须交还闸");
+
+        // ---- T2：零候选 + notes 非空 ⇒ 列表收起、原因摊在浮层上、**照样上屏**、index 回 -1 ----
+        let mut failed = ReferenceState::idle();
+        let generation = failed.arm("看 @ma", true).unwrap().0;
+        failed.apply(generation, Ok((Vec::new(), vec!["文件引用不可用（x）".to_string()])));
+        assert!(failed.showing, "两路都失败不许静默收起（主干 `:18366` 原注释）");
+        assert!(!failed.list_visible, "`ReferenceList.Visibility = Collapsed`（`:18361`）");
+        assert_eq!(failed.index, -1, "`_referenceIndex = -1`（`:18363`）");
+        assert!(failed.matches.is_empty());
+        assert_eq!(failed.notes.len(), 1);
+        let generation_after = failed.generation;
+        assert_eq!(failed.take_accept("看 @ma"), None, "index = -1 ⇒ 第一道守卫");
+        assert_eq!(failed.generation, generation_after + 1);
+
+        // ---- T3：零候选 + 无 notes ⇒ 整层收，且收的那一句把代次抬走 ----
+        let mut empty = ReferenceState::idle();
+        let generation = empty.arm("看 @ma", true).unwrap().0;
+        let before = empty.generation;
+        empty.apply(generation, Ok((Vec::new(), Vec::new())));
+        assert!(!empty.showing, "主干没有「无匹配」占位行，零候选就是收");
+        assert_eq!(empty.generation, before + 1, "走的正是 `HideReferencePalette()` 那一句");
+        assert_eq!(empty.index, -1);
+
+        // ---- 代次不符 ⇒ **整段丢弃**：连收浮层都不做（`:18354-18357`「已有更新的按键」）----
+        let mut stale = ReferenceState::idle();
+        let generation = stale.arm("看 @ma", true).unwrap().0;
+        stale.apply(generation, Ok((vec![reference("E:\\x")], vec![])));
+        stale.arm("看 @mac", true).unwrap();
+        let snapshot = (stale.showing, stale.index, stale.matches.len());
+        // 旧的那一回帧现在才到（比当前代次小一代）。
+        stale.apply(generation, Ok((vec![reference("迟到的一发")], vec![])));
+        assert_eq!(
+            (stale.showing, stale.index, stale.matches.len()),
+            snapshot,
+            "旧回帧必须整段丢弃，不许把上一屏盖掉"
+        );
+        assert_eq!(stale.generation, 2, "丢弃那一档连 `hide()` 都不做 ⇒ 代次不被再抬一格");
+
+        // ---- 外层 catch ⇒ 只收浮层（`:18386-18389`）----
+        let mut thrown = ReferenceState::idle();
+        let generation = thrown.arm("看 @ma", true).unwrap().0;
+        thrown.busy = true;
+        thrown.apply(generation, Err("炸了".to_string()));
+        assert!(!thrown.showing);
+        assert!(!thrown.busy, "catch 之后照样走 `finally`");
+
+        // ---- 变异护栏：T2 那一档不许把 `showing` 也一起收掉 ----
+        let mut both = ReferenceState::idle();
+        let generation = both.arm("看 @ma", true).unwrap().0;
+        both.apply(generation, Ok((Vec::new(), vec!["原因".to_string()])));
+        assert!(both.showing && !both.list_visible, "「列表收 / 浮层开」被写反了");
+    }
+
+    /// **判据 3** —— 主干 `AcceptReferenceSelection`（`MW:18457-18477`）：整段替换 `@query`、
+    /// **光标前后的两段尾巴都得留着**、采纳串尾那枚**半角空格**是功能件。
+    /// 期望串照 RP1 §7 判据 3 那句 `"看 @ma里的"` ⇒ `"看 E:\x 里的"`；
+    /// ⚠ 同一条判据里「输入已经带尾随空格」那一档的期望值规格里少抄了一枚，见 §5 纠正二。
+    #[test]
+    fn reference_take_accept_appends_a_space_and_preserves_the_tail() {
+        // ⚠ 主干那枚 span 是 `UpdateReferencePalette` **钉住那一刻**的产物（`:18266`），回填与采纳
+        // 都不重算 ⇒ 采纳时输入框完全可以已经比钉时长。这里就照那个真序演：先在 `"看 @ma"` 上
+        // arm（caret 在串尾、`@ma` 是最后一段 ⇒ 触发成立），`span = (4,3)`，随后输入长出尾巴。
+        let mut state = ReferenceState::idle();
+        let generation = state.arm("看 @ma", true).unwrap().0;
+        state.apply(generation, Ok((vec![reference("E:\\x")], vec![])));
+        assert_eq!(state.span, Some((4, 3)));
+        assert_eq!(state.index, 0);
+
+        // ---- 3a：尾巴不以空白开头 ⇒ 恰好一枚空格隔开 ----
+        let text = "看 @ma里的";
+        let (start, length, insert) = state.take_accept(text).expect("有选中项就该给三元组");
+        assert_eq!(insert, "E:\\x ", "采纳串尾那枚半角空格（`:18473`）—— 省掉它就自循环");
+        assert!(insert.ends_with(' ') && !insert.ends_with("  "), "半角、且只一枚");
+        let spliced = splice(text, start, length, &insert);
+        assert_eq!(spliced, "看 E:\\x 里的", "尾段「里的」不许丢，`@ma` 整段（含 `@`）被换掉");
+        assert_eq!(length, 3, "待替换 = `@` + query 两字节");
+        assert!(!state.showing, "主干最后那句 `HideReferencePalette()`（`:18476`）");
+
+        // ---- 3b：用户自己已经在 `@ma` 后面打过一枚空格 ⇒ 主干拼出来是**两枚**空格 ----
+        // 这是主干真行为（那一句 `text[..start] + inserted + text[(start + length)..]` 里
+        // `inserted` 固定带一枚，尾巴那一截自带的另一枚**不 Trim**），分叉照抄；规格 §7 判据 3
+        // 把这一档的期望值写成一枚是抄漏。变异证明：把 `inserted` 改成 `insert.trim_end()`
+        // 或把整串 `split_whitespace().join(" ")` ⇒ 这一把立刻红。
+        let mut typed = ReferenceState::idle();
+        let generation = typed.arm("看 @ma", true).unwrap().0;
+        typed.apply(generation, Ok((vec![reference("E:\\x")], vec![])));
+        let text = "看 @ma 里的";
+        let (start, length, insert) = typed.take_accept(text).unwrap();
+        assert_eq!(
+            splice(text, start, length, &insert),
+            "看 E:\\x  里的",
+            "两枚空格才是主干的输出：尾随那枚 + 用户自己打的那枚"
+        );
+
+        // 会话那一路：内核给好的 mention 整串插入，分叉不自行拼装。
+        let mention = "@[产品讨论](dsh-session:eyJpZCI6InMiKQ==)";
+        let mut session = ReferenceState::idle();
+        let generation = session.arm("看 @ma", true).unwrap().0;
+        session.apply(generation, Ok((vec![reference(mention)], vec![])));
+        let (start, length, insert) = session.take_accept("看 @ma").unwrap();
+        assert_eq!(
+            splice("看 @ma", start, length, &insert),
+            format!("看 {mention} "),
+            "整段替换 + 尾随空格"
+        );
+    }
+
+    /// **判据 3 的守卫半边** —— 主干那两条**独立**越界早退（`:18459-18464` 与 `:18466-18470`）：
+    /// 都只 `hide()`、不报错、不改文本。分叉另补一道字符边界护栏（只为防 panic）。
+    #[test]
+    fn reference_take_accept_guards_both_overruns_and_only_hides() {
+        // 守卫一：`index = -1`（收起态与 T2 档都是这个数）。
+        let mut idle = ReferenceState::idle();
+        idle.span = Some((0, 1));
+        assert_eq!(idle.take_accept("@a"), None);
+        assert!(!idle.showing);
+
+        // 守卫一：`index >= matches.Count`（鼠标点选找不到那一枚 ⇒ `IndexOf` 给 -1，同一条）。
+        let mut gone = ReferenceState::idle();
+        let generation = gone.arm("看 @ma", true).unwrap().0;
+        gone.apply(generation, Ok((vec![reference("E:\\x")], vec![])));
+        gone.index = 1;
+        assert_eq!(gone.take_accept("看 @ma"), None);
+        assert_eq!(gone.index, -1, "守卫里也走了 hide");
+
+        // 守卫二：span 是上一次 arm 时钉的，输入已经变短 ⇒ 越过串尾只收浮层。
+        let mut shrunk = ReferenceState::idle();
+        shrunk.span = Some((4, 3));
+        shrunk.matches = vec![reference("E:\\x")];
+        shrunk.index = 0;
+        shrunk.showing = true;
+        assert_eq!(shrunk.take_accept("短"), None, "start + length 越过串尾");
+        assert!(!shrunk.showing);
+
+        // 守卫二：没 arm 过（`span = None`）⇒ 没有可替换的那一段。
+        let mut unarmed = ReferenceState::idle();
+        unarmed.matches = vec![reference("E:\\x")];
+        unarmed.index = 0;
+        assert_eq!(unarmed.take_accept("看 @ma 里的"), None);
+
+        // 分叉那道字符边界护栏：手捏的非边界 span 不 panic、只收。
+        let mut crossed = ReferenceState::idle();
+        crossed.span = Some((4, 2)); // `看 @` 里 `看` 占 3 字节 ⇒ 4+2=6 落在 `中` 内部
+        crossed.matches = vec![reference("E:\\x")];
+        crossed.index = 0;
+        assert_eq!(crossed.take_accept("看 @中"), None);
+        assert!(!crossed.showing);
     }
 }

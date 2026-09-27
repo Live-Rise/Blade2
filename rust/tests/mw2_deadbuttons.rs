@@ -234,18 +234,24 @@ fn the_document_rpc_is_the_null_gated_spawn_with_an_empty_object() {
     );
 }
 
-// ============ 仍死四颗的「如实」护栏（两态皆绿：接线前后都必须成立） ============
+// ============ 仍死三颗的「如实」护栏 + 检查更新那颗的接线现状（UK2 S2 已翻） ============
 
 #[test]
 fn the_four_shelved_buttons_are_still_honestly_dead() {
+    // UK2 S2（#160 第二刀）：关于页「检查更新」那颗**已经接活**了 —— 本用例原先两条断言的
+    // 理由「HTTPS 通路未批」被 UD1（WinHTTP 裸 FFI 零依赖路线）+ UC-K1（`updatecheck` 纯层）
+    // + S0（`format_bytes`）三刀推翻。原判据钉的是源码事实，接线之后按事实翻成下面这形：
+    // 正锁「走活姊妹助手 + 投 Msg::AboutCheckUpdate」，负锁「不许再留一份未接动作的双胞胎构造」。
     let about = window(SRC, "fn settings_about(", "fn settings_pet(");
     assert!(
-        about.contains("\"AboutCheckUpdateButton\"") && about.contains("self.settings_button("),
-        "检查更新钮没画 = 母本数到的六颗里少了一颗；接了活 = 越权（HTTPS 通路未批）"
+        about.contains("\"AboutCheckUpdateButton\"")
+            && about.contains("self.settings_action_button(")
+            && about.contains("Msg::AboutCheckUpdate,"),
+        "检查更新钮没画 = 母本数到的六颗里少了一颗；画了却没投消息 = 又退回死控件"
     );
     assert!(
-        !about.contains(".on_click("),
-        "AboutCheckUpdateButton 在本轮被接线 = 造了个会假成功的更新通路（母本抓的原罪）"
+        !about.contains("self.settings_button(\"检查更新\""),
+        "这颗已接活的钮不许同时留一份未接动作的双胞胎构造（两份真相 = 哪颗生效说不清）"
     );
     let pet = window(SRC, "fn settings_pet(", "fn settings_skills(");
     assert!(

@@ -852,6 +852,18 @@ mod tests {
         assert_eq!(window.matches("slot.set(std::ptr::null_mut())").count(), 0, "同上：失败路径不许清零");
         // 失败那档的**可达性**（纯层）：守卫放行 ≠ 建成 —— `ADDED` 只随返回值落，与主干 `SI:125` 同形。
         assert_eq!(add_step(false, Some(0x20)), AddStep::Proceed { hwnd: 0x20 });
+        // 裁定 1 的核心一格：**落旗必须随 `NIM_ADD` 的返回值落**。写死 `true` = 「没建成也谎报建成」，
+        // 下一批拿 [`added`] 喂 `toast::Gate::tray_added` 时会把整条气球腿打死（TB-12 同源）。
+        assert!(
+            window.contains("ADDED.with(|slot| slot.set(sent))"),
+            "落旗不随那一发的返回值 = 谎报成功（裁定 1 明令：取不到 ico / 发不出去都要如实回失败态）"
+        );
+        for lying in ["slot.set(true)", "slot.set(1)", "ADDED.set(true)"] {
+            assert!(!window.contains(lying), "谎报成功的形状长出来了：{lying}");
+        }
+        // 无图标那一支必须在发那一发**之前**回（`AddOutcome::NoIcon`），且不动旗 ⇒ 失败态不夹带半成品状态。
+        let no_icon_at = window.find("AddOutcome::NoIcon").expect("无 ico 的失败态没了（裁定 1 不许兜底谎报）");
+        assert!(no_icon_at < send_at, "取不到图标就该早退，不许带着空句柄去发 NIM_ADD");
     }
 
     /// 拆除硬序：`NIM_DELETE`（`SI:143`）**先于** `DestroyIcon`（`SI:146`），且那一发的**返回值被丢弃**
@@ -970,26 +982,67 @@ mod tests {
     // ------------------------------------------------------------ 七、U-2 最小探针（下一批的前置）
 
     /// **U-2 最小探针**（TB1 §8-5 明写「写者刀第一步应是这枚最小探针，不是写代码」）：
-    /// 不建窗、不 subclass，只查**符号**在不在 —— 下一批要的 `SetWindowSubclass` 是 comctl32 **v6**
-    /// 才有的导出，而 v6 要靠 side-by-side 激活（内嵌 manifest 的 `dependentAssembly`）。
-    /// 分叉 exe 无 `.rsrc` ⇒ 无内嵌 manifest（perl 尺现测）⇒ 这一格**必须量**不能假设。
+    /// 不建窗、不 subclass，只查**符号**与**版本**在不在 —— 分叉 exe 无 `.rsrc` ⇒ 无内嵌 manifest
+    /// （perl 尺现测）⇒ 下一批那颗子类化导出到底落不落地，这一格**必须量**不能假设。
     ///
-    /// 三枚口径互相印证：①一颗**版本无关**的控制符号（`ImageList_Create`，v5/v6 都导出）证
-    /// `GetProcAddress` 这条路本身可用；②两枚 **v6 专有**导出（`SetWindowSubclass` 与
-    /// `TaskDialogIndirect`）互相同意；③模块**实际路径**（WinSxS = v6 激活 / System32 = v5 shim）
-    /// 与 ② 的结论必须一致。断言的是「三枚口径不得互相矛盾」，把量到的事实打进报告。
+    /// ⚠ 简报转述的前提「`SetWindowSubclass` 是 comctl32 **v6 专有**」在本机**现测为假**：
+    /// 两枚 PE 导出表直接解盘（命令与输出记在报告 §5）—— `System32\comctl32.dll`（与 WinSxS
+    /// `…_5.82.26100.8941_none_…` 是同一颗文件）119 枚命名导出里 `ImageList_Create` ✓ /
+    /// `SetWindowSubclass` ✓ / `TaskDialogIndirect` ✗；WinSxS `…_6.0.26100.9568_none_…` 150 枚里三枚全 ✓。
+    /// ⇒ 真正的 v6 判据是 `TaskDialogIndirect` 那一颗，**不是** subclass 族；主干 `app.manifest` 没有
+    /// Common-Controls 的 `dependentAssembly` 却在生产里用着 subclass（`SI:40`）—— 到这里已从
+    /// 「反向旁证」升成「直接解释」。
+    ///
+    /// 三条口径互相印证、且**只断言断言得起的**：①kernel32 的一颗必有导出 ⇒ 证 `GetProcAddress` 这条路
+    /// 本身可用（它不通就整个探针作废）；②本进程此前是否已加载那一颗 ⇒ 决定读数来自哪一档；
+    /// ③模块**实际路径**里那颗 side-by-side 版本号 ⇒ 不受映射档位影响的版本判据。
+    /// 两颗入口都只**读**（不发消息、不建窗口、不 subclass）：`GetModuleHandleW` 不惊动加载器，
+    /// 不在架才落到 `LoadLibraryExW(…, DONT_RESOLVE_DLL_REFERENCES)`（TB1 §6-U2 给的两种做法之一，
+    /// 只映射不跑 DllMain ⇒ 零窗口零 UI）。
+    /// ⚠ 本探针**第一轮**那枚「三枚符号全 false」的伪负，根因**在探针自己**（`&str` 的 `as_ptr()`
+    /// 不带零结尾 ⇒ `GetProcAddress` 读出界外，见 [`lookup`] 的补零）；修好后符号档可读，
+    /// 与 ③ 的版本档、与报告 §5 那两枚 PE 导出表现测三方向同一。
     #[test]
     fn the_next_batch_subclass_symbols_are_measured_not_assumed() {
-        let module = module_handle(&com_concat_name());
-        assert!(!module.is_null(), "那一颗控制项库连模块句柄都拿不到 ⇒ 本进程的加载器出了问题，探针作废");
+        // ① 探针自身的可信档：kernel32 必在架，它的一颗命名导出查不到就是这条路漂了，不是模块的问题。
+        let kernel = unsafe { GetModuleHandleW(wide_units("kernel32.dll").as_ptr()) };
+        assert!(!kernel.is_null(), "连 kernel32 的模块句柄都拿不到 ⇒ 本进程的加载器状态异常，探针作废");
+        let kernel_control = lookup(kernel, concat!("GetModule", "FileNameW"));
+        assert!(kernel_control.is_some(), "kernel32 的必有导出查不到 = GetProcAddress 这条路本身不可信（探针作废并登记）");
+
+        // ② 先只问「此前已在架吗」（不惊动加载器）；不在架才落到只映射不解析的那一档。
+        let direct = unsafe { GetModuleHandleW(com_concat_name().as_ptr()) };
+        let loaded_before = !direct.is_null();
+        let module = if loaded_before {
+            direct
+        } else {
+            unsafe { LoadLibraryExW(com_concat_name().as_ptr(), std::ptr::null_mut(), DONT_RESOLVE_DLL_REFERENCES) }
+        };
+        assert!(!module.is_null(), "两颗入口都拿不到句柄 ⇒ 这颗库在本机不存在（下一批的前置要重开）");
         let path = module_file_path(module);
         let control = lookup(module, concat!("ImageList_", "Create"));
         let subclass = lookup(module, concat!("SetWindow", "Subclass"));
         let task_dialog = lookup(module, concat!("TaskDialog", "Indirect"));
-        let from_winsxs = path.contains("WinSxS");
+        let symbols_readable = control.is_some();
+
+        // ③ 版本判据：WinSxS 目录名里那颗 `5.82.*` / `6.0.*`（不依赖符号档）。
+        let version = assembly_version_from_path(&path);
+        let five = version.as_deref().is_some_and(|v| v.starts_with("5."));
+        let six = version.as_deref().is_some_and(|v| v.starts_with("6."));
+        assert!(five || six, "路径里读不出 5.82 / 6.0 ⇒ 版本判据落空，这一格要如实登记：{path}");
+        if symbols_readable {
+            assert_eq!(
+                task_dialog.is_some(),
+                six,
+                "符号档与版本档互相矛盾（v6 专有那颗是 TaskDialogIndirect）⇒ 加载器状态异常，读数不作判据"
+            );
+        }
+
         // 现测量打进 stdout（报告 §5 引用的就是这一行）；串本身分段现拼，别撞另一把锁。
         eprintln!(
-            "U-2 现测｜模块 = {path}｜{} = {}｜{}{} = {}｜{} = {}｜来自 side-by-side = {}",
+            "U-2 现测｜此前已加载 = {}｜模块 = {path}｜版本 = {:?}｜{} = {}｜{}{} = {}｜{} = {}｜符号档可读 = {}（不可读 ⇒ 本次符号读数不作判据，取版本档）",
+            loaded_before,
+            version,
             ["ImageList_", "Create"].concat(),
             control.is_some(),
             ["SetWindow", "Sub"].concat(),
@@ -997,19 +1050,16 @@ mod tests {
             subclass.is_some(),
             ["TaskDialog", "Indirect"].concat(),
             task_dialog.is_some(),
-            from_winsxs
+            symbols_readable
         );
-        assert!(control.is_some(), "版本无关的控制符号都查不到 = 探针本身不可信（符号查询这条路漂了）");
-        assert_eq!(
-            subclass.is_some(),
-            task_dialog.is_some(),
-            "两枚 v6 专有导出的结论互相矛盾 ⇒ 加载器状态异常，本探针作废并登记"
-        );
-        assert_eq!(
-            task_dialog.is_some(),
-            from_winsxs,
-            "v6 导出在不在，必须与模块实际是否来自 WinSxS（side-by-side 激活）同向"
-        );
+    }
+
+    /// WinSxS 目录名里那颗版本号（`…common-controls_6595b64144ccf1df_5.82.26100.8941_none_…`
+    /// ⇒ `5.82.26100.8941`）；非 side-by-side 那一路（目录名没这颗令牌）⇒ `None`，探针要如实记下。
+    fn assembly_version_from_path(path: &str) -> Option<String> {
+        let tail = path.split("_6595b64144ccf1df_").nth(1)?;
+        let version = tail.split('_').next()?;
+        (!version.is_empty()).then(|| version.to_string())
     }
 
     /// `comctl32.dll` 的模块名宽串：**分段现拼**（同 `nativepick.rs` 的成规）—— 本文件那把
@@ -1018,17 +1068,9 @@ mod tests {
         wide_units(concat!("comct", "l32.dll"))
     }
 
-    /// 先 `GetModuleHandleW`（已在架就不惊动加载器），拿不到再 `LoadLibraryExW(…, DONT_RESOLVE_DLL_REFERENCES)`
-    /// （TB1 §6-U2 给的两种做法之一：只映射、不跑 DllMain ⇒ 零窗口、零 UI）。两发都只**读**，
-    /// 不发消息、不建窗口、不 subclass。
-    fn module_handle(name: &[u16]) -> *mut c_void {
-        let mut module = unsafe { GetModuleHandleW(name.as_ptr()) };
-        if module.is_null() {
-            module = unsafe { LoadLibraryExW(name.as_ptr(), std::ptr::null_mut(), DONT_RESOLVE_DLL_REFERENCES) };
-        }
-        module
-    }
-
+    /// 两颗入口都只**读**（`GetModuleHandleW` 不惊动加载器 / `LoadLibraryExW(…, DONT_RESOLVE_DLL_REFERENCES)`
+    /// 只映射不跑 DllMain ⇒ 零窗口零 UI，TB1 §6-U2 给的做法之一），走的是哪一档由探针自己记下。
+    /// 这一颗只是把句柄翻成路径 ⇒ 版本判据（`assembly_version_from_path`）靠的就是它。
     fn module_file_path(module: *mut c_void) -> String {
         let mut buf = vec![0u16; 1024];
         let len = unsafe { GetModuleFileNameW(module, buf.as_mut_ptr(), buf.len() as u32) };
@@ -1038,8 +1080,13 @@ mod tests {
         String::from_utf16_lossy(&buf[..len as usize])
     }
 
+    /// `GetProcAddress` 要的是**以零结尾**的 ANSI 名字：`&str` 的 `as_ptr()` **不带**结尾零，
+    /// 直接递过去就是本探针**第一轮**那枚「三枚全 false」伪负的根因（本轮现测定位 —— 连 kernel32
+    /// 必有的那颗都查不到，才把矛头从模块转向探针自己）。这里现补零再递，只读、不解析、不发消息。
     fn lookup(module: *mut c_void, name: &str) -> Option<*const c_void> {
-        let addr = unsafe { GetProcAddress(module, name.as_ptr() as *const i8) };
+        let mut bytes = name.as_bytes().to_vec();
+        bytes.push(0);
+        let addr = unsafe { GetProcAddress(module, bytes.as_ptr() as *const i8) };
         (!addr.is_null()).then_some(addr as *const c_void)
     }
 

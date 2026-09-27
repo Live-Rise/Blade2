@@ -1834,6 +1834,18 @@ public sealed partial class MainWindow : Window
         ["壳版本（打包形态与安装包版本一致）"] = "Shell version (matches the package version when packaged)",
         ["内核版本"] = "Kernel version",
         ["随包发行的 dsh 内核版本"] = "Bundled dsh kernel version",
+        ["内核加载"] = "Kernel boot",
+        ["本次启动内核引导里程碑（阶段 · 累计耗时）"] = "Boot milestones of this launch (stage · elapsed)",
+        ["默认插件就绪"] = "Default plugins ready",
+        ["默认插件安装"] = "Installing default plugins",
+        ["默认插件就绪（检查失败，裸启动）"] = "Default plugins ready (check failed, bare boot)",
+        ["认证完成"] = "Authenticated",
+        ["事件通道就绪"] = "Event channel ready",
+        ["工作区清单就绪"] = "Workspace list ready",
+        ["会话与模型就绪"] = "Sessions & models ready",
+        ["引导完成"] = "Boot complete",
+        ["失败"] = "Failed",
+        ["尚未开始"] = "Not started yet",
         ["更新"] = "Updates",
         ["更新源：{0}"] = "Update source: {0}",
         ["更新源尚未配置：发布到 GitHub 后在 MainWindow.About.cs 填入仓库地址即可启用在线检查更新。"] =
@@ -2350,20 +2362,30 @@ public sealed partial class MainWindow : Window
     // 四者的写入路径都只有命令（/plan、/permission、/schedule、/goal）——内核 typert.remote-client.js
     // 里没有 plan / permission 命名空间，即**没有任何对应 RPC**；读路径是会话投影：
     //   plan         { active:bool, pending:bool }        （dsh-plan-mode planProjectionDefinition）
-    //   permissions  { options:[{value,name,description?}], currentValue:string }
-    //                                                      （dsh-permission-presets 的 select 视图）
+    //   permissions  { currentValue:string }              （dsh-permission-presets 0.1.7 的 wire.view；
+    //                                                      0.1.5 时代还带 options，已移进目录 RPC，见下）
     //   schedule     { inheritedEventCount, active:[record], seenIds }
-    //                （dsh-schedule scheduleProjectionDefinition；record = {id, kind:"at"|"every",
+    //                （dsh-schedule scheduleProjectionDefinition；record = {id, kind:"at"|"at-every",
     //                 prompt, scheduledAt(RFC3339), everySeconds?}，官方端同样只读展示）
     //   goal         null | { goal:{id,revision,objective,phase,blockedReason?,maxGoalRounds},
     //                 roundsStarted, createdAt, updatedAt }（dsh-goal goalProjectionDefinition）
     // 投影值从两处来：session/control 的 baseline.value.projections[<sid>].values（快照）与
     // 后续 projection 帧 {sessionId,key,value,seq}（增量）。四个键都在其中。
+    //
+    // 权限**选项表**不在投影里了（内核 bundle 升级 0.1.5→0.1.7 的破坏性变更）：dsh-permission-presets
+    // 0.1.7 把可切预设表挪进 permissionPresets/catalog RPC（{options, defaultOptions, defaultPreset}，
+    // options 含活的 auto 预设、defaultOptions 仅配置表），并在变化时推 permission-presets/catalog-changed
+    // 事件（$events 转发白名单内，dsh-api-remotes API_REMOTE_FORWARDED_EVENTS）。旧内核 0.1.5 没有
+    // catalog RPC，但它的投影视图自带 options——ApplyPermissionsProjection 保留对 options 的解析当回落，
+    // 两代内核都能出选择器。
     private bool? _planActive;
     private bool? _planPending;
     private List<(string Value, string Name, string Description)> _permissionOptions = new();
+    private List<(string Value, string Name, string Description)> _permissionDefaultOptions = new();
+    /// <summary>目录 RPC 拉到的「新会话默认预设」；null = 尚未拉到（回落 describe/硬编码）。</summary>
+    private string? _permissionCatalogDefaultPreset;
     private string? _permissionCurrentValue;
-    /// <summary>锁：projection 帧在接收线程解析，UI 刷新在 UI 线程读。</summary>
+    /// <summary>锁：projection 帧与目录回执在接收线程解析，UI 刷新在 UI 线程读。</summary>
     private readonly object _projectionLock = new();
 
     /// <summary>历史图片字节缓存（attachmentId → 位图），避免同一图片回读两次。</summary>
@@ -2788,21 +2810,25 @@ public sealed partial class MainWindow : Window
         // 必须先于内核启动——patch 引用的包不就绪会让内核加载失败；失败只记诊断不阻塞裸启动。
         // 首次启动要拉十几个包（pnpm 直跑，可能几分钟）：这段时间界面全可用且无任何加载显示，
         // 用户此时发送的消息会静默排队（见 SendAsync），引导完成后自动补发。
+        // 安装进度上「关于」页内核加载行（首启拉包是最长的一步，给个刻度方便检查）。
         try
         {
             var node = DshKernelHost.BundledNode;
             if (node is not null)
             {
-                var bootDiag = await DshPluginBootstrap.EnsureAsync(dshHome, node, DshKernelHost.BundledBinDir, null, ct);
+                var pluginProgress = new Progress<DshPluginBootstrap.PluginInstallProgress>(p => BootPluginProgress(p.Ready, p.Total));
+                var bootDiag = await DshPluginBootstrap.EnsureAsync(dshHome, node, DshKernelHost.BundledBinDir, pluginProgress, ct);
                 if (bootDiag.Length > 0)
                 {
                     System.Diagnostics.Debug.WriteLine($"[plugin-bootstrap] {bootDiag.TrimEnd()}");
                 }
             }
+            BootMilestone(L("默认插件就绪"));
         }
         catch (Exception)
         {
             // 引导失败不阻塞内核裸启动；诊断已落 DSH_HOME\logs\plugin-bootstrap.log
+            BootMilestone(L("默认插件就绪（检查失败，裸启动）"));
         }
 
         // 先收上次异常退出残留的内核：它还占着会话目录的写租约，新一轮 resume 同一条会话
@@ -2846,6 +2872,7 @@ public sealed partial class MainWindow : Window
                 await Task.Delay(500, ct);
             }
         }
+        BootMilestone(L("认证完成"));
 
         // 流恢复挂接先于任何长驻流开启（原顺序即如此；工作区流提前后这条不变式依旧成立）
         RegisterStreamRecovery();
@@ -2878,6 +2905,7 @@ public sealed partial class MainWindow : Window
                 await Task.Delay(250, ct);
             }
         }
+        BootMilestone(L("事件通道就绪"));
         // 渐进内核：URL 就绪 ≠ workspace 域已挂载（各控制器随装载风暴陆续就位）。
         // 轮询开工作区流直到基线帧到达，基线没到绝不前进——0.7.1 不变式
         // （workspace 域必须先于 $events 被触碰）在渐进装载下依然成立：
@@ -2897,6 +2925,7 @@ public sealed partial class MainWindow : Window
             if (_workspaceBaselineArrived)
             {
                 DshKernelHost.DiagLine($"[boot] workspace baseline at poll {attempt}");
+                BootMilestone(L("工作区清单就绪"));
                 break;
             }
             await Task.Delay(100, ct);
@@ -2911,6 +2940,10 @@ public sealed partial class MainWindow : Window
             _commandsErrorAt = null;
             return Task.CompletedTask;
         });
+
+        // permission-presets/catalog-changed：权限预设目录变化（auto-approve 预设开/关热重载、
+        // auto 集成上/下线）时重拉目录。事件在 $events 转发白名单里（同上）。
+        _rpc.OnEvent("permission-presets/catalog-changed", _ => RefreshPermissionCatalogAsync());
 
         // 启动即空态：品牌标 + 输入区选择器 + 默认权限选择器（不等待会话列表）。
         // 引导期静默：空态照常显示，发送被静默排队（见 SendAsync）；只有引导失败时
@@ -2943,14 +2976,16 @@ public sealed partial class MainWindow : Window
         // 域的初始化次序。
         await _rpc.SubscribeEventsAsync(ct);
 
-        // 渐进并行：会话清单（侧栏）、模型目录（发送区模型钮/档位）、主题字号偏好
-        // 互不依赖，并行拉取——各自独立 HTTP 往返（CallOkAsync 走 POST，逐请求响应），
-        // 串行等三趟不如一趟等最慢的。
+        // 渐进并行：会话清单（侧栏）、模型目录（发送区模型钮/档位）、权限预设目录
+        // （输入区权限选择器/空态默认权限）、主题字号偏好互不依赖，并行拉取——
+        // 各自独立 HTTP 往返（CallOkAsync 走 POST，逐请求响应），串行等四趟不如一趟等最慢的。
         await Task.WhenAll(
             RefreshSessionsAsync(),
             LoadModelCatalogDefaultsAsync(),
+            RefreshPermissionCatalogAsync(),
             ApplyKernelThemeFromSettingsAsync());
         DshKernelHost.DiagLine("[boot] parallel batch done (sessions/catalog/theme)");
+        BootMilestone(L("会话与模型就绪"));
 
         // 尾部装配：宠物轮询、文件右栏、分栏兜底——都不挡侧栏/聊天主路径，排在
         // 会话清单之后。设置分区由「宠物」入口渲染；插件没装时宠物只探 404 不影响其它。
@@ -2969,7 +3004,7 @@ public sealed partial class MainWindow : Window
         InitLayoutColumns();
 
         await OpenSessionControlStreamAsync();
-        DshKernelHost.DiagLine("[boot] complete (control stream open)");
+        BootMilestone(L("引导完成")); // 兼落诊断日志（[boot] 引导完成）
 
         // 引导完成：界面早已在用，这里只补尾部装配 + 补发引导期间排队的发送。
         PostUi(UpdateEmptyState); // 再刷一次空态：会话清单此刻已到位
@@ -10825,27 +10860,36 @@ public sealed partial class MainWindow : Window
     {
         SettingsHost.Children.Add(MakeSectionDesc("新会话的默认权限、外观与对话偏好。"));
 
-        // 权限（defaultPreset 枚举从 schema union 动态读，标签优先用产品中文文案）
-        if (_settingsSnapshot is not null && _settingsSnapshot.TryGetValue("permission", out var perm) &&
-            perm.Value.TryGetProperty("schema", out var permSchema))
+        // 权限（defaultPreset 枚举：0.1.7 内核从权限目录 defaultOptions 读；旧内核回落 schema union。
+        // 标签优先用产品中文文案）
+        List<(string Value, string Label)> permChoices;
+        List<(string Value, string Name, string Description)> catalogDefaults;
+        lock (_projectionLock)
         {
-            var choices = UnionChoices(SchemaField(permSchema, "defaultPreset"));
-            if (choices.Count > 0)
-            {
-                var zh = new Dictionary<string, string>
-                {
-                    ["read-only"] = "仅可查看",
-                    ["workspace-write"] = "工作区内修改",
-                    ["danger-full-access"] = "完全权限",
-                };
-                var current = NsString("permission", "defaultPreset", "workspace-write");
-                // P0-5：切到 danger-full-access 须先过风险确认（MakeDefaultPermissionChoiceField）
-                var box = MakeDefaultPermissionChoiceField(current,
-                    choices.Select(c => (c.Value, zh.GetValueOrDefault(c.Value, c.Label))).ToList());
-                box.MinWidth = TokenDouble("FieldMinWidth", 200);
-                var card = NewCard("权限", "选择新会话的默认访问模式");
-                card.Children.Add(MakeRow("默认权限", "仅可查看 / 工作区内修改 / 完全权限", box));
-            }
+            catalogDefaults = _permissionDefaultOptions;
+        }
+        if (catalogDefaults.Count > 0)
+        {
+            permChoices = catalogDefaults.Select(o => (o.Value, PermissionPresetZh(o.Value))).ToList();
+        }
+        else if (_settingsSnapshot is not null && _settingsSnapshot.TryGetValue("permission", out var perm) &&
+                 perm.Value.TryGetProperty("schema", out var permSchema))
+        {
+            permChoices = UnionChoices(SchemaField(permSchema, "defaultPreset"))
+                .Select(c => (c.Value, PermissionPresetZh(c.Value))).ToList();
+        }
+        else
+        {
+            permChoices = new List<(string, string)>();
+        }
+        if (permChoices.Count > 0)
+        {
+            var current = NsString("permission", "defaultPreset", "workspace-write");
+            // P0-5：切到 danger-full-access 须先过风险确认（MakeDefaultPermissionChoiceField）
+            var box = MakeDefaultPermissionChoiceField(current, permChoices);
+            box.MinWidth = TokenDouble("FieldMinWidth", 200);
+            var card = NewCard("权限", "选择新会话的默认访问模式");
+            card.Children.Add(MakeRow("默认权限", "仅可查看 / 工作区内修改 / 完全权限", box));
         }
 
         // 外观 + 字号（外观下拉三选一；字号步进器对齐 FontSizeRow）
@@ -15949,7 +15993,8 @@ public sealed partial class MainWindow : Window
         _planPending = view.TryGetProperty("pending", out var p) && p.ValueKind == JsonValueKind.True;
     }
 
-    /// <summary>permissions 投影视图：{options:[{value,name,description?}], currentValue}。</summary>
+    /// <summary>permissions 投影视图：{options:[{value,name,description?}], currentValue}。
+    /// 0.1.7 内核的 wire.view 只剩 currentValue，options 分支保留作旧内核回落（见字段区注释）。</summary>
     private void ApplyPermissionsProjection(JsonElement view)
     {
         if (view.ValueKind != JsonValueKind.Object)
@@ -15980,6 +16025,102 @@ public sealed partial class MainWindow : Window
         }
         _permissionCurrentValue = view.TryGetProperty("currentValue", out var cv) && cv.ValueKind == JsonValueKind.String
             ? cv.GetString() : null;
+        // 自愈：currentValue 不在选项表里 = 目录过期（patch 热重载增删预设而 catalog-changed 未到）。
+        // "custom" 是合法的表外态（内核按旋钮现值推导，不进 options），不触发。目录为空（还没拉到）
+        // 也不触发——那归引导期的首次拉取管。
+        if (_permissionCurrentValue is { Length: > 0 } current && current != "custom" &&
+            _permissionOptions.Count > 0 && _permissionOptions.All(o => o.Value != current) &&
+            Interlocked.CompareExchange(ref _permissionCatalogRefetchQueued, 1, 0) == 0)
+        {
+            _ = RefreshPermissionCatalogAsync();
+        }
+    }
+
+    /// <summary>目录自愈重拉的去重哨兵（Interlocked：0=空闲，1=已排队；拉取完复位）。</summary>
+    private int _permissionCatalogRefetchQueued;
+
+    /// <summary>
+    /// 权限预设目录（dsh-permission-presets 0.1.7 的 permissionPresets/catalog RPC）：
+    /// options = 可切预设全表（含活的 auto），defaultOptions = 配置表（新会话默认可选的那份），
+    /// defaultPreset = 当前默认。旧内核 0.1.7 前没有这条 RPC——失败静默返回，选择器继续靠
+    /// 投影 options（旧内核）或硬编码三档（空态兜底）活着。目录到手后刷状态条与空态选择器。
+    /// </summary>
+    private async Task RefreshPermissionCatalogAsync()
+    {
+        try
+        {
+            if (_rpc is null)
+            {
+                return;
+            }
+            var catalog = await _rpc.CallOkAsync("permissionPresets/catalog", new { });
+            var (options, defaultOptions) = ParsePermissionCatalog(catalog);
+            string? catalogDefault = catalog.TryGetProperty("defaultPreset", out var dp) && dp.ValueKind == JsonValueKind.String
+                ? dp.GetString() : null;
+            bool changed;
+            lock (_projectionLock)
+            {
+                changed = options.Count > 0;
+                if (changed)
+                {
+                    _permissionOptions = options;
+                }
+                if (defaultOptions.Count > 0)
+                {
+                    _permissionDefaultOptions = defaultOptions;
+                }
+                _permissionCatalogDefaultPreset = catalogDefault ?? _permissionCatalogDefaultPreset;
+            }
+            if (changed)
+            {
+                PostUi(RefreshSessionStateBar);
+                if (Volatile.Read(ref _activeSessionId) is null)
+                {
+                    _ = ShowDefaultPermissionAsync();
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // 旧内核没有 catalog RPC（404/错误码）：静默回落投影 options，不影响引导
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _permissionCatalogRefetchQueued, 0);
+        }
+    }
+
+    /// <summary>解析目录回执的 options / defaultOptions（条目 {value,name,description?}，value 空的跳过）。</summary>
+    private static (List<(string Value, string Name, string Description)> Options, List<(string Value, string Name, string Description)> Defaults) ParsePermissionCatalog(JsonElement catalog)
+    {
+        var options = ParsePermissionCatalogOptions(catalog, "options");
+        var defaults = ParsePermissionCatalogOptions(catalog, "defaultOptions");
+        return (options, defaults);
+    }
+
+    private static List<(string Value, string Name, string Description)> ParsePermissionCatalogOptions(JsonElement catalog, string field)
+    {
+        var result = new List<(string, string, string)>();
+        if (catalog.ValueKind == JsonValueKind.Object &&
+            catalog.TryGetProperty(field, out var arr) && arr.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var opt in arr.EnumerateArray())
+            {
+                if (opt.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+                var value = opt.TryGetProperty("value", out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
+                if (value.Length == 0)
+                {
+                    continue;
+                }
+                var name = opt.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() ?? "" : value;
+                var desc = opt.TryGetProperty("description", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString() ?? "" : "";
+                result.Add((value, name, desc));
+            }
+        }
+        return result;
     }
 
     /// <summary>会话投影快照里的 plan / permissions 值（session/control baseline 与 session/list 复用）。</summary>
@@ -16591,13 +16732,16 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /// <summary>权限预设的中文可读名（对照 dsh access.preset.*；内核 projection.name 是英文 id）。</summary>
+    /// <summary>权限预设的中文可读名（对照 dsh access.preset.*；内核 projection.name 是英文 id）。
+    /// "auto" 是 0.1.7 内核保留的活集成预设 id（dsh-approval-gate 注册后出现在 options 里），
+    /// 与配置表里的 auto-approve 并存——两者都译「自动审批」。</summary>
     private string PermissionPresetZh(string value) => value switch
     {
         "read-only" => L("仅可查看"),
         "workspace-write" => L("工作区内修改"),
         "danger-full-access" => L("完全权限"),
         "auto-approve" => L("自动审批"),
+        "auto" => L("自动审批"),
         "custom" => L("自定义"),
         _ => value,
     };
@@ -16611,6 +16755,7 @@ public sealed partial class MainWindow : Window
         "workspace-write" => "\uE70F",  // Edit
         "danger-full-access" => "\uE7BA", // Warning
         "auto-approve" => "\uF1BA",     // SquareSparkle
+        "auto" => "\uF1BA",             // SquareSparkle（内核保留的活 auto 预设）
         "custom" => "\uE713",           // Settings
         _ => "\uE72E",                  // Lock
     };
@@ -16689,10 +16834,24 @@ public sealed partial class MainWindow : Window
         {
             return; // 设置取不到或期间已开会话：交给会话态那条路，不显示猜测值
         }
+        List<(string Value, string Name, string Description)> defaultOptions;
+        lock (_projectionLock)
+        {
+            defaultOptions = _permissionDefaultOptions;
+        }
         string current = NsString("permission", "defaultPreset", "workspace-write");
         var choices = new List<(string Value, string Label)>();
-        if (snapshot.TryGetValue("permission", out var perm) && perm.Value.TryGetProperty("schema", out var schema))
+        if (defaultOptions.Count > 0)
         {
+            // 0.1.7 内核：选项表住在权限目录里（defaultOptions = 配置表，含 auto-approve）
+            foreach (var option in defaultOptions)
+            {
+                choices.Add((option.Value, PermissionPresetZh(option.Value)));
+            }
+        }
+        else if (snapshot.TryGetValue("permission", out var perm) && perm.Value.TryGetProperty("schema", out var schema))
+        {
+            // 旧内核回落：0.1.5 的 defaultPreset 是带 choices 的 union
             foreach (var option in UnionChoices(SchemaField(schema, "defaultPreset")))
             {
                 choices.Add((option.Value, PermissionPresetZh(option.Value)));
@@ -16706,6 +16865,17 @@ public sealed partial class MainWindow : Window
                 ("workspace-write", PermissionPresetZh("workspace-write")),
                 ("danger-full-access", PermissionPresetZh("danger-full-access")),
             });
+        }
+        if (!choices.Any(c => c.Value == current))
+        {
+            // describe 没跟上（目录 defaultPreset 更新）或值缺失：目录值优先，兜底 workspace-write
+            string? catalogDefault;
+            lock (_projectionLock)
+            {
+                catalogDefault = _permissionCatalogDefaultPreset;
+            }
+            current = catalogDefault is not null && choices.Any(c => c.Value == catalogDefault)
+                ? catalogDefault : "workspace-write";
         }
         PostUi(() =>
         {
@@ -16750,12 +16920,18 @@ public sealed partial class MainWindow : Window
         }
         try
         {
-            await _rpc.CallOkAsync("settings/mutate", new
+            var view = await _rpc.CallOkAsync("settings/mutate", new
             {
                 ns = "permission",
                 ops = new[] { new { op = "set", path = new[] { "defaultPreset" }, value } },
             });
+            // 回执是该 ns 的最新视图：回填快照，别处（设置页通用区）读到的默认值即刻跟上
+            if (view.ValueKind == JsonValueKind.Object && view.TryGetProperty("ns", out _) && _settingsSnapshot is not null)
+            {
+                _settingsSnapshot["permission"] = (view.Clone(), view.TryGetProperty("revision", out var rev) ? rev.GetDouble() : 0);
+            }
             PermissionLabel.Text = label;
+            PermissionGlyph.Glyph = PermissionPresetGlyph(value);
             ToolTipService.SetToolTip(PermissionButton, LF("访问模式，当前：{0}", label));
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(PermissionButton, LF("访问模式，当前：{0}", label));
         }
