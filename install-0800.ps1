@@ -21,7 +21,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$ExpectedVersion = '0.8.3.8'
+$ExpectedVersion = '0.8.3.9'
 $Thumbprint      = 'E2B4870249B661186E86F816E2A403261E74F6A0'
 $PackageName     = 'Blade2'
 $Signtool        = 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe'
@@ -32,7 +32,7 @@ function Write-Warn2($t) { Write-Host "  [WARN] $t" -ForegroundColor Yellow }
 
 # ---------- 0. Resolve msix path ----------
 if (-not $MsixPath) {
-  $candidate = Join-Path $PSScriptRoot "AppxPkgs0800\$PackageName`_0.8.3.8_x64_Test\$PackageName`_0.8.3.8_x64.msix"
+  $candidate = Join-Path $PSScriptRoot "AppxPkgs0800\$PackageName`_0.8.3.9_x64_Test\$PackageName`_0.8.3.9_x64.msix"
   if (Test-Path -LiteralPath $candidate) {
     $MsixPath = $candidate
   } else {
@@ -167,3 +167,4 @@ $appId = ($pkg | Get-AppxPackageManifest).Package.Applications.Application.Id
 Write-Host ''
 Write-Host '  Launch:'
 Write-Host "    explorer.exe shell:AppsFolder\$($pkg.PackageFamilyName)!$appId"
+

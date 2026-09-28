@@ -2925,11 +2925,14 @@ public sealed partial class MainWindow : Window
             if (_workspaceBaselineArrived)
             {
                 DshKernelHost.DiagLine($"[boot] workspace baseline at poll {attempt}");
-                BootMilestone(L("工作区清单就绪"));
                 break;
             }
             await Task.Delay(100, ct);
         }
+        // 里程碑记在循环外：退出条件（!_workspaceBaselineArrived）与 body 里的记录判的是
+        // 同一个标志，基线恰在 Task.Delay 期间被事件线程翻上来时，循环按条件直接退出，
+        // body 整段跳过——段数停在 5/6（83%）的根因就在这里。超时那条已 return 收敛。
+        BootMilestone(L("工作区清单就绪"));
 
         // commands/change：命令注册表变化（插件装/卸、agent 预设切换）时作废目录缓存。
         // 该事件在内核 $events 转发白名单里（dsh-api-remotes API_REMOTE_FORWARDED_EVENTS）。

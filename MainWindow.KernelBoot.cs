@@ -73,6 +73,9 @@ public sealed partial class MainWindow
             seconds = _kernelBootClock?.Elapsed.TotalSeconds ?? 0;
             _bootStagesDone++;
             _kernelBootTrail.Add(label);
+            // 瞬态行只服务于「默认插件安装」推进：任一里程碑落地即该阶段翻页，
+            // 不清就会把「9/9」永久挂在表尾（安装完再无进度回调来覆盖它）。
+            _bootTransientLine = null;
         }
         DshKernelHost.DiagLine($"[boot] {label} (t={seconds:0.0}s)");
         RefreshAboutKernelBootText();

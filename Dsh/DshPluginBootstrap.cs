@@ -68,6 +68,84 @@ internal static class DshPluginBootstrap
     };
 
     /// <summary>
+    /// 与内核核心 lockstep 发版的 @deepseek-ai 家族包（browser-use / computer-use 及其实验
+    /// provider）：实测整个 dsh-* 家族与 dsh 核心同版本（0.1.7-rc.2 全家族一致），而 npm 的
+    /// latest tag 仍指向 0.1.6-alpha.1。profile 的 node_modules 会遮蔽 bundle 的同名包——
+    /// 版本滞后时家族包按旧内核 API 编译/运行，会话创建直接死在
+    /// 「mcp-client(playwright-mcp): initial connection or tool synchronization failed」
+    /// （0.8.3.8 事故）。安装规格钉内核版本，见 <see cref="ResolveFamilySpec"/>。
+    /// </summary>
+    private static readonly string[] KernelFamilyPackages =
+    {
+        "@deepseek-ai/dsh-browser-use",
+        "@deepseek-ai/dsh-experimental-browser-use-playwright-mcp",
+        "@deepseek-ai/dsh-computer-use",
+        "@deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp",
+    };
+
+    /// <summary>
+    /// 期望版本（版本 enforcement 用）：家族包 = 内置内核版本，记忆包 = 锁定版本；
+    /// 其余（生态包/bundle）返回 null，不参与强制对齐。
+    /// </summary>
+    private static string? PinnedVersion(string spec, string? kernelVersion) =>
+        PackageDir(spec) switch
+        {
+            var d when KernelFamilyPackages.Contains(d) => kernelVersion,
+            var d when d == MemoryPackageDir => MemoryPinnedVersion,
+            _ => null,
+        };
+
+    /// <summary>
+    /// 家族包的安装规格：钉内核版本（读不到内核版本时退回裸名，并留诊断）。
+    /// 这是「幂等确保」里唯一会主动升级已安装包的路径——没有它，内核升级后 profile
+    /// 里的旧家族包永远驻留，而目录存在性检查对此完全无感。
+    /// </summary>
+    private static string ResolveFamilySpec(string packageName, string? kernelVersion, StringBuilder diag)
+    {
+        if (kernelVersion is null)
+        {
+            diag.Append($"警告：读不到内核版本（Kernel\\dsh\\package.json），{packageName} 按默认 latest 安装\n");
+            return packageName;
+        }
+        return $"{packageName}@{kernelVersion}";
+    }
+
+    /// <summary>读内置内核 dsh 的版本（&lt;kernelBinDir&gt;\..\dsh\package.json）：家族包钉版本的数据源。</summary>
+    private static string? ReadKernelVersion(string kernelBinDir)
+    {
+        try
+        {
+            var manifest = Path.GetFullPath(Path.Combine(kernelBinDir, "..", "dsh", "package.json"));
+            if (!File.Exists(manifest))
+            {
+                return null;
+            }
+            using var doc = JsonDocument.Parse(File.ReadAllText(manifest));
+            return doc.RootElement.TryGetProperty("version", out var v) && v.ValueKind == JsonValueKind.String
+                ? v.GetString()
+                : null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>本次运行的有效安装清单：家族包按内核版本钉版本，其余按固定规格。</summary>
+    private static List<string> ResolveRequiredPackages(string? kernelVersion, StringBuilder diag)
+    {
+        var list = new List<string>(RequiredPackages.Length);
+        foreach (var p in RequiredPackages)
+        {
+            var dir = PackageDir(p);
+            list.Add(KernelFamilyPackages.Contains(dir)
+                ? ResolveFamilySpec(dir, kernelVersion, diag)
+                : p);
+        }
+        return list;
+    }
+
+    /// <summary>
     /// 引导器维护的 insert 条目（写入 profile patch 层）。每条绑定其依赖的包目录：
     /// 只有包已就绪的条目才会写入，保证 patch 引用永远可解析（loader 对解析失败的
     /// 条目会让整个内核启动失败，见 2026-09-08 桌面外部插件决策）。
@@ -119,27 +197,45 @@ internal static class DshPluginBootstrap
         // 1) 包安装：node_modules 里缺谁就 add 谁（一条命令）。
         //    RequiredPackages 里的条目可带 @version 安装规格，存在性检查按目录名
         //    （去版本后缀），安装时按完整规格，保证锁定版本生效。
-        var missing = RequiredPackages
+        //    家族包（@deepseek-ai/dsh-browser-use 等）的规格在这里钉成内核版本：
+        //    它们与内核核心 lockstep 发版，装错版本的后果是会话创建整链失败。
+        var kernelVersion = ReadKernelVersion(kernelBinDir);
+        var required = ResolveRequiredPackages(kernelVersion, diag);
+        var missing = required
             .Where(p => !Directory.Exists(Path.Combine(modulesDir, PackageDir(p))))
             .ToList();
-        // 1.1) 记忆包版本 enforcement：已安装但版本不是锁定版本时，加入重装队列
-        //      （否则老版本永远驻留，"与官方最新一致" 只对新安装生效）。
-        if (Directory.Exists(Path.Combine(modulesDir, MemoryPackageDir)) &&
-            !missing.Any(p => PackageDir(p) == MemoryPackageDir) &&
-            ReadInstalledVersion(modulesDir, MemoryPackageDir) != MemoryPinnedVersion)
+        // 1.1) 版本 enforcement：已安装但版本不是期望版本的一律进重装队列
+        //      （目录存在性检查发现不了版本；老版本会永远驻留下来遮蔽 bundle 的
+        //      同名包——0.8.3.8 的 playwright-mcp 握手失败就是这么来的）。
+        foreach (var p in required)
         {
-            missing.Add(MemoryPackageSpec);
+            var dir = PackageDir(p);
+            if (missing.Any(m => PackageDir(m) == dir))
+            {
+                continue;
+            }
+            var want = PinnedVersion(p, kernelVersion);
+            if (want is null)
+            {
+                continue;
+            }
+            var installed = ReadInstalledVersion(modulesDir, dir);
+            if (installed != want)
+            {
+                missing.Add(p);
+                diag.Append($"版本不符重装: {dir} 期望 {want} 已装 {installed}\n");
+            }
         }
         if (missing.Count > 0)
         {
             // 安装期间报进度：node_modules 里就绪的包数是 pnpm 真实推进的刻度
             // （包边下载边落盘），比 indeterministic 的"正在装"可信得多。
-            using var install = WatchInstall(modulesDir, progress, ct);
+            using var install = WatchInstall(modulesDir, required, progress, ct);
             diag.Append(InstallMissing(nodeExe, kernelBinDir, profileDir, dshHome, missing.ToArray()));
         }
         else if (progress is not null)
         {
-            ReportInstall(modulesDir, progress);
+            ReportInstall(modulesDir, required, progress);
         }
 
         // 1.5) bundle 选入每次启动都跑（幂等）：dsh CLI 重建 profile 会把 bundles 重置
@@ -166,28 +262,29 @@ internal static class DshPluginBootstrap
     /// 只在有包缺失时启用（不缺 = 无事可报）。
     /// </summary>
     private static IDisposable? WatchInstall(
-        string modulesDir, IProgress<PluginInstallProgress>? progress, CancellationToken ct)
+        string modulesDir, List<string> required, IProgress<PluginInstallProgress>? progress, CancellationToken ct)
     {
         if (progress is null)
         {
             return null;
         }
-        ReportInstall(modulesDir, progress);
+        ReportInstall(modulesDir, required, progress);
         var timer = new System.Threading.Timer(_ =>
         {
             if (ct.IsCancellationRequested)
             {
                 return;
             }
-            ReportInstall(modulesDir, progress);
+            ReportInstall(modulesDir, required, progress);
         }, state: null, dueTime: TimeSpan.FromMilliseconds(250), period: TimeSpan.FromMilliseconds(250));
         return new TimerHandle(timer);
     }
 
-    private static void ReportInstall(string modulesDir, IProgress<PluginInstallProgress> progress)
+    private static void ReportInstall(
+        string modulesDir, List<string> required, IProgress<PluginInstallProgress> progress)
     {
         var ready = 0;
-        foreach (var spec in RequiredPackages)
+        foreach (var spec in required)
         {
             if (Directory.Exists(Path.Combine(modulesDir, PackageDir(spec))))
             {
@@ -196,7 +293,7 @@ internal static class DshPluginBootstrap
         }
         try
         {
-            progress.Report(new PluginInstallProgress(ready, RequiredPackages.Length));
+            progress.Report(new PluginInstallProgress(ready, required.Count));
         }
         catch (Exception)
         {
