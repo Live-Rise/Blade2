@@ -381,6 +381,15 @@ public sealed partial class MainWindow : Window
     private readonly ObservableCollection<ChatBubble> _messages = new();
     // 原始气泡保留，显示集合仅做投影；切回 normal 不重新拉 RPC，也不丢过程内容。
     private readonly ObservableCollection<ChatBubble> _visibleMessages = new();
+    /// <summary>journal 整页回放/补拉/轮询的批深度（&gt;0 = 正在批里）。批内只记账，批尾做一次投影。
+    /// 一页历史能上千条事件，逐条刷投影（每次全表重算 + 一次集合通知）叠加逐条
+    /// <see cref="ChangeView"/> 贴底（每次强制等一次布局）＝「列表加载时突然卡顿」，
+    /// 而加载结束后集合不再变，滚动自然丝滑——症状正好对上。</summary>
+    private int _journalBulkDepth;
+    private bool _transcriptViewDirty;
+    /// <summary>本轮（同一个 dispatcher tick）已经排过一次贴底：重复排只是把同一个底反复
+    /// <c>ChangeView</c>，而每次都要等布局算出新的 ScrollableHeight ⇒ N 次事件 = N 次强制布局。</summary>
+    private bool _transcriptScrollQueued;
     private readonly HashSet<int> _closedTranscriptTurns = new();
     private readonly HashSet<int> _startedTranscriptTurns = new();
     private readonly Dictionary<int, ChatBubble> _transcriptAnswers = new();
@@ -454,21 +463,76 @@ public sealed partial class MainWindow : Window
         var visible = _messages.Where(b => !b.Withdrawn && (!_compactTranscript || b.Turn <= 0 ||
             !_closedTranscriptTurns.Contains(b.Turn) || !_transcriptAnswers.TryGetValue(b.Turn, out var answer) ||
             (!(b.IsToolCall || b.IsReasoning || b.IsAssistantStep) || ReferenceEquals(b, answer)))).ToList();
-        // 增量同步，普通流式追加不 Clear 列表，避免焦点和滚动反复跳动。
-        var index = 0;
-        foreach (var bubble in visible)
+        // 「少女祈祷中」占位气泡不属于 journal，永远挂在最末（紧凑视图也不裁剪它）。
+        // 它进同一条目标序列一起比对：留在集合外比的话每轮刷新都会把它摘下来再挂回去
+        // （容器重建 = 占位行闪一下，虚拟化还要重走一遍模板）。
+        if (_pendingBubble is { } pending)
         {
-            while (index < _visibleMessages.Count && !ReferenceEquals(_visibleMessages[index], bubble) &&
-                !visible.Contains(_visibleMessages[index])) _visibleMessages.RemoveAt(index);
-            if (index >= _visibleMessages.Count || !ReferenceEquals(_visibleMessages[index], bubble))
-                _visibleMessages.Insert(index, bubble);
-            index++;
+            visible.Add(pending);
         }
-        while (_visibleMessages.Count > index) _visibleMessages.RemoveAt(index);
-        // 「少女祈祷中」占位气泡不属于 journal，永远挂在最末（紧凑视图也不裁剪它）
-        if (_pendingBubble is { } pending && !ReferenceEquals(_visibleMessages.Count > 0 ? _visibleMessages[^1] : null, pending))
+        SyncVisibleMessages(visible);
+    }
+
+    /// <summary>批内只记账、批尾做一次；批外立即同步（批外调用点依赖改完就能读 _visibleMessages）。
+    /// 走这条的都是「一条 journal 事件 ⇒ 至少一次全表重算」的入口：集合变更、turn 三连、占位起落。</summary>
+    private void RequestTranscriptViewRefresh()
+    {
+        if (_journalBulkDepth > 0)
         {
-            _visibleMessages.Add(pending);
+            _transcriptViewDirty = true;
+            return;
+        }
+        RefreshTranscriptView();
+    }
+
+    /// <summary>把可见投影增量同步到 <paramref name="target"/>：两端按引用掐头去尾，只换中间那一段。
+    ///
+    /// 旧写法是「逐项扫 + visible.Contains 判成员」：成员判定本身 O(n) 套在 n 次循环里 = O(n²)；
+    /// 切会话时更糟——目标头一条与旧表全不相同时，RemoveAt(0) 逐条摘 n 下，每次都是 O(n)
+    /// 位移 + 一次集合通知（列表跟着重排 n 次）。这就是「切会话加载列表时突然卡一下」。
+    ///
+    /// 现在：掐头去尾后完全一致直接早退（逐字追加的常见帧一个通知都不发），整表换新走一次
+    /// Clear（1 次通知顶掉 n 次），其余只动真正改动的中间段且从后往前摘。集合通知次数从
+    /// O(整表) 降到 O(改动段长度)，比较次数从 O(n²) 降到 O(n)。</summary>
+    private void SyncVisibleMessages(List<ChatBubble> target)
+    {
+        var oldCount = _visibleMessages.Count;
+        var newCount = target.Count;
+        var head = 0;
+        var maxHead = Math.Min(oldCount, newCount);
+        while (head < maxHead && ReferenceEquals(_visibleMessages[head], target[head]))
+        {
+            head++;
+        }
+        if (head == oldCount && head == newCount)
+        {
+            return; // 完全一致：绝大多数逐字帧走这一条
+        }
+        var tailOld = oldCount;
+        var tailNew = newCount;
+        while (tailOld > head && tailNew > head && ReferenceEquals(_visibleMessages[tailOld - 1], target[tailNew - 1]))
+        {
+            tailOld--;
+            tailNew--;
+        }
+        if (head == 0 && tailOld == oldCount)
+        {
+            // 整表换新（切会话 / Reset）：一次 Clear 顶掉 n 次 RemoveAt(0)
+            _visibleMessages.Clear();
+            for (var i = 0; i < newCount; i++)
+            {
+                _visibleMessages.Add(target[i]);
+            }
+            return;
+        }
+        // 中间段从后往前摘（每次摘除不必把尾段整体前移），再按序插回同一位置
+        for (var i = tailOld; i-- > head;)
+        {
+            _visibleMessages.RemoveAt(i);
+        }
+        for (var i = head; i < tailNew; i++)
+        {
+            _visibleMessages.Insert(head, target[i]);
         }
     }
 
@@ -1391,7 +1455,7 @@ public sealed partial class MainWindow : Window
         ["只读：可浏览工作区，不能写文件或执行修改"] = "Read-only: browse the workspace, no file writes or modifications",
         ["可写工作区与允许的临时目录；更广范围的重试需审批"] = "Workspace and allowed temp dirs writable; broader retries need approval",
         ["完全文件访问，不再弹出审批确认"] = "Full file access; no approval prompts",
-        ["Flash 预判写入/命令是否不可回补：安全自动批准，有风险转人工审批"] = "Flash pre-judges whether writes/commands are irreversible: safe ones auto-approve, risky ones go to human approval",
+        ["每次工具调用前由当前会话模型预判是否授权：安全的直接放行，有风险的带理由转人工"] = "The session's own model assesses authorization before each tool call: safe calls go straight through, risky ones go to a human with the reason",
         ["需要确认"] = "Requires confirmation",
         ["直接执行"] = "Execute directly",
         ["审批策略已从「{0}」切换为「{1}」（由你更改）"] = "Approval policy switched from \"{0}\" to \"{1}\" (by you)",
@@ -1760,7 +1824,7 @@ public sealed partial class MainWindow : Window
             "Knowledge-graph JSONL (managed by the memory server itself; deleting it clears all memory):",
         ["默认插件"] = "Bundled plugins",
         ["参考记忆服务器"] = "Reference memory server",
-        ["自动审批"] = "Auto approval",
+        ["自动审查"] = "Auto review",
         ["技能面板"] = "Skill panel",
         ["Blade² 随内核插件机制默认启用；安装由引导器幂等完成，失败时下次启动自动重试。"] =
             "Enabled by default via the kernel plugin mechanism; the bootstrapper installs idempotently and retries on the next launch after a failure.",
@@ -1805,26 +1869,21 @@ public sealed partial class MainWindow : Window
         ["Cua Driver 驱动"] = "Cua Driver provider",
         ["浏览器控制注册表"] = "Browser-use registry",
         ["Playwright 驱动"] = "Playwright provider",
-        // ---- 设置「插件」分区内的自动审批块（dsh-approval-gate · auto-approve 预设开关 + 判定模型） ----
-        ["自动审批由内核插件 dsh-approval-gate 提供：当会话权限预设切到「自动审批」时，由判定模型预判每次写入/命令是否不可回补——安全则自动批准，涉及删除、凭据、系统配置等硬类别转人工确认。开关增删内核 profile patch 里的 auto-approve 预设，判定模型写在默认模型设置里，两者都由内核热重载即时生效。"] =
-            "Auto approval is provided by the kernel plugin dsh-approval-gate: when a session's permission preset is switched to Auto approval, the judging model pre-judges whether each write/command is irreversible — safe ones are approved automatically, while hard categories such as deletion, credentials, and system configuration are escalated to a human. The toggle adds or removes the auto-approve preset in the kernel profile patch and the judging model lives in the default-model setting; both are hot-reloaded by the kernel on the fly.",
-        ["开启后权限模式里多出「自动审批」：判定模型预判越界请求，安全自动批准、有风险转人工。"] =
-            "When on, an Auto approval option appears in the permission presets: the judging model pre-judges out-of-bounds requests, approving safe ones automatically and escalating risky ones to a human.",
-        ["启用自动审批"] = "Enable auto approval",
-        ["自动审批判定模型"] = "Auto approval judging model",
-        ["判定模型"] = "Judging model",
-        ["自动审批每次预判写入/命令是否不可回补时所用的模型，选项来自内核模型目录。"] =
-            "The model that pre-judges whether each write/command is irreversible during auto approval; the options come from the kernel model catalog.",
-        ["预判模型"] = "Pre-judgment model",
-        ["切换后新会话的默认模型也随之改变；已在会话里选过模型的会话不受影响。"] =            "Switching also changes the default model for new sessions; sessions that already picked a model are unaffected.",
-        ["模型目录不可用：{0}"] = "Model catalog unavailable: {0}",
+        // ---- 设置「插件」分区内的自动审查块（内核 @deepseek-ai/dsh-experimental-auto-review 开关） ----
+        ["自动审查由内核插件 @deepseek-ai/dsh-experimental-auto-review 提供（内核标题「自动授权审查」）：当会话权限预设切到「自动审查」时，每次工具调用前由当前会话的模型预判是否授权——安全则直接放行，有风险则带理由转人工确认。开关增删内核 profile 的 bundle 清单，由内核热重载即时生效。"] =
+            "Auto review is provided by the kernel plugin @deepseek-ai/dsh-experimental-auto-review (kernel title \"Auto Authorization Review\"): when a session's permission preset is switched to Auto review, the session's own model assesses authorization before each tool call — safe calls go straight through, risky ones are escalated to a human with the reviewer's reason. The toggle adds or removes the bundle in the kernel profile's bundle list; the kernel hot-reloads the change on the fly.",
+        ["开启后权限模式里多出「自动审查」：每次工具调用前由当前会话模型预判是否授权，安全直接放行、有风险转人工。"] =
+            "When on, an Auto review option appears in the permission presets: the session's own model assesses authorization before each tool call, letting safe calls through and escalating risky ones to a human.",
+        ["启用自动审查"] = "Enable auto review",
+        ["自动审查"] = "Auto review",
+        ["越界工具调用的自动授权审查开关。"] = "Switch for automatic authorization review of out-of-bounds tool calls.",
         ["切换后会发生什么"] = "What happens when you switch",
-        ["开启：权限选择器（输入区左下角）里出现「自动审批」，新会话可选用它。\n" +
-         "关闭：该预设从选择器消失；正在使用它的会话回落到自定义权限，审批恢复人工确认。\n" +
-         "判定记录与学习状态不受影响，重新开启后继续生效。"] =
-            "On: an Auto approval option appears in the permission picker (bottom-left of the composer), available to new sessions.\n" +
-            "Off: that preset disappears from the picker; sessions using it fall back to custom permissions, and approval returns to manual confirmation.\n" +
-            "Decision logs and learned state are unaffected and resume when you switch it back on.",
+        ["开启：权限选择器（输入区左下角）里出现「自动审查」，新会话可选用它。\n" +
+         "关闭：该预设从选择器消失；正在使用它的会话回落到完全权限，审批恢复人工确认。\n" +
+         "重新开启后继续生效。"] =
+            "On: an Auto review option appears in the permission picker (bottom-left of the composer), available to new sessions.\n" +
+            "Off: that preset disappears from the picker; sessions using it fall back to full access, and approval returns to manual confirmation.\n" +
+            "Switching it back on resumes auto review.",
         // ---- 设置分区「关于」（版本与 GitHub Release 更新） ----
         ["关于"] = "About",
         ["Blade² 的版本信息与更新。更新通过覆盖安装新版本 MSIX 完成（安装前需先退出应用）。"] =
@@ -2126,6 +2185,29 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>翻译 MenuFlyout 声明项（打开才具现化，视觉树扫描到不了）。</summary>
+    /// <summary>节点自己与整条祖先链上有没有 Collapsed —— 看不见的东西不值得为它扫视觉树。
+    ///
+    /// 为什么需要：本方法挂在 <c>RootGrid.LayoutUpdated</c> 上（那是为了让「后具现化」的壳控件
+    /// 也能翻成当前语言），于是**每次布局 pass** 都会把那 18 个区域重扫一遍。设置页/统计页一旦
+    /// 被打开过就再也不回收：它们的模板已具现化，即便 Collapsed 也照样是几千个节点的子树，
+    /// 于是在聊天页上白扫到天荒地老 —— 布局越频繁（列表加载时最频繁）越贵。
+    ///
+    /// 跳过是安全的：Collapsed 的东西不显示；而它变可见本身就是一次布局 pass，
+    /// 那一 pass 自然会把它扫回来（Visibility 变更 ⇒ 布局失效 ⇒ LayoutUpdated 必响）。</summary>
+    private static bool IsShownInTree(DependencyObject? node)
+    {
+        // 上限 64 层只为防病态树；正常壳深度的祖先链是十层量级。
+        for (var depth = 0; node is not null && depth < 64; depth++)
+        {
+            if (node is UIElement { Visibility: not Visibility.Visible })
+            {
+                return false;
+            }
+            node = VisualTreeHelper.GetParent(node);
+        }
+        return true;
+    }
+
     private void LocalizeMenuItems(IList<MenuFlyoutItemBase> items)
     {
         foreach (var item in items)
@@ -2185,10 +2267,11 @@ public sealed partial class MainWindow : Window
                 // 整行扫（不只是标题）：面包屑上级名也是本地化串，切语言时要跟着翻
                 SettingsHeaderRow, ApprovalReject, ApprovalAllow,
                 ComposerBar, CommandPaletteHeader, ReferencePaletteHeader, ApprovalHost, StatsPage })
-                LocalizeShellTree(region);
+                if (IsShownInTree(region)) LocalizeShellTree(region);
             // ChatList 本体（不进递归）的 UIA Name：XAML 静态「对话消息列表」。
             LocalizeProperty(ChatList, AutomationProperties.NameProperty);
-            foreach (var region in _generalShellRegions) LocalizeShellTree(region);
+            foreach (var region in _generalShellRegions)
+                if (IsShownInTree(region)) LocalizeShellTree(region);
             // XAML 静态菜单项定义在 Button.Flyout 里，打开才具现化，视觉树扫不到；直接按声明翻译。
             LocalizeMenuItems(ComposerAddFlyout.Items);
             foreach (var item in Nav.MenuItems.Concat(Nav.FooterMenuItems).OfType<NavigationViewItem>())
@@ -2585,6 +2668,16 @@ public sealed partial class MainWindow : Window
             {
                 return;
             }
+            // 只有交付物卡与占位行含那三枚要找的 AutomationId（DeliverableCardTitle /
+            // PresentedFileOpenButton / FileActionMenu 在 DeliverableTpl，PendingThinkingText 在
+            // PendingTpl），其余每种容器都不可能有。此前不分类型地给**每个**容器排一趟
+            // LocalizeDeliverableCard，而它是整棵视觉树递归（助手气泡的 markdown 树上百个节点，
+            // 每个节点两次 interop）：加载时十几个容器的递归全落进同一个 dispatcher tick，
+            // 就是那「卡顿一下」；滚动时是零星几个，所以滚起来又没感觉。
+            if (args.Item is not ChatBubble { Role: "deliverable" or "pending" })
+            {
+                return;
+            }
             // 模板部分在内容变更回调时可能尚未具现化；只在下一帧补写。
             // 绝不能在回调内同步 SetValue——那发生在列表布局过程中，会触发布局循环（LayoutCycleException 白屏）。
             PostUi(() => LocalizeDeliverableCard(container));
@@ -2616,7 +2709,7 @@ public sealed partial class MainWindow : Window
                 // 占位气泡已随旧会话作废：按钮忙碌态要按新会话重算，否则会停在停止键。
                 UpdateComposerRunningState();
             }
-            RefreshTranscriptView();
+            RequestTranscriptViewRefresh();
         };
         // 静态 XAML 与异步构造的设置/审批控件共用入口；只写实际变化的属性。
         RootGrid.LayoutUpdated += (_, _) => RefreshShellLanguage();
@@ -2944,8 +3037,8 @@ public sealed partial class MainWindow : Window
             return Task.CompletedTask;
         });
 
-        // permission-presets/catalog-changed：权限预设目录变化（auto-approve 预设开/关热重载、
-        // auto 集成上/下线）时重拉目录。事件在 $events 转发白名单里（同上）。
+        // permission-presets/catalog-changed：权限预设目录变化（auto 集成上/下线，即
+        // 自动审查 bundle 选入/摘出的热重载）时重拉目录。事件在 $events 转发白名单里（同上）。
         _rpc.OnEvent("permission-presets/catalog-changed", _ => RefreshPermissionCatalogAsync());
 
         // 启动即空态：品牌标 + 输入区选择器 + 默认权限选择器（不等待会话列表）。
@@ -4628,6 +4721,7 @@ public sealed partial class MainWindow : Window
             return;
         }
         Volatile.Write(ref _journalCursor, 0);
+        LoadTrace.Start();
         _messages.Clear();
         // 模型标注同属会话作用域：旧会话最后一条 header 不许标到新会话的消息上，
         // 清零后由本次回放里的 request/header 重新建立。
@@ -4675,13 +4769,17 @@ public sealed partial class MainWindow : Window
             _permissionCurrentValue = null;
         }
         RefreshSessionStateBar();
+        LoadTrace.Mark("open: 复位+附属面板（同步）");
         await RefreshSessionStateFromListAsync(vm.SessionId);
+        LoadTrace.Mark("open: session/list 投影补齐");
         await LoadSessionHistoryAsync(vm.SessionId);
+        LoadTrace.Mark("open: 历史拉取+回放结束（回放内部的段另有行）");
         await FollowSessionAsync(vm.SessionId);
         await LoadFeedbackAsync(vm.SessionId);
         // 控制流在 mux 重连后会被作废：切会话时补开一次（幂等）
         await OpenSessionControlStreamAsync();
         UpdateEmptyState(); // 历史回读完成：有消息则收起空态
+        LoadTrace.Mark("open: 收尾（跟流+反馈+空态）");
     }
 
     /// <summary>
@@ -5077,6 +5175,7 @@ public sealed partial class MainWindow : Window
             {
                 RenderJournal(pages[i]);
             }
+            LoadTrace.Mark($"history: {pages.Count} 页拉完并回放");
 
             // projections 缺失的旧会话：列表显示的是 cwd 目录名兜底，
             // journal 里存在 durable title（session/title）时回填替换。
@@ -5833,7 +5932,7 @@ public sealed partial class MainWindow : Window
                 return;
             }
             _pendingBubble = null;
-            RefreshTranscriptView();
+            RequestTranscriptViewRefresh();
             UpdateComposerRunningState();
             return;
         }
@@ -5844,7 +5943,7 @@ public sealed partial class MainWindow : Window
             return;
         }
         _pendingBubble = new ChatBubble { Role = "pending", Text = "" };
-        RefreshTranscriptView();
+        RequestTranscriptViewRefresh();
         UpdateComposerRunningState();
         ScrollTranscriptToBottom(force: true);
     }
@@ -5863,12 +5962,25 @@ public sealed partial class MainWindow : Window
         }
         if (TranscriptScroller(ChatList) is not null)
         {
+            // 同一个 tick 内已经排过贴底就不重复排：贴底是幂等的（目标永远是「当前底」），
+            // 而每排一次就是一个待执行的 ChangeView，每次都要等布局算出新的 ScrollableHeight。
+            // 加载一页历史会连着排上千次（每条气泡一次），那就是上千次强制布局 ⇒ 突然卡顿；
+            // 加载结束后不再有事件，滚动自然回到丝滑。
+            if (_transcriptScrollQueued)
+            {
+                return;
+            }
+            _transcriptScrollQueued = true;
             // 下一帧定位：本轮内容刚改完，等布局算出新的 ScrollableHeight。
             PostUi(() =>
             {
+                _transcriptScrollQueued = false;
                 if (TranscriptScroller(ChatList) is { } sv && sv.ScrollableHeight > 0)
                 {
+                    // 这一发 ChangeView 会同步触发一次布局：容器具现化 + 助手气泡整棵 markdown
+                    // 树构建都在里面。它是「列表加载时那一下」最可能的落点，所以单独打点。
                     sv.ChangeView(null, sv.ScrollableHeight, null, disableAnimation: true);
+                    LoadTrace.Mark("bulk: 贴底 ChangeView（内含强制布局+气泡具现化）");
                 }
             });
             return;
@@ -6076,19 +6188,52 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
-        foreach (var rec in records.EnumerateArray())
+        // 整页回放是一个批：批内逐条刷投影/逐条贴底就是「加载列表时突然卡顿」的根因
+        // （一页历史上千条事件 ⇒ 上千次全表重算 + 上千次集合通知 + 上千次强制布局）。
+        // 批内只记账，批尾做一次投影 + 一次贴底；屏幕上看到的最终状态完全一致。
+        _journalBulkDepth++;
+        var rendered = 0;
+        try
         {
-            if (rec.TryGetProperty("event", out var ev))
+            foreach (var rec in records.EnumerateArray())
             {
-                var seq = ev.GetProperty("seq").GetInt32();
-                // 补拉/轮询会重放整页：按全局游标跳过已渲染事件
-                if (seq <= Volatile.Read(ref _journalCursor) && seq != 0)
+                if (rec.TryGetProperty("event", out var ev))
                 {
-                    continue;
+                    var seq = ev.GetProperty("seq").GetInt32();
+                    // 补拉/轮询会重放整页：按全局游标跳过已渲染事件
+                    if (seq <= Volatile.Read(ref _journalCursor) && seq != 0)
+                    {
+                        continue;
+                    }
+                    _journalCursor = Math.Max(_journalCursor, seq);
+                    RenderEventCore(ev);
+                    rendered++;
                 }
-                _journalCursor = Math.Max(_journalCursor, seq);
-                RenderEventCore(ev);
             }
+        }
+        finally
+        {
+            _journalBulkDepth--;
+            if (_journalBulkDepth == 0)
+            {
+                LoadTrace.Mark($"journal: 回放 {rendered} 条（批内不刷投影）");
+                FlushJournalBulk();
+            }
+        }
+    }
+
+    /// <summary>批尾结算：一次投影刷新 + 一次贴底。顺序不能反——贴底要用投影后的真实高度算底。</summary>
+    private void FlushJournalBulk()
+    {
+        if (_transcriptViewDirty)
+        {
+            _transcriptViewDirty = false;
+            RefreshTranscriptView();
+            LoadTrace.Mark($"bulk: 投影同步 → {_visibleMessages.Count} 行");
+        }
+        if (_visibleMessages.Count > 0)
+        {
+            ScrollTranscriptToBottom(force: true);
         }
     }
 
@@ -6173,10 +6318,10 @@ public sealed partial class MainWindow : Window
                 {
                     SetPendingThinking(true);
                 }
-                RefreshTranscriptView();
+                RequestTranscriptViewRefresh();
                 return;
             case "step/start":
-                RefreshTranscriptView();
+                RequestTranscriptViewRefresh();
                 return;
             case "request/header":
                 // 内核每发一次 LLM 请求记一条（dsh-agent-loop 的 buildRequest）：header.config
@@ -6224,7 +6369,7 @@ public sealed partial class MainWindow : Window
                         RefreshTurnActionsRow(turnAnswer);
                     }
                 }
-                RefreshTranscriptView();
+                RequestTranscriptViewRefresh();
                 // 紧凑视图在收尾时折叠中间步骤，列表高度突变：贴底的用户不该被留在空白处。
                 ScrollTranscriptToBottom();
                 return;
@@ -8412,7 +8557,8 @@ public sealed partial class MainWindow : Window
     /// "personalization"（个性化：自定义指令 + 背景皮肤）、"usage"（使用统计）、"skills"（技能：
     /// 当前会话可调用的技能清单）与 "about"（关于：版本与更新）：
     /// 八者不进内核 settings/mutate，也不参与「恢复本页默认」；四项内核分区的顺序与内容不变。
-    /// 原「自动审批」分区已撤下侧栏入口，内容并入「插件」分区配置 Tab 的默认插件卡上方。</summary>
+    /// 原「自动审批」分区已撤下侧栏入口，内容并入「插件」分区配置 Tab 的默认插件卡上方
+    /// （0.2.1 内核起该块改挂官方 auto-review bundle，见 <see cref="AddAutoReviewCardsAsync"/>）。</summary>
     private static readonly string[] SectionOrder =
         { "general", "personalization", "models", "plugins", "skills", "memory", "pet", "agent-presets", "computer-control", "browser-control", "usage", "about" };
 
@@ -12753,12 +12899,12 @@ public sealed partial class MainWindow : Window
         navCards.Children.Add(MakeSettingsNavCard(
             "PluginsNav_webSearch", "\uE721", L("网页搜索"), L("DeepSeek 搜索提供方：密钥、接口地址、搜索次数。"),
             () => _ = OpenWebSearchSubPageAsync()));
-        // 自动审批块（原「自动审批」分区整体并入此处）：dsh-approval-gate 的 auto-approve 预设开关
-        // 与判定模型选择。归位理由：它本质是默认插件组合里一个 bundle 插件的预设开关，
-        // 与默认插件卡同源同维护方。
+        // 自动审查块（原「自动审批」分区整体并入此处，0.2.1 内核起改挂官方 auto-review
+        // bundle）：内核自动审查的开关。归位理由：它本质是默认插件组合里一个 bundle
+        // 插件的开关，与默认插件卡同源同维护方。
         navCards.Children.Add(MakeSettingsNavCard(
-            "PluginsNav_autoApproval", "\uE73E", L("自动审批"), L("越界请求的自动批准预设与判定模型。"),
-            () => _ = OpenAutoApprovalSubPageAsync()));
+            "PluginsNav_autoReview", "\uE73E", L("自动审查"), L("越界工具调用的自动授权审查开关。"),
+            () => _ = OpenAutoReviewSubPageAsync()));
         // 默认插件卡（原在「记忆」分区底部）：本次选型组合的安装/挂载状态，
         // 引导器幂等维护、只读呈现——安装类信息归位到插件页，不再散落到记忆分区。
         navCards.Children.Add(MakeSettingsNavCard(
@@ -12914,19 +13060,20 @@ public sealed partial class MainWindow : Window
         });
     }
 
-    /// <summary>自动审批二级页：先开页（说明 + 开关立即可见），判定模型目录是异步的，回来再补第二张卡。
+    /// <summary>自动审查二级页：先开页（说明 + 开关立即可见）。
     /// 返回 Task 而非 async void：调用点在导航卡的 lambda 里，用 `_ =` 承接便于异常不外泄到同步化路径。</summary>
-    private async Task OpenAutoApprovalSubPageAsync()
+    private Task OpenAutoReviewSubPageAsync()
     {
         try
         {
             var host = new StackPanel();
-            OpenSettingsSubPage(L("自动审批"), host);
-            await AddAutoApprovalCardsAsync(host);
+            OpenSettingsSubPage(L("自动审查"), host);
+            return AddAutoReviewCardsAsync(host);
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[settings/auto-approval] {ex}");
+            System.Diagnostics.Debug.WriteLine($"[settings/auto-review] {ex}");
+            return Task.CompletedTask;
         }
     }
 
@@ -14345,42 +14492,40 @@ public sealed partial class MainWindow : Window
         RenderMountStatusCard("browser-use");
     }
 
-    // ---------------- 自动审批（并入「插件」分区 · auto-approve 预设开关 + 判定模型） ----------------
+    // ---------------- 自动审查（并入「插件」分区 · 内核 auto-review bundle 开关） ----------------
 
-    /// <summary>「插件」分区里的自动审批块（原独立分区，入口撤下后内容整体并入此处）：
-    /// dsh-approval-gate 插件的 auto-approve 权限预设开关、判定模型选择与切换后果提示，
+    /// <summary>「插件」分区里的自动审查块（原「自动审批」分区撤下侧栏入口后并入此处，
+    /// 0.2.1 内核起改挂官方 auto-review bundle）：自动审查的开关与切换后果提示，
     /// 挂在默认插件卡上方。
-    /// 该插件挂在审批瀑布最前，仅当会话权限预设为 auto-approve 时工作（模型预判
-    /// 写入/命令是否不可回补：安全自动批准，硬类别转人工）。开关不碰插件挂载（bundle 插件，
-    /// 由引导器每次启动幂等选入），而是增删 profile patch 里 permission 条目的 auto-approve
-    /// 预设块：关闭后该预设从权限选择器消失，正在使用它的会话落到 custom 预设，
-    /// 审批瀑布回落到默认人工确认。patchReload=live 使改动被内核热重载即时生效。</summary>
-    private async Task AddAutoApprovalCardsAsync(StackPanel host)
+    /// 内核的 @deepseek-ai/dsh-experimental-auto-review 挂在审批瀑布最前，仅当会话权限预设为
+    /// auto 时工作：每次工具调用前用会话当前的提供方/模型预判是否授权，安全直接放行，
+    /// 有风险转人工。它是内核的 OPTIONAL_BUNDLES（出厂关闭），开关就是把它选入/摘出
+    /// profile 的 dsh.profile.bundles；patchReload=live 使改动被内核热重载即时生效。</summary>
+    private Task AddAutoReviewCardsAsync(StackPanel host)
     {
         host.Children.Add(MakeSectionDesc(
-            L("自动审批由内核插件 dsh-approval-gate 提供：当会话权限预设切到「自动审批」时，由判定模型预判每次写入/命令是否不可回补——安全则自动批准，涉及删除、凭据、系统配置等硬类别转人工确认。开关增删内核 profile patch 里的 auto-approve 预设，判定模型写在默认模型设置里，两者都由内核热重载即时生效。")));
+            L("自动审查由内核插件 @deepseek-ai/dsh-experimental-auto-review 提供（内核标题「自动授权审查」）：当会话权限预设切到「自动审查」时，每次工具调用前由当前会话的模型预判是否授权——安全则直接放行，有风险则带理由转人工确认。开关增删内核 profile 的 bundle 清单，由内核热重载即时生效。")));
 
-        AddAutoApprovalToggleCard(host);
-
-        await AddAutoApprovalModelCardAsync(host);
+        AddAutoReviewToggleCard(host);
 
         // 提示卡：关掉之后会话里正在用这个预设会怎样（用户最关心的后果）
         var card = NewCardIn(host, L("切换后会发生什么"), null);
         card.Children.Add(new TextBlock
         {
-            Text = L("开启：权限选择器（输入区左下角）里出现「自动审批」，新会话可选用它。\n" +
-                     "关闭：该预设从选择器消失；正在使用它的会话回落到自定义权限，审批恢复人工确认。\n" +
-                     "判定记录与学习状态不受影响，重新开启后继续生效。"),
+            Text = L("开启：权限选择器（输入区左下角）里出现「自动审查」，新会话可选用它。\n" +
+                     "关闭：该预设从选择器消失；正在使用它的会话回落到完全权限，审批恢复人工确认。\n" +
+                     "重新开启后继续生效。"),
             Style = AppStyle("CardDescriptionTextStyle"),
             TextWrapping = TextWrapping.Wrap,
         });
+        return Task.CompletedTask;
     }
 
     /// <summary>
-    /// auto-approve 预设开关卡（与「记忆/电脑控制」的挂载开关同构：标题+说明在左、开关在右）。
-    /// 写入失败（patch 文件不可写、permission 条目缺 presets 键）时开关回滚，保持与 patch 一致。
+    /// 自动审查开关卡（与「记忆/电脑控制」的挂载开关同构：标题+说明在左、开关在右）。
+    /// 写入失败（profile package.json 不可写、bundles 清单缺失）时开关回滚，保持与清单一致。
     /// </summary>
-    private void AddAutoApprovalToggleCard(StackPanel host)
+    private void AddAutoReviewToggleCard(StackPanel host)
     {
         var card = NewCardIn(host);
         var row = new Grid { HorizontalAlignment = HorizontalAlignment.Stretch };
@@ -14391,10 +14536,10 @@ public sealed partial class MainWindow : Window
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, Sp12, 0),
         };
-        text.Children.Add(new TextBlock { Text = L("自动审批"), Style = AppStyle("BodyStrongTextStyle") });
+        text.Children.Add(new TextBlock { Text = L("自动审查"), Style = AppStyle("BodyStrongTextStyle") });
         text.Children.Add(new TextBlock
         {
-            Text = L("开启后权限模式里多出「自动审批」：判定模型预判越界请求，安全自动批准、有风险转人工。"),
+            Text = L("开启后权限模式里多出「自动审查」：每次工具调用前由当前会话模型预判是否授权，安全直接放行、有风险转人工。"),
             Style = AppStyle("CardDescriptionTextStyle"),
             TextWrapping = TextWrapping.Wrap,
         });
@@ -14402,19 +14547,19 @@ public sealed partial class MainWindow : Window
         row.Children.Add(text);
         var toggle = Aut(new ToggleSwitch
         {
-            IsOn = DshPluginBootstrap.IsAutoApprovePresetPresent(DataHome),
+            IsOn = DshPluginBootstrap.IsAutoReviewEnabled(DataHome),
             OnContent = L("开"),
             OffContent = L("关"),
             VerticalAlignment = VerticalAlignment.Center,
             Style = AppStyle("SettingsToggleSwitchStyle"),
         },
-            "Setting_auto-approval_enabled", L("启用自动审批"));
+            "Setting_auto-review_enabled", L("启用自动审查"));
         Grid.SetColumn(toggle, 1);
         row.Children.Add(toggle);
         card.Children.Add(row);
         var state = new TextBlock
         {
-            Text = AutoApprovalStateLine(),
+            Text = AutoReviewStateLine(),
             Style = AppStyle("CardDescriptionTextStyle"),
         };
         var syncing = false; // 回滚 IsOn 会重入 Toggled：用哨兵避免递归
@@ -14426,9 +14571,9 @@ public sealed partial class MainWindow : Window
             }
             try
             {
-                if (DshPluginBootstrap.SetAutoApprovePresetPresent(DataHome, toggle.IsOn))
+                if (DshPluginBootstrap.SetAutoReviewEnabled(DataHome, toggle.IsOn))
                 {
-                    state.Text = AutoApprovalStateLine();
+                    state.Text = AutoReviewStateLine();
                     return;
                 }
                 syncing = true;
@@ -14443,101 +14588,11 @@ public sealed partial class MainWindow : Window
         card.Children.Add(state);
     }
 
-    /// <summary>auto-approve 预设的状态行：patch 里预设块的当前态（内核热重载后生效）。</summary>
-    private string AutoApprovalStateLine()
-        => DshPluginBootstrap.IsAutoApprovePresetPresent(DataHome)
+    /// <summary>自动审查的状态行：profile bundle 清单里 auto-review 条目的当前态（内核热重载后生效）。</summary>
+    private string AutoReviewStateLine()
+        => DshPluginBootstrap.IsAutoReviewEnabled(DataHome)
             ? L("已启用（内核热重载后生效）")
             : L("已停用");
-
-    /// <summary>判定模型卡：自动审批每次预判所用的模型。
-    /// 内核 dsh-approval-gate 没有独立的模型配置项——判定时它读 agentDefaultModel.currentSelection()
-    /// （读不到才回落 deepseek-v4-flash），所以这里切的就是「默认模型」本身，与输入区模型选择器
-    /// 经 session/selectModel 落的是同一个设置。切换对门控即时生效（settings 改动内核直接可见），
-    /// 新会话的默认模型也随之改变；已在会话里选过模型的会话沿用自己那份，不受影响。</summary>
-    private async Task AddAutoApprovalModelCardAsync(StackPanel host)
-    {
-        var card = NewCardIn(
-            host,
-            L("判定模型"),
-            L("自动审批每次预判写入/命令是否不可回补时所用的模型，选项来自内核模型目录。"));
-        if (_rpc is null)
-        {
-            return;
-        }
-
-        var options = new List<(string Provider, string Id, string Name)>();
-        try
-        {
-            var catalog = await _rpc.CallOkAsync("session/modelCatalog", new { });
-            if (catalog.TryGetProperty("groups", out var groups) && groups.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var group in groups.EnumerateArray())
-                {
-                    var provider = group.TryGetProperty("id", out var gid) ? gid.GetString() ?? "" : "";
-                    if (!group.TryGetProperty("models", out var models) || models.ValueKind != JsonValueKind.Array)
-                    {
-                        continue;
-                    }
-                    foreach (var model in models.EnumerateArray())
-                    {
-                        var id = model.TryGetProperty("id", out var mid) ? mid.GetString() ?? "" : "";
-                        if (id.Length == 0)
-                        {
-                            continue;
-                        }
-                        var name = model.TryGetProperty("name", out var mname) ? mname.GetString() ?? id : id;
-                        options.Add((provider, id, name));
-                    }
-                }
-            }
-        }
-        catch (Exception ex) when (ex is DshRpcException or InvalidOperationException or HttpRequestException or TaskCanceledException)
-        {
-            card.Children.Add(new TextBlock
-            {
-                Text = LF("模型目录不可用：{0}", ex.Message),
-                Style = AppStyle("CardDescriptionTextStyle"),
-                TextWrapping = TextWrapping.Wrap,
-            });
-            return;
-        }
-
-        var currentProvider = NsString("agent-default-model", "provider", "");
-        var currentModel = NsString("agent-default-model", "model", "");
-        var box = new ComboBox { MinWidth = TokenDouble("FieldMinWidth", 200), MaxDropDownHeight = 320 };
-        Aut(box, "Setting_auto-approval_model", L("自动审批判定模型"));
-        if (currentModel.Length > 0 && !options.Any(o => o.Id == currentModel))
-        {
-            // 目录里没有当前默认模型（自建提供方，或该提供方凭据未配置）：留一项原值，
-            // 否则下拉显示空白，用户看不出现在用的是什么。
-            options.Insert(0, (currentProvider, currentModel, currentModel));
-        }
-        foreach (var (_, id, name) in options)
-        {
-            box.Items.Add(new ComboBoxItem { Content = name, Tag = id });
-            if (id == currentModel)
-            {
-                box.SelectedItem = box.Items[^1];
-            }
-        }
-        // 先赋初值后挂事件：初始 SelectionChanged 不落这里
-        box.SelectionChanged += (_, _) =>
-        {
-            if (box.SelectedItem is not ComboBoxItem { Tag: string id } || id.Length == 0)
-            {
-                return;
-            }
-            var picked = options.FirstOrDefault(o => o.Id == id);
-            // provider 与 model 必须成对写：门控的 currentSelection() 两个字段都读，
-            // 只写一个会落到「新 model + 旧 provider」的错配组合上。
-            Edit("agent-default-model", "provider", () => picked.Provider);
-            Edit("agent-default-model", "model", () => id);
-        };
-        card.Children.Add(MakeRow(
-            L("预判模型"),
-            L("切换后新会话的默认模型也随之改变；已在会话里选过模型的会话不受影响。"),
-            box));
-    }
 
     /// <summary>
     /// 挂载开关卡（与「记忆」分区的开关同构）：标题+说明在左、开关在右，卡内带状态行。
@@ -14630,7 +14685,6 @@ public sealed partial class MainWindow : Window
         "computer-use-cua-mcp" => L("Cua Driver 驱动"),
         "browser-use-registry" => L("浏览器控制注册表"),
         "browser-use-playwright" => L("Playwright 驱动"),
-        "dsh-approval-gate" => L("自动审批"),
         "echocat-skill-panel-3.0" => L("技能面板"),
         _ => mountId,
     };
@@ -16736,29 +16790,27 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>权限预设的中文可读名（对照 dsh access.preset.*；内核 projection.name 是英文 id）。
-    /// "auto" 是 0.1.7 内核保留的活集成预设 id（dsh-approval-gate 注册后出现在 options 里），
-    /// 与配置表里的 auto-approve 并存——两者都译「自动审批」。</summary>
+    /// "auto" 由内核 0.2.1 的 @deepseek-ai/dsh-experimental-auto-review 在 registerAuto 时
+    /// 注册，只有该 bundle 选入 profile 时才出现在 options 里——不是配置表里的静态项。</summary>
     private string PermissionPresetZh(string value) => value switch
     {
         "read-only" => L("仅可查看"),
         "workspace-write" => L("工作区内修改"),
         "danger-full-access" => L("完全权限"),
-        "auto-approve" => L("自动审批"),
-        "auto" => L("自动审批"),
+        "auto" => L("自动审查"),
         "custom" => L("自定义"),
         _ => value,
     };
 
     /// <summary>权限预设的图标（Segoe MDL2/Fluent 码点）：每个预设各用一个、互不重复——
-    /// 锁在「自动审批/完全权限」下是反直觉的。只读=查看、工作区内修改=编辑、完全权限=警告、
-    /// 自动审批=闪光（Flash 智能预判）、自定义=设置；未知预设回落锁。</summary>
+    /// 锁在「自动审查/完全权限」下是反直觉的。只读=查看、工作区内修改=编辑、完全权限=警告、
+    /// 自动审查=闪光（智能预判）、自定义=设置；未知预设回落锁。</summary>
     private static string PermissionPresetGlyph(string value) => value switch
     {
         "read-only" => "\uE890",        // View
         "workspace-write" => "\uE70F",  // Edit
         "danger-full-access" => "\uE7BA", // Warning
-        "auto-approve" => "\uF1BA",     // SquareSparkle
-        "auto" => "\uF1BA",             // SquareSparkle（内核保留的活 auto 预设）
+        "auto" => "\uF1BA",             // SquareSparkle（内核 registerAuto 注册的活 auto 预设）
         "custom" => "\uE713",           // Settings
         _ => "\uE72E",                  // Lock
     };
@@ -16771,7 +16823,9 @@ public sealed partial class MainWindow : Window
             "read-only" => L("只读：可浏览工作区，不能写文件或执行修改"),
             "workspace-write" => L("可写工作区与允许的临时目录；更广范围的重试需审批"),
             "danger-full-access" => L("完全文件访问，不再弹出审批确认"),
-            "auto-approve" => L("Flash 预判写入/命令是否不可回补：安全自动批准，有风险转人工审批"),
+            // 内核 auto-review 用「会话当前的提供方/模型」做判定（temperature 0），
+            // 壳侧没有也不该有独立判定模型——这里按它的实际行为写。
+            "auto" => L("每次工具调用前由当前会话模型预判是否授权：安全的直接放行，有风险的带理由转人工"),
             _ => "",
         };
         if (zh.Length > 0)
@@ -16846,7 +16900,7 @@ public sealed partial class MainWindow : Window
         var choices = new List<(string Value, string Label)>();
         if (defaultOptions.Count > 0)
         {
-            // 0.1.7 内核：选项表住在权限目录里（defaultOptions = 配置表，含 auto-approve）
+            // 选项表住在权限目录里（defaultOptions = 配置表 + registerAuto 动态注册的 auto）
             foreach (var option in defaultOptions)
             {
                 choices.Add((option.Value, PermissionPresetZh(option.Value)));
@@ -18789,6 +18843,52 @@ public sealed partial class MainWindow : Window
             LogUiFault(ex);
         }
     });
+
+    /// <summary>打开会话的耗时账本：把每一段**同步**开销的毫秒数落到 %TEMP%\blade2-load.log。
+    ///
+    /// 为什么要有它：卡顿只剩「一下」时，读代码只能给出候选（哪个 O(n²)、哪个整树递归），
+    /// 排序靠猜就是浪费一轮往返。这里按段打点，一次复现就能把「哪一段吃掉 200ms」钉死，
+    /// 口径与内核引导的 %TEMP%\blade2-kernel-boot.log 一致（同目录、同追加式）。
+    /// 纯诊断：写失败就静默吞掉，绝不影响任何功能路径。</summary>
+    private static class LoadTrace
+    {
+        private static readonly System.Diagnostics.Stopwatch Clock = System.Diagnostics.Stopwatch.StartNew();
+        private static readonly object Gate = new();
+        private static long _lastTicks;
+
+        /// <summary>重置账本（一次会话打开的起点）。</summary>
+        public static void Start()
+        {
+            lock (Gate)
+            {
+                _lastTicks = Clock.ElapsedTicks;
+                Write("---- open begin ----", 0);
+            }
+        }
+
+        /// <summary>打一个段名，输出「距上一段」的毫秒数。</summary>
+        public static void Mark(string stage)
+        {
+            lock (Gate)
+            {
+                var now = Clock.ElapsedTicks;
+                var delta = (now - _lastTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                _lastTicks = now;
+                Write(stage, delta);
+            }
+        }
+
+        private static void Write(string stage, double deltaMs)
+        {
+            try
+            {
+                File.AppendAllText(
+                    Path.Combine(Path.GetTempPath(), "blade2-load.log"),
+                    $"{DateTime.Now:HH:mm:ss.fff}  +{deltaMs,8:F1}ms  {stage}{Environment.NewLine}");
+            }
+            catch { }
+        }
+    }
 
     private static void LogUiFault(Exception ex)
     {

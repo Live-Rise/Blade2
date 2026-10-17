@@ -1039,4 +1039,89 @@ mod tests {
         assert!(hit.contains("收掉异常退出残留的内核进程 2 个"), "{hit}");
         assert!(hit.contains("4242"), "{hit}");
     }
+
+    // ------------------------------------------------------------------ #194 B1（PP3 K-锁3）
+    //
+    // 构造级/形状级锁：钉住「**候选表、父表、owner 表三张都出自同一次 toolhelp 快照**」这条
+    // 构造不变式。这条不变式就是分叉不需要主干那枚 `bool?` 三态的唯一理由（PP3 §3）：
+    // 主干在 T0 `SnapshotProcessParents()` 之后另起一次 `Process.GetProcessesByName("node")`（T1），
+    // 两次之间出生的进程「进得了候选表、进不了父表」⇒ 必须靠 `null` 那一支不判死；
+    // 分叉的 `sweep_inner` 只调一次 `snapshot_entries()`，同一份 `procs` 同时喂三张表 ⇒
+    // 那种进程**连候选都不是**，净效果与主干的 `continue` 相同，第三态在此**结构上不可达**。
+    //
+    // 今天它靠形状成立、而**没有任何一条锁守着**：谁哪天为了「少读点路径」把候选过滤成单独
+    // 一次枚举，或给 `select_orphans` 传一份过滤后的切片却传另一份完整 `parents`，分叉就立刻
+    // 掉回主干 0.8.3.2 那个「凭祖先链未知误杀本轮刚拉起的新内核」的坑，而**现有测试全绿**。
+    // 这条锁就是把那条论证换成闸门；零行为改动，也不往 `select_orphans` 的签名上加东西
+    // （加 `bool?` 会打红 `ancestor_chain_walks_caps_and_terminates` 与
+    // `empty_ancestor_chain_has_no_live_owner`，那是 PP3 §5 明确列为不该跟的）。
+
+    /// 源形锁：`sweep_inner` 体内「一次快照 → 一份 `procs` → 三张表」的形状。
+    /// 读的是自己的源码（仓内既有形制，见 `kernel.rs` 的 `include_str!` 那批），不枚举真进程。
+    #[test]
+    fn sweep_inner_builds_all_three_tables_from_one_toolhelp_snapshot() {
+        const PG_SELF: &str =
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/procguard.rs"));
+        let start = PG_SELF
+            .find("fn sweep_inner() -> SweepOutcome {")
+            .expect("清扫主链还在");
+        let end = start
+            + PG_SELF[start..]
+                .find("fn sweep_note(")
+                .expect("清扫体的右边界（下一个函数）");
+        let body = &PG_SELF[start..end];
+
+        // ① 快照**恰好一次**：多一次就是第二次枚举，第二次枚举正是主干那枚 `null` 的成因。
+        assert_eq!(
+            body.matches("snapshot_entries()").count(),
+            1,
+            "清扫链里出现第二次进程枚举 ⇒ 候选表与父表不再同刻"
+        );
+        // ② 单一 `procs` 绑定，且它由那一发快照喂出来。
+        assert_eq!(
+            body.matches("let procs").count(),
+            1,
+            "清扫链里出现第二份进程表 ⇒ 候选侧与父侧可能吃不同数据"
+        );
+        let rows_at = body.find("snapshot_entries()").expect("那一发快照调用");
+        let procs_at = body.find("let procs").expect("那份进程表");
+        let parents_at = body.find("parent_map(&procs)").expect("父表由同一份 procs 建");
+        let owners_at = body.find("owner_pids(&procs,").expect("owner 表由同一份 procs 建");
+        let orphans_at = body.find("select_orphans(&procs,").expect("候选侧也吃同一份 procs");
+        assert!(
+            rows_at < procs_at
+                && procs_at < parents_at
+                && parents_at < owners_at
+                && owners_at < orphans_at,
+            "三张表必须在同一份 procs 之后、且都在它之上建起来：{rows_at}/{procs_at}/{parents_at}/{owners_at}/{orphans_at}"
+        );
+
+        // ③ 反向：清扫体内不得再自己开一颗枚举或换一条数据通道。
+        for banned in [
+            "CreateToolhelp32Snapshot",
+            "Process32FirstW",
+            "Process::all",
+            "EnumProcesses",
+        ] {
+            assert!(
+                !body.contains(banned),
+                "清扫体内不该直接碰 Win32 枚举原语（只许经由那一发快照）：{banned}"
+            );
+        }
+        // ④ `select_orphans` 的父表实参必须就是 `parent_map` 的返回值那颗绑定，
+        //    而不是另建一份 —— 这一条防的是「两张表分别建、传错一个」。
+        assert_eq!(
+            body.matches("parent_map(&procs)").count(),
+            1,
+            "父表只许建一次；建两份就等于允许候选侧与父侧不同源"
+        );
+        assert!(
+            body.contains("let parents = parent_map(&procs);"),
+            "父表要绑进一个名字里再传下去，别在调用点上现建现传"
+        );
+        assert!(
+            body.contains("&parents, &owners, self_pid"),
+            "候选侧拿到的必须是同一对 parents/owners 绑定"
+        );
+    }
 }

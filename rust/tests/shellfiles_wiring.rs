@@ -470,9 +470,10 @@ fn the_two_unported_kinds_stay_uncalled() {
 ///
 /// ⚠ 诚实备案：这颗锁接线前后**都是绿**（它锁的是「不做」），口径同
 /// [`the_two_unported_kinds_stay_uncalled`]。它防的是「将来有人顺手补一半」。
-/// 另记一笔已核实的差距：主干 `ClearSkinWeId()` 有 **3 个调用点**（`MainWindow.xaml.cs:8742`、
-/// `:8782` 本地导入两径 + `:8804` 清除皮肤），分叉只接了 `:8804` 那一档 —— 另两径卡在
-/// 「导入图片」那颗 `SkinImportButton` 至今无 `on_click`（#140 死控件），**不在本片**。
+/// 另记一笔**已随 #240 收口的账**：主干 `ClearSkinWeId()` 有 **3 个调用点**（`MainWindow.xaml.cs:8742`、
+/// `:8782` 本地导入两径 + `:8804` 清除皮肤）；原备案写的「分叉只接了 `:8804` 那一档、另两径卡在
+/// `SkinImportButton` 无 `on_click`」已过时——#240 把两发导入接上了（图片/视频档各自的臂先清
+/// WE 标记再动槽，与主干两径同序）⇒ 清除钩今天与主干同数，锁值从 1 收成 3。
 #[test]
 fn the_skin_we_write_and_read_hooks_have_no_host_yet() {
     for hostless in [
@@ -485,10 +486,12 @@ fn the_skin_we_write_and_read_hooks_have_no_host_yet() {
     ] {
         assert_eq!(count(hostless), 0, "{hostless} 今天没有宿主，接上要先证明 toast 原语存在");
     }
-    // 唯一那一发清除钩（顺序判据在 main.rs 自带 mod 里，这里只钉「不长出第二份真相」）。
+    // 清除钩三发 = 主干三个调用点逐一有宿主（清除臂 + 图片导入臂 + 视频导入臂）；
+    // 顺序判据在 main.rs 自带 mod 里（`skin_clear_arms_the_we_marker_before_the_slot_files`），
+    // 这里只钉「三发都在、且不多不少」。
     assert_eq!(
         count("shellfiles::clear_skin_we_id();"),
-        1,
-        "清除臂发数不是 1：要么开了第二处清标记，要么把 MR2 那一发改没了"
+        3,
+        "清除臂数不是 3：要么两发导入有一发丢了清标记（主干 :8742/:8782 同序），要么又开了主干没有的第四处"
     );
 }

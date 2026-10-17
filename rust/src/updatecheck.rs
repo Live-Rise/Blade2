@@ -415,7 +415,19 @@ const WINHTTP_ACCESS_TYPE_DEFAULT_PROXY: u32 = 0;
 const WINHTTP_FLAG_SECURE: u32 = 0x0080_0000;
 const WINHTTP_ADDREQ_FLAG_ADD: u32 = 0x2000_0000;
 const WINHTTP_QUERY_STATUS_CODE: u32 = 19;
-const WINHTTP_QUERY_FLAG_NUMBER: u32 = 0x0000_2000;
+/// `WinHttpQueryHeaders` 的「把结果按整数取」旗标。SDK 逐字原值
+/// （`winhttp.h:1220`）：`#define WINHTTP_QUERY_FLAG_NUMBER 0x20000000`。
+///
+/// ⚠ UC2 之前这里写成 `0x0000_2000` —— **同样那串十六进制数字、分组写反**（高位那格挪到了低位），
+/// 而 `0x00002000` 恰好是同文件 `winhttp.h:1316` 的 `ICU_ESCAPE_AUTHORITY`
+/// （`WinHttpCrackUrl` 家族）⇒ 一次「抓错行」的抄写事故。
+///
+/// 错值的实测后果（UPD1 本机零网络探针）：`WinHttpQueryHeaders(19 | 0x0000_2000)`
+/// 的 info level 落 `0x00002013` ⇒ `lasterr=87`（**层级本身被判非法**）；
+/// 正确层级 `0x20000013` ⇒ `lasterr=12019`（`ERROR_WINHTTP_INCORRECT_HANDLE_STATE`
+/// = 「尚未收回执」的正常抱怨，说明层级已被接受）。⇒ 它与头长度那颗雷同刀才修得干净，
+/// 否则日志只是从「头写不进去」换成「取不到状态码」。
+const WINHTTP_QUERY_FLAG_NUMBER: u32 = 0x2000_0000;
 const WINHTTP_READ_CHUNK: usize = 8 * 1024;
 const NO_PROXY: *const u16 = std::ptr::null();
 
@@ -453,6 +465,42 @@ fn ok(code: i32) -> bool {
     code != 0
 }
 
+/// WinHTTP 的报错通道是标准 last-error（本机实测：`WinHttpAddRequestHeaders` 返 `FALSE` 时
+/// `GetLastError()=87`，`WinHttpQueryHeaders` 层级非法亦 87，未收回执 12019）。
+/// **零新依赖成规**：取码走 std 已有的通道，形状照仓内先例 `procguard.rs` 的同名函数逐字抄；
+/// 绝不再开第二枚 `unsafe extern` 块去直连 `GetLastError`（本文件的 `uc8` 正把 extern 块枚数
+/// 钉成恰一处，多一块 = 当场打红那把依赖锁）。
+///
+/// ⚠ 取码**时机**比取码通道更要命：`format!` / `String` 分配都可能插进别的 Win32 调用而把
+/// last-error 冲掉 ⇒ 每个 FFI 返回点的**下一句**就抓成局部量，再进 `Err(...)`。
+fn last_error() -> i32 {
+    std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+}
+
+/// 从**带结尾 NUL 的 UTF-16 缓冲**求那行的长度：**WCHAR 字符数，不含结尾 NUL**。
+///
+/// 这是 `WinHttpAddRequestHeaders` 的 `dwHeadersLength` 唯一正确口径。三支柱：
+/// 1. SDK SAL（`winhttp.h:1795-1796`）是 `_In_reads_(dwHeadersLength)` —— `_In_reads_`
+///    **按被指类型元素计数**，这里元素是 `WCHAR`；真按字节计的参数用的是另一族
+///    `_In_reads_bytes_opt_`（同文件 `WinHttpSendRequest` 的 `lpOptional`）⇒ 微软自己的
+///    元数据把 `LPCWSTR` 的长度按字符、把 `LPVOID` 的长度按字节。
+/// 2. 微软官方 `windows` crate 绑定传的是 `lpszheaders.len()`，即 `&[u16]` 的**元素数**。
+/// 3. 本机零网络 P/Invoke 实测（UPD1）：同一 handle 同一串头只改长度 ——
+///    字符数 `63 ⇒ TRUE`、字节数 `126 ⇒ FALSE lasterr=87`、`64 ⇒ 87`、`(DWORD)-1 ⇒ TRUE`；
+///    反向对照组「字符数恰为 126 的头 + 传 126」⇒ TRUE ⇒ **字节口径被排除**。
+///
+/// 边界（同批实测）：`0 < 长度 <= 字符数` 才收。**短传不报错、只静默装进半截头** ⇒
+/// 「顺手除个 2」这类改法会把硬失败降级成缺 `User-Agent`（GitHub 回 403），更难查。
+///
+/// 抽成纯函数的理由与本文件的 `format_bytes` / `should_remind` 同规：可算的东西先算成
+/// 纯函数再单测，字节口径那种表达式不许住在 FFI 调用点上（那里没法测）。
+fn utf16_line_len_chars(buf: &[u16]) -> u32 {
+    (match buf.last() {
+        Some(&0) => buf.len() - 1,
+        _ => buf.len(),
+    }) as u32
+}
+
 /// 执行 [`RequestDescriptor`]：真发一次 HTTPS GET，回正文。
 ///
 /// 全程 unsafe FFI，句柄一律 `*mut c_void`、`BOOL` 一律当 `i32` 手判、TLS 由
@@ -470,29 +518,26 @@ pub fn fetch_release_body(req: &RequestDescriptor) -> Result<String, String> {
     let (resolve, connect, send, receive) = req.timeouts_ms;
 
     unsafe {
-        let session = Session(WinHttpOpen(
-            agent.as_ptr(),
-            WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-            NO_PROXY,
-            NO_PROXY,
-            0,
-        ));
-        if session.0.is_null() {
-            return Err("WinHttpOpen 失败：拿不到会话句柄".to_string());
+        // 每一枚 FFI 返回点都是同一句式：**调用 → 下一句立刻把 last-error 抓成局部量 → 再判 → 再拼串**。
+        // （成功路径也会抓一次：那次读码无副作用，且省得在每个臂上分「该不该取」。）
+        let opened = WinHttpOpen(agent.as_ptr(), WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, NO_PROXY, NO_PROXY, 0);
+        let err = last_error();
+        let session = Session(opened);
+        if opened.is_null() {
+            return Err(format!("WinHttpOpen 失败 err={err}：拿不到会话句柄"));
         }
-        if !ok(WinHttpSetTimeouts(session.0, resolve as i32, connect as i32, send as i32, receive as i32)) {
-            return Err("WinHttpSetTimeouts 失败：分叉不允许无界等待".to_string());
+        let timed = WinHttpSetTimeouts(session.0, resolve as i32, connect as i32, send as i32, receive as i32);
+        let err = last_error();
+        if !ok(timed) {
+            return Err(format!("WinHttpSetTimeouts 失败 err={err}：分叉不允许无界等待"));
         }
-        let connect_handle = Session(WinHttpConnect(
-            session.0,
-            server.as_ptr(),
-            req.port,
-            0,
-        ));
-        if connect_handle.0.is_null() {
-            return Err(format!("WinHttpConnect 失败：{}", req.host));
+        let connected = WinHttpConnect(session.0, server.as_ptr(), req.port, 0);
+        let err = last_error();
+        let connect_handle = Session(connected);
+        if connected.is_null() {
+            return Err(format!("WinHttpConnect 失败 err={err}：{}", req.host));
         }
-        let request = Session(WinHttpOpenRequest(
+        let requested = WinHttpOpenRequest(
             connect_handle.0,
             verb.as_ptr(),
             object.as_ptr(),
@@ -500,41 +545,48 @@ pub fn fetch_release_body(req: &RequestDescriptor) -> Result<String, String> {
             std::ptr::null(),
             std::ptr::null(),
             WINHTTP_FLAG_SECURE,
-        ));
-        if request.0.is_null() {
-            return Err("WinHttpOpenRequest 失败".to_string());
+        );
+        let err = last_error();
+        let request = Session(requested);
+        if requested.is_null() {
+            return Err(format!("WinHttpOpenRequest 失败 err={err}：https 请求句柄建不出来"));
         }
-        if !ok(WinHttpAddRequestHeaders(
-            request.0,
-            headers.as_ptr(),
-            (headers.len() * 2 - 2) as u32,
-            WINHTTP_ADDREQ_FLAG_ADD,
-        )) {
-            return Err("WinHttpAddRequestHeaders 失败：两串头写不进去".to_string());
+        // 长度实参只许走 `utf16_line_len_chars`（WCHAR 字符数口径）：见那枚纯函数的三支柱注释。
+        // 曾经这里按**字节**算（字符数 × 2 再减 2）⇒ 恒 `FALSE` + `err=87`，检查更新两腿全死。
+        let header_chars = utf16_line_len_chars(&headers);
+        let added = WinHttpAddRequestHeaders(request.0, headers.as_ptr(), header_chars, WINHTTP_ADDREQ_FLAG_ADD);
+        let err = last_error();
+        if !ok(added) {
+            return Err(format!(
+                "WinHttpAddRequestHeaders 失败 err={err}：{header_chars} 字符的头块写不进去（87 = ERROR_INVALID_PARAMETER，先查长度是不是按字符数口径）"
+            ));
         }
-        if !ok(WinHttpSendRequest(
-            request.0,
-            std::ptr::null(),
-            0,
-            std::ptr::null(),
-            0,
-            0,
-            0,
-        )) || !ok(WinHttpReceiveResponse(request.0, std::ptr::null_mut()))
-        {
-            return Err(format!("发不出去或收不到回执：https://{}{}", req.host, req.path));
+        // 主干把「发」与「收」混成一条短路 ⇒ TLS / 代理类问题最需要分辨的那一格丢了：这里拆成两臂。
+        let sent = WinHttpSendRequest(request.0, std::ptr::null(), 0, std::ptr::null(), 0, 0, 0);
+        let err = last_error();
+        if !ok(sent) {
+            return Err(format!("WinHttpSendRequest 失败 err={err}：发不出去 https://{}{}", req.host, req.path));
+        }
+        let received = WinHttpReceiveResponse(request.0, std::ptr::null_mut());
+        let err = last_error();
+        if !ok(received) {
+            return Err(format!("WinHttpReceiveResponse 失败 err={err}：收不到回执 https://{}{}", req.host, req.path));
         }
         let mut status: u32 = 0;
         let mut status_len: u32 = std::mem::size_of::<u32>() as u32;
-        if !ok(WinHttpQueryHeaders(
+        let queried = WinHttpQueryHeaders(
             request.0,
             WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
             std::ptr::null(),
             &mut status as *mut u32 as *mut c_void,
             &mut status_len as *mut u32,
             0,
-        )) {
-            return Err("取不到 HTTP 状态码".to_string());
+        );
+        let err = last_error();
+        if !ok(queried) {
+            return Err(format!(
+                "WinHttpQueryHeaders 失败 err={err}：取不到 HTTP 状态码（12019 = 尚未收回执，87 = 层级或缓冲区非法）"
+            ));
         }
         if !(200..300).contains(&status) {
             return Err(format!("GitHub 回执状态码非 2xx：{status}"));
@@ -543,13 +595,10 @@ pub fn fetch_release_body(req: &RequestDescriptor) -> Result<String, String> {
         loop {
             let mut chunk = [0u8; WINHTTP_READ_CHUNK];
             let mut got: u32 = 0;
-            if !ok(WinHttpReadData(
-                request.0,
-                chunk.as_mut_ptr(),
-                WINHTTP_READ_CHUNK as u32,
-                &mut got,
-            )) {
-                return Err("WinHttpReadData 中断".to_string());
+            let read = WinHttpReadData(request.0, chunk.as_mut_ptr(), WINHTTP_READ_CHUNK as u32, &mut got);
+            let err = last_error();
+            if !ok(read) {
+                return Err(format!("WinHttpReadData 失败 err={err}：正文已累计 {} 字节", body.len()));
             }
             if got == 0 {
                 break;
@@ -820,10 +869,23 @@ mod tests {
             1,
             "extern 声明只许一处"
         );
+        // ⚠ UC2 起这枚 needle 少了 `ok(` 前缀 —— 取码纪律要求「FFI 返回 → 同一句抓码 → 再判」，
+        // `ok(WinHttpSetTimeouts(...))` 那种把调用裹在条件里的形状必然丢掉同句取码。
+        // 判据不降级：合成「调用形制」+「返回值被绑」+「返回值被当 FALSE 判过」三枚，见下两把。
         assert_eq!(
-            src.matches(concat!("ok(WinHttpSetTimeouts(session.0, ", "resolve as i32")).count(),
+            src.matches(concat!("WinHttpSetTimeouts(session.0, ", "resolve as i32")).count(),
             1,
             "超时没**照声明的四段**打在会话句柄上 = 退化成主干那种无界等待"
+        );
+        assert_eq!(
+            src.matches(concat!("let timed = ", "WinHttpSetTimeouts(")).count(),
+            1,
+            "超时那一发的返回值没绑成局部量 = 取码会隔到分配（last_error 的时机口径）"
+        );
+        assert_eq!(
+            src.matches(concat!("if !ok(", "timed)")).count(),
+            1,
+            "超时那一发的返回值确实被当 FALSE 判过 —— 不判就等于没设"
         );
         // 四处 = const 声明 / 执行腿 doc / OpenRequest 实参 / 本文件那条数值断言。
         assert_eq!(
@@ -999,6 +1061,165 @@ mod tests {
                 + src.matches(concat!("reset", "_reminded")).count(),
             0,
             "主干没有任何复位/清空点，分叉也不许开"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // UC2：WinHTTP 那两处「check 全绿、真机必死」的口径，本轮立成正向锁。
+    // 判据口径：纯函数单测 + 源码静态锁；**不许**用真机联调来证明（离线机 / 无网络权限）。
+    // -----------------------------------------------------------------------
+
+    // ⑰ 长度口径本身（纯函数）。UPD1 实测：字符数 63 ⇒ TRUE，字节数 126 ⇒ FALSE + err=87。
+    //     旧的 `header_block` 那把 `uc6` 锁钉的是**内容**，对传给 WinHTTP 的**长度实参**零覆盖 ——
+    //     这正是「17 颗单测全绿而真机必死」的形状，这枚补的就是那一格。
+    #[test]
+    fn uc17_utf16_line_len_chars_counts_wchar_units_not_bytes_and_strips_the_nul() {
+        let req = build_release_request(DEFAULT_UPDATE_REPO).expect("默认 repo 该构造出描述子");
+        let block = header_block(&req);
+        let buf = to_utf16(&block);
+        // 真实那串头：63 个 UTF-16 元素 + 1 枚结尾 NUL = 缓冲 64 枚。
+        assert_eq!(block.encode_utf16().count(), 63);
+        assert_eq!(buf.len(), 64, "缓冲含结尾 NUL 共 64 枚");
+        assert_eq!(utf16_line_len_chars(&buf), 63, "该传给 WinHTTP 的是**字符数 63**");
+        // 反面 witness（旧盘那行就地算式，逐字复算一遍）：它给的是**字节数**，正解的两倍。
+        let old_byte_caliber = (buf.len() * 2 - 2) as u32;
+        assert_eq!(old_byte_caliber, 126, "旧实参 = 126，正是 UPD1 探针里恒 FALSE + lasterr=87 的那枚");
+        assert_ne!(old_byte_caliber, utf16_line_len_chars(&buf), "两口径永不相等 ⇒ 选错就是真机必死");
+        assert_eq!(old_byte_caliber, utf16_line_len_chars(&buf) * 2, "错值恰是正解的两倍：少个 ×2 的「顺手修法」也照样错");
+        // 形制的其余分支。
+        assert_eq!(utf16_line_len_chars(&[]), 0, "空缓冲 ⇒ 0（实测传 0 被拒 87，这里不伪造长度）");
+        assert_eq!(utf16_line_len_chars(&[0]), 0, "只有结尾 NUL ⇒ 0 字符");
+        assert_eq!(utf16_line_len_chars(&[0x41, 0]), 1, "『A\\0』⇒ 1");
+        assert_eq!(utf16_line_len_chars(&[0x41, 0x42]), 2, "无结尾 NUL ⇒ 整串都是内容，不多剥也不少剥");
+        assert_eq!(utf16_line_len_chars(&[0x41, 0, 0x42, 0]), 3, "只剥**最后**那一枚 NUL；中间的字符照常计入");
+        // 非 BMP（代理对）按 UTF-16 元素计数 —— WinHTTP 的口径是 WCHAR 个数，不是 Rust char 数。
+        let astral = "User-Agent: Blade2\u{1F600}\r\n";
+        let astral_buf = to_utf16(astral);
+        assert_eq!(utf16_line_len_chars(&astral_buf) as usize, astral.encode_utf16().count());
+        assert_ne!(utf16_line_len_chars(&astral_buf) as usize, astral.chars().count(), "代理对占两元素，char 数会更小");
+    }
+
+    // ⑱ 长度口径的**接线**：纯函数写对 ≠ 调用点用了它。这把锁钉的就是「住不住在调用点」。
+    #[test]
+    fn uc18_lock_the_add_request_headers_length_argument_is_wired_to_the_char_count() {
+        let body = trunk_fn_body("fetch_release_body");
+        assert_eq!(
+            body.matches(concat!("let header_chars = ", "utf16_line_len_chars(&headers);")).count(),
+            1,
+            "字符数在执行腿里只许算一处，且算的就是那串头"
+        );
+        assert_eq!(
+            body.matches(concat!("headers.as_ptr(), ", "header_chars,")).count(),
+            1,
+            "长度实参必须是 header_chars：换回任何就地算式，纯函数再对也救不了真机"
+        );
+        // 字节口径的形状在执行腿里零容身（UPD1 建议的「禁 ×2 住在那枚实参位置」，这里按 ASCII 钉）。
+        for banned in [concat!("len()", " * 2"), concat!("size_of", "::<u16>()")] {
+            assert_eq!(
+                body.matches(banned).count(),
+                0,
+                "字节口径表达式回到了执行腿：{banned:?} —— dwHeadersLength 要的是字符数"
+            );
+        }
+        // 反手一笔：extern 声明里那枚参数名还叫 length（u32），别被它带回到「字节」的联想上。
+        assert_eq!(
+            my_source().matches(concat!("headers: *const u16, ", "length: u32")).count(),
+            1,
+            "extern 声明的形制不许被顺手改掉（改类型 = 改 ABI，属另一码事）"
+        );
+    }
+
+    // ⑲ `WINHTTP_QUERY_FLAG_NUMBER` 的值锁。旧盘是同串十六进制数字**分组写反** ⇒ 单靠「值不等于旧值」
+    //     那种负锁抓不住，这里正负两头都钉，并把合成层级钉成实测过的那个数。
+    #[test]
+    fn uc19_lock_query_flag_number_is_the_high_bit_and_is_composed_at_the_call() {
+        // SDK 逐字原值（`winhttp.h:1220`）；微软官方绑定的十进制同值形（536870912）。
+        assert_eq!(WINHTTP_QUERY_FLAG_NUMBER, 0x2000_0000);
+        assert_eq!(WINHTTP_QUERY_FLAG_NUMBER, 536_870_912);
+        // ⚠ 这一枚才是「少写 4 个 0」当场会杀的断言。
+        assert_eq!(
+            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            0x2000_0013,
+            "实测被接受的层级：12019（尚未收回执）；旧盘合成出 0x00002013 ⇒ 实测 87（层级被拒）"
+        );
+        assert_eq!(WINHTTP_QUERY_FLAG_NUMBER & 0x2000_0000, 0x2000_0000, "高位那格必须在");
+        assert_eq!(WINHTTP_QUERY_FLAG_NUMBER & 0x0000_FFFF, 0, "低 16 位必须全空 —— 旧盘错值正落在那儿");
+        assert_ne!(WINHTTP_QUERY_FLAG_NUMBER, 0x0000_2000, "那是隔壁 WinHttpCrackUrl 家族的 ICU_ESCAPE_AUTHORITY");
+        assert_eq!(WINHTTP_QUERY_STATUS_CODE, 19, "SDK winhttp.h:1120");
+        assert_eq!(WINHTTP_ADDREQ_FLAG_ADD, 0x2000_0000, "winhttp.h:1355：与 NUMBER 同值，本就各管各的参数位");
+        let src = my_source();
+        // 声明处的**写法**也钉住（防「同数字分组写反」被再翻一次）。
+        assert_eq!(
+            src.matches(concat!("WINHTTP_QUERY_FLAG_NUMBER: u32 = ", "0x2000_0000;")).count(),
+            1,
+            "旗标声明只许这一种写法，一处"
+        );
+        // 调用点必须真的把两枚合成一层：丢了 NUMBER 就当字符串取，缓冲区口径全变。
+        assert_eq!(
+            trunk_fn_body("fetch_release_body")
+                .matches(concat!("WINHTTP_QUERY_STATUS_CODE | ", "WINHTTP_QUERY_FLAG_NUMBER,")).count(),
+            1,
+            "状态码那一发必须是「按整数取」的合成层级"
+        );
+    }
+
+    // ⑳ 可观测性锁：9 枚 FFI 返回点逐枚同句取码，发/收不再短路合并。
+    #[test]
+    fn uc20_lock_every_ffi_return_point_grabs_the_last_error_into_its_err_arm() {
+        let body = trunk_fn_body("fetch_release_body");
+        // 取码通道 = 仓内已有先例的形状（procguard.rs 同名函数），零新依赖、零新 extern 块。
+        assert_eq!(
+            my_source().matches(concat!("fn ", "last_error() -> i32")).count(),
+            1,
+            "取码函数只许一枚定义"
+        );
+        assert_eq!(
+            my_source().matches(concat!("std::io::Error::", "last_os_error()")).count(),
+            1,
+            "取码走 std 已有通道：想直连 GetLastError 就得新开 extern 块，当场打红 uc8"
+        );
+        // 9 = Open / SetTimeouts / Connect / OpenRequest / AddRequestHeaders / Send / Receive / QueryHeaders / ReadData
+        assert_eq!(
+            body.matches(concat!("let err = ", "last_error();")).count(),
+            9,
+            "FFI 返回点的同句取码：一枚都不能漏（漏一枚 = 又回到吞码的固定字面量）"
+        );
+        assert_eq!(
+            body.matches(concat!("失败 err=", "{err}")).count(),
+            9,
+            "9 枚早退臂逐枚把码写进 Err 串（例：WinHttpAddRequestHeaders 失败 err=87）"
+        );
+        // 逐臂点名：少任何一枚，下面的循环就红。
+        for arm in [
+            "WinHttpOpen ",
+            "WinHttpSetTimeouts ",
+            "WinHttpConnect ",
+            "WinHttpOpenRequest ",
+            "WinHttpAddRequestHeaders ",
+            "WinHttpSendRequest ",
+            "WinHttpReceiveResponse ",
+            "WinHttpQueryHeaders ",
+            "WinHttpReadData ",
+        ] {
+            assert_eq!(
+                body.matches(&format!("{arm}失败 err={{err}}")).count(),
+                1,
+                "早退臂 {arm:?} 没把错误码带进串里"
+            );
+        }
+        // 形状级缺陷：把两次调用压成一枚条件（本轮拆掉的那颗）。
+        assert_eq!(
+            body.matches(concat!("|| !", "ok(")).count(),
+            0,
+            "发/收不许再合并成一枚条件 —— 短路后分不清是发不出去还是收不到回执"
+        );
+        assert_eq!(body.matches(concat!("WinHttpSendRequest", " 失败")).count(), 1);
+        assert_eq!(body.matches(concat!("WinHttpReceiveResponse", " 失败")).count(), 1);
+        // 「写死结论式文案」本身就是缺陷：旧串把注意力引向内容/条数，真凶是长度参数。
+        assert_eq!(
+            body.matches(concat!("两串头", "写不进去")).count(),
+            0,
+            "旧文案自带误导，不许原样留着"
         );
     }
 }

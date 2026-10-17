@@ -236,7 +236,12 @@
         <ResourceDictionary x:Key="Dark">
             <SolidColorBrush x:Key="SurfaceBrush" Color="{ThemeResource SolidBackgroundFillColorBase}" />
             <SolidColorBrush x:Key="SurfaceAltBrush" Color="{ThemeResource LayerFillColorDefault}" />
-            <SolidColorBrush x:Key="CardBrush" Color="{ThemeResource CardBackgroundFillColorDefault}" />
+            <!-- 卡底（深色）不委托框架 CardBackgroundFillColorDefault：该键在暗色字典里是
+                 #0DFFFFFF（5% 白），为「底下已有一层不透明深色底」设计；本壳内容面是皮肤图/视频
+                 （默认 40% 不透明度）叠 Mica 透出桌面，5% 白等于全透，输入卡直接露出皮肤（浅色字典
+                 同键是 70% 白，同位置反而不透——深浅不对称）。显式给 70% 不透明暗面：与浅色卡的
+                 不透明度对称，也同本文件深色气泡面 #B3202020。 -->
+            <SolidColorBrush x:Key="CardBrush" Color="#B3202020" />
             <SolidColorBrush x:Key="CardSecondaryBrush" Color="{ThemeResource CardBackgroundFillColorSecondary}" />
             <SolidColorBrush x:Key="CardHoverBrush" Color="{ThemeResource SubtleFillColorSecondary}" />
             <SolidColorBrush x:Key="TextPrimaryBrush" Color="{ThemeResource TextFillColorPrimary}" />

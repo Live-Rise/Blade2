@@ -15,7 +15,7 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <PublishReadyToRun>false</PublishReadyToRun>
-    <Version>0.8.3.9</Version>
+    <Version>0.9.0.0</Version>
     <AssemblyName>Blade2</AssemblyName>
     <!-- 版本信息里的显示名走品牌名：无包形态下 AppNotificationManager 的无参 Register 让
          shell 解析发送者显示名，取的是 exe 的版本信息（FileDescription 由 AssemblyTitle 生成，
@@ -93,6 +93,10 @@
              obj/** 排除只锚定根目录，嵌套 obj 里的生成物会被编进 Blade2，CS0579 重复特性；
              它有独立 csproj，排除不影响它自己的构建。 -->
         <Compile Remove="ReleaseSetup\**" />
+        <!-- rust/ 是 Blade² 的 windows-reactor 重写线（自带构建，产物落 rust\AppxPkgsRs）。
+             其 MSIX 暂存树内嵌完整 Kernel\bin\pnpm（vendored node-gyp 的 .cs），默认通配会
+             扫进 Blade2 报 CS0579/CS0101 重复特性——同 ReleaseSetup 的嵌套生成物误伤。 -->
+        <Compile Remove="rust\**" />
     </ItemGroup>
 
 </Project>

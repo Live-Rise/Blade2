@@ -52,7 +52,6 @@ internal static class DshPluginBootstrap
 
     private static readonly string[] RequiredPackages =
     {
-        "dsh-approval-gate",                                         // 自动审批（生态 74★，月下载 3587）
         "echocat-skill-panel-3.0",                                   // 技能管理面板（生态 187★）
         "@deepseek-ai/dsh-browser-use",                              // 官方浏览器操作注册表
         "@deepseek-ai/dsh-experimental-browser-use-playwright-mcp",  // Playwright MCP provider
@@ -82,6 +81,25 @@ internal static class DshPluginBootstrap
         "@deepseek-ai/dsh-computer-use",
         "@deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp",
     };
+
+    /// <summary>
+    /// 内核 0.2.1-rc.2 起的官方自动审查 bundle（内核标题「自动授权审查」），取代社区包
+    /// dsh-approval-gate。它是内核 bundle 的依赖，经 installAnchor 就能解析，shell 不必
+    /// pnpm add；但它列在内核的 OPTIONAL_BUNDLES 里、出厂关闭，只有显式写进 profile 的
+    /// dsh.profile.bundles 才会挂上自己的 patch 层，进而 registerAuto 注册出「auto」
+    /// 权限预设——那才是权限选择器里出现「自动审查」的唯一来源。
+    /// </summary>
+    private const string AutoReviewBundle = "@deepseek-ai/dsh-experimental-auto-review";
+
+    /// <summary>
+    /// 已被内核官方件取代、要从 profile 清单里撤下的社区包。dsh-approval-gate 自带
+    /// dsh.bundle.patch，只要还在 bundles 里，它每次启动都会用自己的
+    /// ensureAutoApprovePreset 把 auto-approve 预设写回 profile patch——光删壳侧的
+    /// 写入逻辑挡不住它，必须从 dependencies 和 bundles 两个清单里一起摘掉
+    /// （SelectInstalledBundles 每启动扫 dependencies，只摘 bundles 会被选回来）。
+    /// node_modules 里的目录留着不删：删文件要动同步盘上的包树，而包不进 bundles 就不会加载。
+    /// </summary>
+    private static readonly string[] RetiredPluginPackages = { "dsh-approval-gate" };
 
     /// <summary>
     /// 期望版本（版本 enforcement 用）：家族包 = 内置内核版本，记忆包 = 锁定版本；
@@ -242,6 +260,14 @@ internal static class DshPluginBootstrap
         //      回默认两条，只在缺包时选入会让插件装好却永远不挂载
         //      （2026-09-20 自动审批未启用事故）。
         SelectInstalledBundles(profileDir, dshHome, diag);
+        // 1.6) 出厂关闭的可选 bundle：内核只给 bundles 清单里的条目挂 patch 层，
+        //      自动审查必须在这里显式选入，否则权限选择器里永远没有「自动审查」。
+        SelectOptionalBundle(profileDir, dshHome, AutoReviewBundle, diag);
+        // 1.7) 撤下被内核官方件取代的社区包，并清掉它/老壳写进 patch 的 auto-approve
+        //      死预设（0.2.1 内核只认 registerAuto 注册的 auto，配置表里的
+        //      auto-approve 是个什么都不做的空档）。
+        RetirePlugins(profileDir, dshHome, diag);
+        RetireAutoApprovePreset(profileDir, dshHome, diag);
 
         // 2) patch 条目：只写包已就绪的条目，追加到 profile patch 层（不覆盖已有内容）。
         AppendMissingMountEntries(profileDir, modulesDir, diag);
@@ -682,6 +708,175 @@ internal static class DshPluginBootstrap
         }
     }
 
+    /// <summary>
+    /// 把出厂关闭的可选 bundle 显式选入 profile 的 dsh.profile.bundles。内核的
+    /// loadProfileDirectory 只给清单里的 bundle 挂 patch 层，没选入的连默认配置都不参与；
+    /// 这类包通常是内核 bundle 的依赖（installAnchor 可解析），shell 不必 pnpm add，
+    /// 缺的只是「选入」这一步。
+    /// </summary>
+    private static void SelectOptionalBundle(string profileDir, string dshHome, string bundleName, StringBuilder diag)
+    {
+        try
+        {
+            var pkgPath = Path.Combine(profileDir, "package.json");
+            if (!File.Exists(pkgPath))
+            {
+                return;
+            }
+            var node = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(pkgPath));
+            var bundles = node?["dsh"]?["profile"]?["bundles"] as System.Text.Json.Nodes.JsonArray;
+            if (bundles is null)
+            {
+                diag.Append($"bundle 选入跳过：package.json 无 dsh.profile.bundles 列表\n");
+                return;
+            }
+            if (bundles.Any(b => b?.GetValue<string>() == bundleName))
+            {
+                return;
+            }
+            bundles.Add(bundleName);
+            File.WriteAllText(pkgPath, node!.ToJsonString(IndentedJson));
+            diag.Append($"bundle 选入: {bundleName}\n");
+            AppendDiag(dshHome, $"bundle 选入: {bundleName}");
+        }
+        catch (Exception ex)
+        {
+            diag.Append($"bundle 选入失败({bundleName}): {ex.Message}\n");
+            AppendDiag(dshHome, $"bundle 选入失败({bundleName}): {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 把 bundle 从 profile 的 dsh.profile.bundles 摘掉（<see cref="SelectOptionalBundle"/> 的逆操作）。
+    /// 摘掉只是不再挂它的 patch 层：包本身还在（内核 bundle 的依赖，installAnchor 照旧能解析），
+    /// 下次想开直接选入即可，不必重装。
+    /// </summary>
+    private static void DeselectBundle(string profileDir, string dshHome, string bundleName, StringBuilder diag)
+    {
+        try
+        {
+            var pkgPath = Path.Combine(profileDir, "package.json");
+            if (!File.Exists(pkgPath))
+            {
+                return;
+            }
+            var node = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(pkgPath));
+            if (!RemoveBundleFromNode(node, bundleName))
+            {
+                return;
+            }
+            File.WriteAllText(pkgPath, node!.ToJsonString(IndentedJson));
+            diag.Append($"bundle 摘出: {bundleName}\n");
+            AppendDiag(dshHome, $"bundle 摘出: {bundleName}");
+        }
+        catch (Exception ex)
+        {
+            diag.Append($"bundle 摘出失败({bundleName}): {ex.Message}\n");
+            AppendDiag(dshHome, $"bundle 摘出失败({bundleName}): {ex.Message}");
+        }
+    }
+
+    /// <summary>从已解析的 profile manifest 里摘掉 bundle 条目；确有摘除才返回 true。
+    /// 只改内存节点、由调用方落盘——多个调用方共写一份文件时，后落盘的会覆盖先落盘的。</summary>
+    private static bool RemoveBundleFromNode(System.Text.Json.Nodes.JsonNode? node, string bundleName)
+    {
+        var bundles = node?["dsh"]?["profile"]?["bundles"] as System.Text.Json.Nodes.JsonArray;
+        if (bundles is null)
+        {
+            return false;
+        }
+        var removed = false;
+        for (var i = bundles.Count - 1; i >= 0; i--)
+        {
+            if (bundles[i]?.GetValue<string>() == bundleName)
+            {
+                bundles.RemoveAt(i);
+                removed = true;
+            }
+        }
+        return removed;
+    }
+
+    /// <summary>
+    /// 撤下被内核官方件取代的社区包：从 dependencies 与 dsh.profile.bundles 两个清单摘掉。
+    /// 两个清单都得摘——SelectInstalledBundles 每启动扫 dependencies 重新选入，
+    /// 只摘 bundles 下次启动又会回来。
+    /// </summary>
+    private static void RetirePlugins(string profileDir, string dshHome, StringBuilder diag)
+    {
+        if (RetiredPluginPackages.Length == 0)
+        {
+            return;
+        }
+        try
+        {
+            var pkgPath = Path.Combine(profileDir, "package.json");
+            if (!File.Exists(pkgPath))
+            {
+                return;
+            }
+            var node = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(pkgPath));
+            var changed = false;
+            foreach (var name in RetiredPluginPackages)
+            {
+                var deps = node?["dependencies"] as System.Text.Json.Nodes.JsonObject;
+                if (deps is not null && deps.Remove(name))
+                {
+                    changed = true;
+                }
+                // 直接在同一个 node 上改：各自读文件再落盘会互相覆盖（见 RemoveBundleFromNode）。
+                changed |= RemoveBundleFromNode(node, name);
+            }
+            if (!changed)
+            {
+                return;
+            }
+            File.WriteAllText(pkgPath, node!.ToJsonString(IndentedJson));
+            diag.Append($"已撤下取代插件: {string.Join(' ', RetiredPluginPackages)}\n");
+            AppendDiag(dshHome, $"已撤下取代插件: {string.Join(' ', RetiredPluginPackages)}");
+        }
+        catch (Exception ex)
+        {
+            diag.Append($"撤下取代插件失败: {ex.Message}\n");
+            AppendDiag(dshHome, $"撤下取代插件失败: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 一次性迁移：清掉写进 profile patch 的 auto-approve 预设块。0.2.1 内核的自动审查
+    /// 只认 registerAuto 动态注册的 "auto" 预设，配置表里的 "auto-approve" 是死档——
+    /// 留着会在权限选择器里多出一项什么都不做的「自动审批」。幂等：没有该块即无事。
+    /// </summary>
+    private static void RetireAutoApprovePreset(string profileDir, string dshHome, StringBuilder diag)
+    {
+        try
+        {
+            var path = Path.Combine(profileDir, "cordis.patch.yml");
+            if (!File.Exists(path))
+            {
+                return;
+            }
+            var text = File.ReadAllText(path);
+            if (!text.Contains("auto-approve:", StringComparison.Ordinal))
+            {
+                return;
+            }
+            var next = RemovePreset(text);
+            if (next is null || next == text)
+            {
+                return;
+            }
+            File.WriteAllText(path, next);
+            diag.Append("patch 已清除 auto-approve 死预设\n");
+            AppendDiag(dshHome, "patch 已清除 auto-approve 死预设");
+        }
+        catch (Exception ex)
+        {
+            diag.Append($"清除 auto-approve 死预设失败: {ex.Message}\n");
+            AppendDiag(dshHome, $"清除 auto-approve 死预设失败: {ex.Message}");
+        }
+    }
+
     /// <summary>把 PATH 最前置注入（让 `pnpm` 解析到 Kernel\bin\pnpm.cmd）。</summary>
     internal static void PrependPath(ProcessStartInfo psi, string kernelBinDir)
     {
@@ -1042,64 +1237,39 @@ internal static class DshPluginBootstrap
         return (oldBlock, newText);
     }
 
-    // ---------------- 自动审批预设开关（设置页「插件」分区的自动审批块用） ----------------
+    // ---------------- 自动审查开关（设置页「插件」分区的自动审查块用） ----------------
 
-    /// <summary>预设块正文（写入 permission 条目 presets 末子项；缩进 6 起，与引导器既有模板一致）。
-    /// name/description 不写死型号：判定模型在设置里切换（见 MainWindow 的判定模型卡），
-    /// 预设标签只说明这一档是自动审批。</summary>
-    private const string AutoApprovePresetBlock =
-        "      auto-approve:\n" +
-        "        sandbox: workspace-write\n" +
-        "        approval: ask\n" +
-        "        name: 自动审批\n" +
-        "        description: 判定模型预判写入/命令是否不可回补：安全自动批准，有风险转人工审批。";
-
-    /// <summary>无 permission 条目时整段追加的预设容器（含三个系统默认 + auto-approve）。</summary>
-    private const string FullPermissionBlock =
-        "# ── 自动审批模式（dsh-approval-gate）─────────────────────────\n" +
-        "- id: permission\n" +
-        "  name: '@deepseek-ai/dsh-permission-presets'\n" +
-        "  config:\n" +
-        "    presets:\n" +
-        "      read-only:\n" +
-        "        sandbox: read-only\n" +
-        "        approval: ask\n" +
-        "      workspace-write:\n" +
-        "        sandbox: workspace-write\n" +
-        "        approval: ask\n" +
-        "      danger-full-access:\n" +
-        "        sandbox: danger-full-access\n" +
-        "        approval: never\n" +
-        AutoApprovePresetBlock;
-
-    /// <summary>当前是否已配置 auto-approve 预设（patch 里存在 id 定位行）。</summary>
-    internal static bool IsAutoApprovePresetPresent(string dshHome)
-        => ReadPatchSafe(dshHome).Contains("auto-approve:", StringComparison.Ordinal);
+    /// <summary>自动审查是否已选入（profile bundles 清单里有 auto-review 条目）。</summary>
+    internal static bool IsAutoReviewEnabled(string dshHome)
+        => ReadBundles(dshHome).Contains(AutoReviewBundle, StringComparer.Ordinal);
 
     /// <summary>
-    /// 切换 auto-approve 预设：开=写入预设块，关=移除预设块。patchReload=live 使改动
-    /// 被内核热重载即时生效；移除后正在使用 auto-approve 的会话自然落到 custom 预设
-    /// （内核按 sandbox/approval 旋钮现值匹配，不匹配任何条目时即 custom）。
+    /// 切换自动审查 bundle 的选入状态：开=写进 dsh.profile.bundles，关=从清单摘掉。
+    /// 内核 patchReload=live 监视该清单，改动热生效；摘掉后 auto-review 不再 apply，
+    /// registerAuto 不再被调用，「auto」预设从权限选择器消失，正在用它的会话按内核
+    /// 自己的 dispose 逻辑落到 danger-full-access（shell 不代为决定，交给内核）。
     /// </summary>
-    internal static bool SetAutoApprovePresetPresent(string dshHome, bool present)
+    internal static bool SetAutoReviewEnabled(string dshHome, bool enabled)
     {
         try
         {
-            var path = ProfilePatchPath(dshHome);
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            var text = File.Exists(path) ? File.ReadAllText(path) : "";
-            var has = text.Contains("auto-approve:", StringComparison.Ordinal);
-            if (present == has)
+            var profileDir = Path.Combine(dshHome, "profiles", ProfileName);
+            if (IsAutoReviewEnabled(dshHome) == enabled)
             {
                 return true;
             }
-            var next = present ? AddPreset(text) : RemovePreset(text);
-            if (next is null)
+            var diag = new StringBuilder();
+            if (enabled)
             {
-                return false;
+                SelectOptionalBundle(profileDir, dshHome, AutoReviewBundle, diag);
             }
-            File.WriteAllText(path, next);
-            return true;
+            else
+            {
+                DeselectBundle(profileDir, dshHome, AutoReviewBundle, diag);
+                // 关掉后预设表里若还留着迁移没清干净的 auto-approve 死档，一并清掉
+                RetireAutoApprovePreset(profileDir, dshHome, diag);
+            }
+            return IsAutoReviewEnabled(dshHome) == enabled;
         }
         catch (Exception)
         {
@@ -1107,49 +1277,8 @@ internal static class DshPluginBootstrap
         }
     }
 
-    /// <summary>在 patch 里补入 auto-approve 预设。无 permission 条目追加整段；有则插到 presets 末尾。</summary>
-    private static string? AddPreset(string text)
-    {
-        var lines = text.Replace("\r\n", "\n").Split('\n');
-        var permIdx = Array.FindIndex(lines, l => l.TrimEnd('\r') == "- id: permission");
-        if (permIdx < 0)
-        {
-            return text.TrimEnd('\r', '\n', ' ', '\t') + "\n" + FullPermissionBlock + "\n";
-        }
-        // presets: 行在 permission 条目内、缩进 4
-        var presetsIdx = -1;
-        for (var i = permIdx + 1; i < lines.Length; i++)
-        {
-            var t = lines[i].TrimEnd('\r');
-            if (t.StartsWith("- ", StringComparison.Ordinal)) break;
-            if (t == "    presets:") { presetsIdx = i; break; }
-        }
-        if (presetsIdx < 0)
-        {
-            return null; // 有 permission 条目但没 presets 键：不敢猜形态，交回失败
-        }
-        // presets 区终点：下一个顶层条目、或缩进 <6 的非空行
-        var end = lines.Length;
-        for (var i = presetsIdx + 1; i < lines.Length; i++)
-        {
-            var t = lines[i].TrimEnd('\r');
-            if (t.StartsWith("- ", StringComparison.Ordinal)) { end = i; break; }
-            if (t.Length > 0 && !t.StartsWith("      ", StringComparison.Ordinal)) { end = i; break; }
-        }
-        // 跳过块尾空行，插到最后一个内容行之后
-        var insertAt = end;
-        while (insertAt > presetsIdx + 1 && lines[insertAt - 1].Trim().Length == 0)
-        {
-            insertAt--;
-        }
-        var outLines = new List<string>(lines.Length + 6);
-        outLines.AddRange(lines[..insertAt]);
-        outLines.AddRange(AutoApprovePresetBlock.Split('\n'));
-        outLines.AddRange(lines[insertAt..]);
-        return string.Join("\n", outLines);
-    }
-
-    /// <summary>从 patch 里移除 auto-approve 预设块（从 id 行到下一个同级 presets 子项/条目边界）。</summary>
+    /// <summary>从 patch 里移除 auto-approve 预设块（迁移用：0.2.1 起该档是死预设，
+    /// 见 <see cref="RetireAutoApprovePreset"/>；块从 id 行到下一个同级 presets 子项/条目边界）。</summary>
     private static string? RemovePreset(string text)
     {
         var lines = text.Replace("\r\n", "\n").Split('\n');
@@ -1196,7 +1325,7 @@ internal static class DshPluginBootstrap
                            block.Value.Block.Contains("disabled: true", StringComparison.Ordinal);
             list.Add(new PluginStatus(mountId, installed, mounted, disabled));
         }
-        foreach (var pkg in new[] { "dsh-approval-gate", "echocat-skill-panel-3.0", "@linxin666/dsh-pet", "@baiiii/dsh-wallpaper-local" })
+        foreach (var pkg in new[] { "echocat-skill-panel-3.0", "@linxin666/dsh-pet", "@baiiii/dsh-wallpaper-local" })
         {
             var installed = Directory.Exists(Path.Combine(modulesDir, pkg));
             list.Add(new PluginStatus(pkg, installed, bundles.Contains(pkg, StringComparer.Ordinal), Disabled: false));

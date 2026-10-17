@@ -292,7 +292,13 @@ public sealed partial class MainWindow
             Style = AppStyle("CompactButtonStyle"),
             HorizontalAlignment = HorizontalAlignment.Left,
             Padding = new Thickness(Sp6, 2, Sp6, 2),
-            CornerRadius = new CornerRadius(TokenDouble("RadiusPill", 24)),
+            // 正椭圆端头：半径必须恰好是高的一半。此前靠 CompactButtonStyle 的
+            // MinHeight=32 定高、半径却给 24（>32/2），圆角弧彼此相交后端头既不是半圆
+            // 也不是直边，呈"斜切"状；技能名换行时长 chip 还会更高、越发不正。这里钉死
+            // 高 24 / 半径 12，与同行 0秒 等状态 chip 的胶囊端头同形。
+            MinHeight = 0,
+            Height = 24,
+            CornerRadius = new CornerRadius(12),
             Background = SoftBrushFrom(ThemeBrush("TextTertiaryBrush"), 0.12),
             BorderThickness = new Thickness(0),
         }, $"SkillRefChip_{skillName}", label);

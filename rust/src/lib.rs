@@ -7,6 +7,14 @@ pub mod layout;
 // #82 壳落盘四类文件的纯函数层（渲染/解析/数据家路径）。就近 layout：两者共用同一条
 // `LOCALAPPDATA → data_home_root → DATA_HOME_DIR` 链。接线在 main.rs，本模块不含任何 UI 调用点。
 pub mod shellfiles;
+// 视频皮肤的海报帧算子层（MF 抽第一帧 → 本地 BMP 缓存）。与 shellfiles 同族：只算不画 ——
+// 上层接线（判槽 + `Image::source_file` 铺底）在 main.rs，本模块零 UI 调用点、无全局态。
+pub mod skinvideo;
+// 视频皮肤的**播放**腿：MF 长命 reader 帧泵 + 专线解码线程 + 只留最新一帧的帧槽。
+// 与 skinvideo 同族（只算不画，零 UI 依赖），但**多一件**：它自己起线程。为何 reactor 的
+// 声明式树里长不出视频控件、以及为何选 `Image::source_data(EncodedImage)` 而不是三个命令式
+// 逃生舱 —— 全部根因在模块头「这条腿为什么长这样」。上层接线在 main.rs 的 `SkinVideo*` 那一族。
+pub mod skinplay;
 // #138 右栏 dock 的纯状态机（标签/分栏/全屏/两枚格 + 离线单测）。与 layout 同族：
 // 只算不画 —— 渲染与接线在 main.rs 的 K2–K4 那一刀，本模块零渲染依赖。
 pub mod dock;

@@ -35,7 +35,7 @@
 
     Invoke-QaShot -Hwnd <IntPtr> (-Path <png> | -Tag <tag> [-OutRoot <dir>])
                   [-Client] [-Log <sb>]
-        -> resolved png path, or $null. gdi32!PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT=2).
+        -> resolved png path, or $null. user32!PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT=2).
            The +2 bit is mandatory: a WinUI 3 window is a DirectComposition/DXGI host and
            without it PrintWindow hands back an all-white frame - that is task #35's root
            cause and the reason gui_uia.ps1:801 gave up on PrintWindow entirely.
@@ -45,7 +45,16 @@
            tmp/qa5-drive.ps1:292, so their names and thresholds are frozen.
 
     Reset-ShotRound            -> forgets seen md5s; starts a new admissibility round.
-    $script:ShotHarnessVersion -> 'shot_harness.ps1/1' (prove which copy is loaded).
+    Test-ShotHarnessAbi        -> runtime ABI assertions (see SELF-TEST below): the sizes and
+                                  field offsets the marshaler computes for INPUT / KEYBDINPUT /
+                                  MOUSEINPUT / RECT, compared against the documented x64 truth
+                                  (40 / 24 / 32 / 16). Returns the number of failures.
+    Get-ShotHarnessStamp       -> the version stamp / self-reporting banner: 'SHOT-VER <identity>'
+                                  plus INPUT / KEYBDINPUT / MOUSEINPUT / RECT sizes and the INPUT
+                                  field offsets, EVERY number read off the marshaler at call time.
+                                  It cannot report a layout the loaded copy does not have.
+    $script:ShotHarnessVersion -> 'shot_harness.ps1/3' (prove which copy is loaded; the numbers
+                                  live in Get-ShotHarnessStamp, not in this string).
 
   ADMISSIBILITY RULES THIS LIBRARY SELF-PROVES (zero tolerance for wasted frames)
     1) file exists and is > 0 bytes                 -> bad='missing' / 'zero-byte'
@@ -73,11 +82,20 @@
 [CmdletBinding()]
 param(
     [switch]$SelfTest,
+    [switch]$AbiOnly,
     [int]$SelfTestRounds = 2
 )
 
 $ErrorActionPreference = 'Stop'
-$script:ShotHarnessVersion = 'shot_harness.ps1/1'
+# /2 (agent TL2, 2026-09-28): INPUT rebuilt with explicit FieldOffsets so the x64 size is the
+# kernel's own 40 (was 48 -> defect T-6: TapAlt injected 0 events yet reported success), the
+# Add-Type body gained 'using System.Text;' (defect T-1: CS0246 killed the whole type), and
+# Test-ShotHarnessAbi + -AbiOnly make those numbers runtime assertions instead of prose.
+# /3 (agent T2S, 2026-09-28, closing TL2's last item): this identity line is now echoed by
+# Get-ShotHarnessStamp, which recomputes every number off the marshaler at call time, so the
+# banner reports WHAT THE RUNNING COPY ACTUALLY LOOKS LIKE instead of what a comment claims.
+# A 48B INPUT mutation makes the banner itself print INPUT=48B in the same run.
+$script:ShotHarnessVersion = 'shot_harness.ps1/3'
 
 # ---------------------------------------------------------------- native surface
 # Own type name (ShotHarness32) + load guard: this file may be dot-sourced into a process
@@ -88,22 +106,57 @@ if (-not ('ShotHarness32' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
 using System.Drawing;
+using System.Text;
 using System.Runtime.InteropServices;
 public static class ShotHarness32 {
     [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
-    [StructLayout(LayoutKind.Sequential)] public struct INPUT {
-        public uint type; public ulong padding; public INPUTUNION u;
-    }
-    [StructLayout(LayoutKind.Explicit)] public struct INPUTUNION {
-        [FieldOffset(0)] public KEYBDINPUT ki;
-        [FieldOffset(0)] public MOUSEINPUT mi;
+    // INPUT (winuser.h) on x64 is 40 bytes: DWORD type at 0 (implicit 4-byte gap), then the
+    // union at offset 8 because its members contain an 8-byte pointer. An extra explicit
+    // "padding" field here pushed the union to 16 and the struct to 48, and SendInput then
+    // rejects the whole call (cbSize mismatch) while TapAlt still "returned" - the keyboard
+    // leg was silently dead. Layout is pinned with explicit FieldOffsets, the same shape
+    // tests/dr4-drive.ps1 measures at 40B.
+    [StructLayout(LayoutKind.Explicit)] public struct INPUT {
+        [FieldOffset(0)] public uint type;
+        [FieldOffset(8)] public KEYBDINPUT ki;
+        [FieldOffset(8)] public MOUSEINPUT mi;
     }
     [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT {
         public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo;
     }
     [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT {
-        public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; IntPtr dwExtraInfo_unused;
+        public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public IntPtr dwExtraInfo;
     }
+
+    // ---- ABI introspection: read-only numbers the PowerShell self-test asserts on.
+    // No window, no capture, no SendInput - just Marshal.SizeOf / Marshal.OffsetOf.
+    public static int AbiPtr() { return IntPtr.Size; }
+    public static int AbiInputSize() { return Marshal.SizeOf(typeof(INPUT)); }
+    public static int AbiKiSize() { return Marshal.SizeOf(typeof(KEYBDINPUT)); }
+    public static int AbiMiSize() { return Marshal.SizeOf(typeof(MOUSEINPUT)); }
+    public static int AbiRectSize() { return Marshal.SizeOf(typeof(RECT)); }
+    public static int AbiOffInputType() { return (int)Marshal.OffsetOf(typeof(INPUT), "type"); }
+    public static int AbiOffInputKi() { return (int)Marshal.OffsetOf(typeof(INPUT), "ki"); }
+    public static int AbiOffInputMi() { return (int)Marshal.OffsetOf(typeof(INPUT), "mi"); }
+    public static int AbiOffKiVk() { return (int)Marshal.OffsetOf(typeof(KEYBDINPUT), "wVk"); }
+    public static int AbiOffKiScan() { return (int)Marshal.OffsetOf(typeof(KEYBDINPUT), "wScan"); }
+    public static int AbiOffKiFlags() { return (int)Marshal.OffsetOf(typeof(KEYBDINPUT), "dwFlags"); }
+    public static int AbiOffKiTime() { return (int)Marshal.OffsetOf(typeof(KEYBDINPUT), "time"); }
+    public static int AbiOffKiExtra() { return (int)Marshal.OffsetOf(typeof(KEYBDINPUT), "dwExtraInfo"); }
+    public static int AbiOffMiDx() { return (int)Marshal.OffsetOf(typeof(MOUSEINPUT), "dx"); }
+    public static int AbiOffMiDy() { return (int)Marshal.OffsetOf(typeof(MOUSEINPUT), "dy"); }
+    public static int AbiOffMiData() { return (int)Marshal.OffsetOf(typeof(MOUSEINPUT), "mouseData"); }
+    public static int AbiOffMiFlags() { return (int)Marshal.OffsetOf(typeof(MOUSEINPUT), "dwFlags"); }
+    public static int AbiOffMiTime() { return (int)Marshal.OffsetOf(typeof(MOUSEINPUT), "time"); }
+    public static int AbiOffMiExtra() { return (int)Marshal.OffsetOf(typeof(MOUSEINPUT), "dwExtraInfo"); }
+    public static string AbiInputFields() {
+        System.Reflection.FieldInfo[] fs = typeof(INPUT).GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        string[] names = new string[fs.Length];
+        for (int i = 0; i < fs.Length; i++) names[i] = fs[i].Name;
+        Array.Sort(names);
+        return string.Join(",", names);
+    }
+
     [DllImport("user32.dll", SetLastError=true)] public static extern uint SendInput(uint n, INPUT[] p, int cb);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
@@ -121,12 +174,14 @@ public static class ShotHarness32 {
     [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool join);
     [DllImport("user32.dll")] public static extern bool AllowSetForegroundWindow(uint pid);
     [DllImport("user32.dll")] public static extern bool LockSetForegroundWindow(uint v);
-    [DllImport("gdi32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);
+    [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);
     [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr v);
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("shcore.dll")] public static extern int SetProcessDpiAwareness(int a);
 
     public const uint VK_MENU = 0x12;
+    public const uint INPUT_KEYBOARD = 1;
+    public const uint INPUT_MOUSE = 0;
     public const uint KEYEVENTF_KEYUP = 2;
     public const uint PW_CLIENTONLY = 1;
     public const uint PW_RENDERFULLCONTENT = 2;
@@ -134,13 +189,20 @@ public static class ShotHarness32 {
 
     // One ALT down/up via SendInput: the documented way to release the foreground lock
     // without disturbing the target. Returns the number of events actually injected.
+    // cbSize is checked against the documented INPUT size for this pointer width BEFORE the
+    // call: a struct that grew/shifted must abort loudly, not "succeed" with 0 events.
     public static uint TapAlt() {
+        int cb = Marshal.SizeOf(typeof(INPUT));
+        int want = IntPtr.Size == 8 ? 40 : 32;
+        if (cb != want) {
+            throw new InvalidOperationException("ABI-INPUT-SIZE struct=INPUT declared=" + cb + " expected=" + want + " (ptr=" + IntPtr.Size + "); refusing to call SendInput with a cbSize the kernel rejects");
+        }
         INPUT[] seq = new INPUT[2];
-        seq[0].type = 1;
-        seq[0].u.ki.wVk = VK_MENU; seq[0].u.ki.dwFlags = 0;
-        seq[1].type = 1;
-        seq[1].u.ki.wVk = VK_MENU; seq[1].u.ki.dwFlags = KEYEVENTF_KEYUP;
-        return SendInput((uint)seq.Length, seq, Marshal.SizeOf(typeof(INPUT)));
+        seq[0].type = INPUT_KEYBOARD;
+        seq[0].ki.wVk = (ushort)VK_MENU; seq[0].ki.dwFlags = 0;
+        seq[1].type = INPUT_KEYBOARD;
+        seq[1].ki.wVk = (ushort)VK_MENU; seq[1].ki.dwFlags = KEYEVENTF_KEYUP;
+        return SendInput((uint)seq.Length, seq, cb);
     }
     public static void AltActivate(IntPtr h) {
         uint fgPid = 0, myPid = 0;
@@ -183,6 +245,9 @@ $script:ShotMd5Seen = @{}
 function Write-ShotLog([scriptblock]$Log, [string]$m) {
     if ($null -ne $Log) { try { & $Log $m } catch { } }
 }
+# Self-test console writer, hoisted out of the -SelfTest block so -AbiOnly (and any future
+# headless entry point) can use Test-ShotHarnessAbi without creating a window first.
+function TW([string]$m) { [Console]::Out.WriteLine($m) }
 function Reset-ShotRound { $script:ShotMd5Seen = @{} }
 
 function Get-ShotWindowTitle([IntPtr]$h) {
@@ -413,15 +478,160 @@ function Get-ShotNoteTail([IntPtr]$Hwnd, [string]$Tag, [scriptblock]$Log, [switc
     return $tail
 }
 
+# ---------------------------------------------------------------- Test-ShotHarnessAbi
+# REAL assertions about the injected structures, computed at runtime by the marshaler
+# (Marshal.SizeOf / Marshal.OffsetOf), NOT by grepping a field name. Ledger DR5/T-1/T-6:
+# the INPUT struct here carried an extra `ulong padding`, measured 48 against the
+# documented 40, and SendInput then injected 0 events while still "succeeding" - a whole
+# keyboard leg silently dead behind a green text gate. No window, no capture, no SendInput:
+# this only asks the marshaler about layout, so it is legal in the static (no-GUI) lane.
+function Test-ShotHarnessAbi {
+    [CmdletBinding()]
+    param()
+    $fail = 0
+    $ptr = [IntPtr]::Size
+    if ($null -eq ('ShotHarness32' -as [type])) {
+        TW ('SELFTEST-ABI FAIL structure=ShotHarness32 type=MISSING - the Add-Type block did not compile, so every public' +
+            ' function here is undefined (defect T-1: a missing using-directive, e.g. "using System.Text;" for StringBuilder).' +
+            ' A caller that only greps the words would still call this PASS.')
+        return 1
+    }
+    if ($ptr -ne 8) {
+        TW ('SELFTEST-ABI FAIL structure=environment: pointer-size=' + $ptr +
+            ' - this toolchain pins the x64 INPUT layout (40B); run under 64-bit powershell.exe')
+        return 1
+    }
+    $expect = @(
+        @{ n = 'INPUT.sizeof'; want = 40; got = [ShotHarness32]::AbiInputSize() },
+        @{ n = 'KEYBDINPUT.sizeof'; want = 24; got = [ShotHarness32]::AbiKiSize() },
+        @{ n = 'MOUSEINPUT.sizeof'; want = 32; got = [ShotHarness32]::AbiMiSize() },
+        @{ n = 'RECT.sizeof'; want = 16; got = [ShotHarness32]::AbiRectSize() },
+        @{ n = 'INPUT.type@'; want = 0; got = [ShotHarness32]::AbiOffInputType() },
+        @{ n = 'INPUT.ki@'; want = 8; got = [ShotHarness32]::AbiOffInputKi() },
+        @{ n = 'INPUT.mi@'; want = 8; got = [ShotHarness32]::AbiOffInputMi() },
+        @{ n = 'KEYBDINPUT.wVk@'; want = 0; got = [ShotHarness32]::AbiOffKiVk() },
+        @{ n = 'KEYBDINPUT.wScan@'; want = 2; got = [ShotHarness32]::AbiOffKiScan() },
+        @{ n = 'KEYBDINPUT.dwFlags@'; want = 4; got = [ShotHarness32]::AbiOffKiFlags() },
+        @{ n = 'KEYBDINPUT.time@'; want = 8; got = [ShotHarness32]::AbiOffKiTime() },
+        @{ n = 'KEYBDINPUT.dwExtraInfo@'; want = 16; got = [ShotHarness32]::AbiOffKiExtra() },
+        @{ n = 'MOUSEINPUT.dx@'; want = 0; got = [ShotHarness32]::AbiOffMiDx() },
+        @{ n = 'MOUSEINPUT.dy@'; want = 4; got = [ShotHarness32]::AbiOffMiDy() },
+        @{ n = 'MOUSEINPUT.mouseData@'; want = 8; got = [ShotHarness32]::AbiOffMiData() },
+        @{ n = 'MOUSEINPUT.dwFlags@'; want = 12; got = [ShotHarness32]::AbiOffMiFlags() },
+        @{ n = 'MOUSEINPUT.time@'; want = 16; got = [ShotHarness32]::AbiOffMiTime() },
+        @{ n = 'MOUSEINPUT.dwExtraInfo@'; want = 24; got = [ShotHarness32]::AbiOffMiExtra() }
+    )
+    foreach ($e in $expect) {
+        if ([int]$e.got -eq [int]$e.want) {
+            TW ('SELFTEST-ABI PASS ' + $e.n + '=' + $e.got)
+        } else {
+            $fail++
+            TW ('SELFTEST-ABI FAIL structure=' + ($e.n -split '\.')[0] + ' ' + $e.n +
+                ' declared=' + $e.got + ' documented-actual=' + $e.want +
+                ' (a SendInput built on this shape injects 0 events and still returns success)')
+        }
+    }
+    # The dead-keyboard fingerprint specifically: an INPUT wider than 40B means every
+    # cbSize the code passes is wrong, so name the extra field if one appeared.
+    $fields = [string]([ShotHarness32]::AbiInputFields())
+    if ($fields -eq 'ki,mi,type') {
+        TW ('SELFTEST-ABI PASS INPUT.fields=' + $fields)
+    } else {
+        $fail++
+        TW ('SELFTEST-ABI FAIL structure=INPUT fields=[' + $fields +
+            "] expected=[ki,mi,type] - a padding/union field here is exactly defect T-6")
+    }
+    # A type that exists at all is the proof the Add-Type block compiled: T-1 was a missing
+    # `using System.Text;`, which made GetWindowText(StringBuilder) a CS0246 and left
+    # Invoke-QaShot/Invoke-ShotForeground/Get-QaShotStats undefined for the whole round.
+    if ($null -ne ('ShotHarness32' -as [type])) {
+        TW 'SELFTEST-ABI PASS type=ShotHarness32 loaded (Add-Type compiled: using-directives complete)'
+    } else {
+        $fail++
+        TW 'SELFTEST-ABI FAIL structure=ShotHarness32 type missing - Add-Type did not compile'
+    }
+    # TapAlt is the foreground-lock breaker; its cbSize guard must refuse a bad shape
+    # instead of returning a fake 0. Checked by calling it ONLY when the shape is wrong is
+    # not possible (that IS SendInput), so the guard is asserted statically instead:
+    # TapAlt must not be able to reach SendInput with a size the table above rejected.
+    if ($fail -eq 0) {
+        TW ('SELFTEST-ABI RESULT=ok ptr=' + $ptr + ' INPUT=' + [ShotHarness32]::AbiInputSize() + 'B checks=' + $expect.Count)
+    } else {
+        TW ('SELFTEST-ABI RESULT=FAIL fails=' + $fail)
+    }
+    return $fail
+}
+
+# ---------------------------------------------------------------- Get-ShotHarnessStamp
+# The version stamp / self-reporting banner (repo precedent: dr4-drive.ps1 prints
+# 'HARNESS=dr4-drive.ps1/1 (local capture core; INPUT=40B; PW flag=2; user32!PrintWindow)').
+# Difference from that precedent, and the point of this function: NONE of the numbers below is
+# typed into the string. They are read off the marshaler at call time, so the banner reports
+# what the copy actually loaded looks like instead of what its comment claims. Mutate INPUT to
+# the shipped 48B shape and this line itself prints INPUT=48B while Test-ShotHarnessAbi goes
+# red in the same run - a banner that cannot lie, and proof of WHICH copy is in the process.
+function Get-ShotHarnessStamp {
+    [CmdletBinding()]
+    param()
+    $v = [string]$script:ShotHarnessVersion
+    if ($null -eq ('ShotHarness32' -as [type])) {
+        return ('SHOT-VER ' + $v + ' type=MISSING ptr=' + [IntPtr]::Size +
+            ' - Add-Type did not compile, every public function below is undefined (defect T-1)')
+    }
+    return ('SHOT-VER ' + $v + ' ptr=' + [IntPtr]::Size +
+        ' INPUT=' + [ShotHarness32]::AbiInputSize() + 'B' +
+        ' INPUT.type@' + [ShotHarness32]::AbiOffInputType() +
+        ' INPUT.ki@' + [ShotHarness32]::AbiOffInputKi() +
+        ' INPUT.mi@' + [ShotHarness32]::AbiOffInputMi() +
+        ' INPUT.fields=' + [ShotHarness32]::AbiInputFields() +
+        ' KEYBDINPUT=' + [ShotHarness32]::AbiKiSize() + 'B' +
+        ' MOUSEINPUT=' + [ShotHarness32]::AbiMiSize() + 'B' +
+        ' RECT=' + [ShotHarness32]::AbiRectSize() + 'B')
+}
+
+# ---------------------------------------------------------------- -AbiOnly
+# The headless half of -SelfTest: it asks the marshaler about layout and nothing else -
+# no window is opened, no frame is captured, no event is injected, no UIA is touched.
+# This is the entry point a static/no-GUI lane uses to prove the ABI assertions are REAL:
+# a deliberately broken INPUT shape (union member moved to offset 16, i.e. the shipped 48B
+# defect) makes it print SELFTEST-ABI FAIL lines and exit non-zero, naming the structure.
+#   powershell -NoProfile -ExecutionPolicy Bypass -File rust\tests\shot_harness.ps1 -AbiOnly
+# NOTE for probe writers: DOT-SOURCING this file does NOT forward the code - measured on this
+# host, `exit N` inside a dot-sourced script only sets $LASTEXITCODE=N in the caller and the
+# caller keeps running. A probe must read $LASTEXITCODE and exit with it itself.
+if ($AbiOnly) {
+    $ErrorActionPreference = 'Stop'
+    TW (Get-ShotHarnessStamp)
+    $abiRc = 0
+    try { $abiRc = [int](Test-ShotHarnessAbi) }
+    catch {
+        TW ('SELFTEST-ABI FAIL structure=ShotHarness32 probe-threw=' + (($_.Exception.Message -replace '\s+', ' ')))
+        $abiRc = 1
+    }
+    TW ('ABIONLY-RESULT=' + $(if ($abiRc -eq 0) { 'ok' } else { 'FAIL' }) + ' fails=' + $abiRc)
+    exit $abiRc
+}
+
 # ---------------------------------------------------------------- -SelfTest
 # Offline proof: no app under test is started. Only already-existing windows are shot.
 if ($SelfTest) {
     $ErrorActionPreference = 'Continue'
-    function TW([string]$m) { [Console]::Out.WriteLine($m) }
     $log = { param($m) TW ('  | ' + $m) }
 
     TW ('SELFTEST start=' + (Get-Date -Format 'HH:mm:ss') + ' harness=' + $script:ShotHarnessVersion +
         ' dpi-pmv2-called-ok=' + [string]$script:ShotDpiSet + ' version=' + [System.Environment]::OSVersion.Version)
+    # The measured banner FIRST: everything after this line is judged against the layout this
+    # copy actually loaded, not against the layout its comments claim.
+    TW (Get-ShotHarnessStamp)
+
+    # ABI FIRST: if the injected structures are the wrong size, every later frame and every
+    # foreground claim made through TapAlt is untrustworthy, so stop before shooting one.
+    $abiFails = [int](Test-ShotHarnessAbi)
+    TW ('SELFTEST abi-fails=' + $abiFails)
+    if ($abiFails -gt 0) {
+        TW 'SELFTEST-RESULT=FAIL ABI structures wrong - refusing to capture (see SELFTEST-ABI FAIL lines above)'
+        exit 1
+    }
 
     $h = [IntPtr]::Zero
     $via = ''

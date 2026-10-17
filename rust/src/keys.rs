@@ -46,12 +46,13 @@ unsafe extern "system" {
 const WH_KEYBOARD: i32 = 2;
 
 /// 虚拟键码：主干 `TryHandleEnterSend` 只认 Enter，`OnRootPreviewKeyDown` 只认 Escape，
-/// `HandlePaletteKey`（#52 的接缝）再加 ↑/↓/Tab 三档。
+/// `HandlePaletteKey`（#52 的接缝）再加 ↑/↓/Tab 三档，#143 的 Ctrl+S 再加 S。
 pub const VK_RETURN: u32 = 0x0D;
 pub const VK_ESCAPE: u32 = 0x1B;
 pub const VK_TAB: u32 = 0x09;
 pub const VK_UP: u32 = 0x26;
 pub const VK_DOWN: u32 = 0x28;
+pub const VK_S: u32 = 0x53;
 /// `GetKeyState` 的修饰键索引；返回值高位（`0x8000`，即 `i16` 为负）= 按下。
 pub const VK_SHIFT: i32 = 0x10;
 pub const VK_CONTROL: i32 = 0x11;
@@ -85,6 +86,18 @@ pub enum KeyAction {
     /// 吞键 + 关命令面板（= 主干 `HandlePaletteKey` 的 `Escape`：`HideCommandPalette()`）。
     /// 由 `main.rs` 的 `Msg::PaletteClose` 落；开关是 `Scene::palette_open`（见 [`sync_pages`]）。
     PaletteClose,
+    /// 吞键 + 在聊天页与设置页之间来回切（= 主干 `FooterMenuItems` 里 `SettingsItem` 那颗
+    /// `<KeyboardAccelerator Modifiers="Control" Key="S"/>`，`MX:293`，`Invoked` 接
+    /// `ToggleSettingsPage()`，`MW:2761`）。**切换**语义不是单向跳转：看得见设置页就回聊天页，
+    /// 否则进设置页（`MW:8633-8645`）。
+    ///
+    /// 与表里其余各档不同，这一档**不问焦点归属也不问场景**：主干那颗加速键挂在导航项上，
+    /// 本线程钩子又只看得见本进程的键（`install` 传的是 `GetCurrentThreadId()`，不是全局
+    /// `WH_KEYBOARD_LL`）⇒ 判成「本窗内一律生效」既不会吃掉别的程序的 Ctrl+S，也与主干
+    /// 「导航项在视觉树里就响应」同向。已知分歧一条：主干那颗加速键会被应用级模态
+    /// `ContentDialog` 的加速键作用域挡下，分叉的模态卡是自绘在树里的（没有真模态域）⇒
+    /// 分叉在改名卡开着时按 Ctrl+S 也会翻页。
+    ToggleSettings,
     /// 吞键 + 移动浮层选中项（= 主干 `MoveCommandSelection(±1)`，`Up` 传 `-1`、`Down` 传 `1`）。
     /// 这是全表里唯一允许长按自动重复逐发投递的动作 —— 主干按住 ↑ 就是连着一格一格挪。
     PaletteMove(i32),
@@ -96,9 +109,10 @@ pub enum KeyAction {
     Pass,
 }
 
-/// 判键要看的三份「场景」事实（模型推出来、经 [`sync_pages`] 贴进 thread-local）。
+/// 判键要看的四份「场景」事实（模型推出来、经 [`sync_pages`] 与 [`sync_layer_focus`] 贴进 thread-local）。
 ///
-/// 默认值刻意等于**没有浮层、停在聊天页** —— 也就是 #52 之前主线的全部行为，接缝装上但不开火。
+/// 默认值刻意等于**没有浮层、停在聊天页、场上没有自带焦点域的层** —— 也就是 #52 之前主线的全部
+/// 行为，接缝装上但不开火。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Scene {
     /// 当前停在聊天页。主干 `OnRootPreviewKeyDown` 只在 `SettingsPage` 可见时把 Esc 判成
@@ -110,11 +124,18 @@ pub struct Scene {
     /// 主干那时列表收起、浮层还在，Enter 照样被 `HandlePaletteKey` 吃掉）。
     /// 由 `main.rs: Shell::publish_keys` 用 `PaletteState::showing` 喂真值。
     pub palette_open: bool,
+    /// 场上有一张**自带焦点域**的层（主干那类 `ContentDialog` / 浮层替身：开层那一刻焦点就在层里，
+    /// 键的隧道路径根本不过 composer 那颗框）。这一枚为真时，`Esc` 关浮层那一档不再要求
+    /// [`KeyOwner::Composer`] —— 分叉的 `key_owner` 只由「按进 composer」与「真打进 composer 的字」
+    /// 两路写，纯 `inv:` / 冷启动 / 设置页那三支永远停在 `Other`，于是那一档在那些路径上恒不命中。
+    /// 由 `main.rs: Shell::publish_keys` 从**既有槽**（层开没开）派生后经 [`sync_layer_focus`] 报入；
+    /// 本枚为 `false` 时 [`classify`] 与加它之前**逐字等价**（#206 刀A′：底座先行、逐档放行另起刀）。
+    pub layer_owns_focus: bool,
 }
 
 impl Default for Scene {
     fn default() -> Self {
-        Scene { on_chat: true, sub_open: false, palette_open: false }
+        Scene { on_chat: true, sub_open: false, palette_open: false, layer_owns_focus: false }
     }
 }
 
@@ -127,7 +148,8 @@ impl Default for Scene {
 /// · Ctrl+Enter 且焦点在 composer ⇒ `SubmitAlternate`（主干那一发的 `forceMode` 就是
 ///   `IsSessionBusy() ? AlternateBusyEnter() : null`，queue↔steer 反向档）；
 /// · Enter 且焦点在别的字段 ⇒ `Pass`（主干那条 `PreviewKeyDown` 只挂在 InputBox 上，压根收不到）；
-/// · Esc 且二级页开着 ⇒ `CloseSub`，否则 `Pass`（分叉只在 `self.sub.is_some()` 时消费 Esc）。
+/// · Esc 且二级页开着 ⇒ `CloseSub`，否则 `Pass`（分叉只在 `self.sub.is_some()` 时消费 Esc）；
+/// · Ctrl+S ⇒ `ToggleSettings`（#143，主干 `MX:293` 那颗 `KeyboardAccelerator`，**与焦点/场景无关**）。
 ///
 /// 反向档**不在本模块判忙**：忙态是模型里的 `Shell::running`（`api-session/status` 驱动），
 /// 而 `busyEnter` 设置是模型里那行 `ui-conversation_busyEnter` 下拉 ⇒ 两者都由
@@ -135,14 +157,15 @@ impl Default for Scene {
 /// 不起 GUI 就能全测，也不为这条键新造任何状态。
 ///
 /// 这条四参数入口是**旧口径的窄门面**（焦点 + 二级页），等价于
-/// `classify(vk, shift, ctrl, owner, Scene { on_chat: true, sub_open, palette_open: false })`
-/// —— 也就是「没有浮层、停在聊天页」时的那份子集。要拿到 #52 那几档（`ReturnToChat` /
-/// `Palette*`）请直接用 [`classify`]。
+/// `classify(vk, shift, ctrl, owner, Scene { on_chat: true, sub_open, palette_open: false, layer_owns_focus: false })`
+/// —— 也就是「没有浮层、停在聊天页、场上没有自带焦点域的层」时的那份子集。要拿到 #52 那几档
+/// （`ReturnToChat` / `Palette*`）请直接用 [`classify`]。
 pub fn action_for(vk: u32, shift: bool, ctrl: bool, owner: KeyOwner, sub_open: bool) -> KeyAction {
-    classify(vk, shift, ctrl, owner, Scene { on_chat: true, sub_open, palette_open: false })
+    classify(vk, shift, ctrl, owner, Scene { on_chat: true, sub_open, palette_open: false, layer_owns_focus: false })
 }
 
-/// **完整那张表**（含 #52 的接缝档）：`action_for` 的窄口径 + 场景两份事实。
+/// **完整那张表**（含 #52 的接缝档）：`action_for` 的窄口径 + 场景那三份事实
+/// （`on_chat` / `palette_open` / `layer_owns_focus`）。
 ///
 /// 逐条对着主干：
 /// · `OnInputPreviewKeyDown`（`MainWindow.xaml.cs:6819`）先问浮层、再问 Enter 发送 ⇒
@@ -167,13 +190,22 @@ pub fn classify(vk: u32, shift: bool, ctrl: bool, owner: KeyOwner, scene: Scene)
         VK_DOWN if scene.palette_open && in_composer => KeyAction::PaletteMove(1),
         // Esc 的让路顺序照根隧道：浮层开着时根上不抢（交给输入框那档收浮层），
         // 其次二级页，最后才是「非聊天页 ⇒ 回聊天页」。
-        VK_ESCAPE if scene.palette_open && in_composer => KeyAction::PaletteClose,
+        // 「收浮层」那一档的两个准入条件：焦点确实还留在 composer（主干 `HandlePaletteKey` 只挂在
+        // InputBox 的 `PreviewKeyDown` 上），**或**场上那张层自带焦点域（`layer_owns_focus`，#206
+        // 刀A′）。后者今天**无人报位** ⇒ 恒 `false` ⇒ 这一档与 `(in_composer)` 那一支逐字等价。
+        VK_ESCAPE if scene.palette_open && (in_composer || scene.layer_owns_focus) => KeyAction::PaletteClose,
         VK_ESCAPE if scene.sub_open => KeyAction::CloseSub,
         VK_ESCAPE if !scene.on_chat => KeyAction::ReturnToChat,
         // 纯 Enter / Ctrl+Enter 且焦点在 composer ⇒ 发送（Ctrl 那一发只标「反向档」，
         // 忙不忙、取哪个 mode 由 `Shell::ctrl_enter_mode()` 判）。
         VK_RETURN if in_composer && ctrl => KeyAction::SubmitAlternate,
         VK_RETURN if in_composer => KeyAction::Submit,
+        // #143 Ctrl+S：翻设置页/回聊天页。排在 `_ => Pass` 之前，且**不挂任何场景条件**
+        // （理由见 [`KeyAction::ToggleSettings`] 那一档的注释）。
+        // Shift 也得上闸：主干那颗 `<KeyboardAccelerator Modifiers="Control" Key="S"/>`（MX:293）
+        // 只声明了 Control 一个修饰键 ⇒ Ctrl+Shift+S **不匹配**那颗加速键（WinUI 的加速键修饰键
+        // 是精确匹配，多一个都不响），分叉照抄这一条，别把 Ctrl+Shift+S 也吞了。
+        VK_S if ctrl && !shift => KeyAction::ToggleSettings,
         _ => KeyAction::Pass,
     }
 }
@@ -227,6 +259,7 @@ thread_local! {
     static SUB_OPEN: Cell<bool> = const { Cell::new(false) };
     static ON_CHAT: Cell<bool> = const { Cell::new(true) };
     static PALETTE_OPEN: Cell<bool> = const { Cell::new(false) };
+    static LAYER_OWNS_FOCUS: Cell<bool> = const { Cell::new(false) };
     static HOOK: Cell<*mut c_void> = const { Cell::new(std::ptr::null_mut()) };
     static INSTALLER_TID: Cell<u32> = const { Cell::new(0) };
     static SINK: RefCell<Option<Sink>> = const { RefCell::new(None) };
@@ -276,12 +309,26 @@ pub fn sync_pages(on_chat: bool, palette_open: bool) {
     PALETTE_OPEN.with(|slot| slot.set(palette_open));
 }
 
+/// 「场上有一张自带焦点域的层」这**一份**事实（[`Scene::layer_owns_focus`]）的独立入口。
+///
+/// 单独一条而不并进 [`sync`] 或 [`sync_pages`]：那两条的签名已钉在 `main.rs` 的 `publish_keys`
+/// 与它自己的源码锁上（`sync_pages` 今天 keys.rs 7 发 + main.rs 3 发消费），加参就是把它们全洗一遍。
+/// 报进来的值**只从既有槽派生**（层开没开 = `self.<层>.is_some()`），不为这条键新造第二套真相、
+/// 不加 `Shell` 字段、不加收点。
+///
+/// ⚠ #206 刀A′ 落地的这一刻**还没有任何调用者** ⇒ 这一枚恒 `false` ⇒ [`classify`] 里那一档
+/// 与加字段之前逐字等价。逐档放行（每档必须既有报位、又有 reducer 侧的守卫臂）是后面几刀的账。
+pub fn sync_layer_focus(layer_owns_focus: bool) {
+    LAYER_OWNS_FOCUS.with(|slot| slot.set(layer_owns_focus));
+}
+
 /// 读当前场景（自测日志用：`KBHOOK scene=…`）。
 pub fn scene() -> Scene {
     Scene {
         on_chat: ON_CHAT.with(|slot| slot.get()),
         sub_open: SUB_OPEN.with(|slot| slot.get()),
         palette_open: PALETTE_OPEN.with(|slot| slot.get()),
+        layer_owns_focus: LAYER_OWNS_FOCUS.with(|slot| slot.get()),
     }
 }
 
@@ -336,6 +383,7 @@ pub fn uninstall() -> Unhooked {
     SUB_OPEN.with(|slot| slot.set(false));
     ON_CHAT.with(|slot| slot.set(true));
     PALETTE_OPEN.with(|slot| slot.set(false));
+    LAYER_OWNS_FOCUS.with(|slot| slot.set(false));
     if unsafe { UnhookWindowsHookEx(handle) != 0 } {
         Unhooked::Removed
     } else {
@@ -389,7 +437,7 @@ fn auto_repeat(l_param: *const c_void) -> bool {
 
 /// 钩子真正要过表的键：其余键（字母、数字、Backspace、方向键里的左右…）走快路径直接放行，
 /// 连 `GetKeyState` 都不问 —— 钩子 proc 是全局热点，`LowlevelHooksTimeout` 那类预算经不起浪费。
-const HANDLED_KEYS: [u32; 5] = [VK_RETURN, VK_ESCAPE, VK_TAB, VK_UP, VK_DOWN];
+const HANDLED_KEYS: [u32; 6] = [VK_RETURN, VK_ESCAPE, VK_TAB, VK_UP, VK_DOWN, VK_S];
 
 /// 只有浮层上下移动允许长按连发（主干按住 ↑ 就是一格一格挪）；发送/收页/采纳这类**一次性的
 /// 动作**在长按重复时只吞键不再投递。
@@ -484,8 +532,64 @@ mod tests {
                 assert_eq!(action_for(0x27, false, false, owner, sub), KeyAction::Pass);
                 assert_eq!(action_for(0x26, true, true, owner, sub), KeyAction::Pass);
                 assert_eq!(action_for(0x09, false, false, owner, sub), KeyAction::Pass, "Tab");
+                // #143：不带 Ctrl 的 S 是普通字符（输入框里要能打得出 "s"）。
+                assert_eq!(action_for(VK_S, false, false, owner, sub), KeyAction::Pass, "裸 S");
+                assert_eq!(action_for(VK_S, true, false, owner, sub), KeyAction::Pass, "Shift+S");
+                assert_eq!(action_for(VK_S, true, true, owner, sub), KeyAction::Pass, "Ctrl+Shift+S");
             }
         }
+    }
+
+    /// #143 Ctrl+S 那一档（主干 `MX:293` 的 `KeyboardAccelerator` + `MW:2761` 的 `Invoked`）。
+    ///
+    /// 与表里其余各档最大的不同：它**不问焦点归属、不问场景**——四个 `Scene` 事实挨个换一遍，
+    /// 结果必须恒为 `ToggleSettings`（理由见 [`KeyAction::ToggleSettings`] 的注释）。
+    /// **Shift 不上表**：主干那颗只声明 `Modifiers="Control"`，Ctrl+Shift+S 不匹配。
+    #[test]
+    fn ctrl_s_toggles_the_settings_page_regardless_of_owner_or_scene() {
+        for owner in [KeyOwner::Composer, KeyOwner::Other] {
+            for on_chat in [false, true] {
+                for sub_open in [false, true] {
+                    for palette_open in [false, true] {
+                        for layer in [false, true] {
+                            let scene =
+                                Scene { on_chat, sub_open, palette_open, layer_owns_focus: layer };
+                            assert_eq!(
+                                classify(VK_S, false, true, owner, scene),
+                                KeyAction::ToggleSettings,
+                                "Ctrl+S 在 owner={owner:?} scene={scene:?} 下翻了"
+                            );
+                            // 多一个 Shift 就放行（精确修饰键匹配，见 classify 里那一臂的注释）。
+                            assert_eq!(
+                                classify(VK_S, true, true, owner, scene),
+                                KeyAction::Pass,
+                                "Ctrl+Shift+S 不该匹配那颗只声明 Control 的加速键"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        // 反向：不带 Ctrl 就一律放行（这一条同时是「S 键没被这颗加速键绑架」的锁）。
+        assert_eq!(
+            classify(VK_S, false, false, KeyOwner::Composer, Scene::default()),
+            KeyAction::Pass
+        );
+    }
+
+    /// #143 钩子侧：`VK_S` 必须进过表键清单，否则 `decide` 走快路径直接放行、钩子装了对 Ctrl+S
+    /// 也无感。变异：把 `VK_S` 从 [`HANDLED_KEYS`] 里摘掉 ⇒ 末两条翻红。
+    #[test]
+    fn ctrl_s_reaches_the_hook_decision_body() {
+        let _pin = PinnedMods::set(false, true); // Ctrl 按下、Shift 松开
+        sync_pages(true, false);
+        let down = 1usize as *const c_void; // bit31=0（按下）、bit30=0
+        let up = 0xC000_0001usize as *const c_void; // bit31=1 = 松开
+        // 焦点归属取 Other：这一档本就不看焦点，正好把「不依赖 composer」钉住。
+        sync(KeyOwner::Other, false);
+        assert!(HANDLED_KEYS.contains(&VK_S), "VK_S 不在过表键清单里 ⇒ Ctrl+S 恒被放行");
+        assert!(decide(0, VK_S as usize, down), "Ctrl+S 的按下必须被吞（不吞就落进 TextBox）");
+        assert!(!decide(0, VK_S as usize, up), "松开那一发永远不吞");
     }
 
     /// 钩子决策体的纯逻辑（不装钩子也能验）：`code < 0`、松开那一发、表外键一律放行。
@@ -521,7 +625,7 @@ mod tests {
     /// #52 那几档的完整表（纯函数，浮层本身还没做也先钉死语义）。
     #[test]
     fn seam_table_matches_mainline_palette_and_root_esc() {
-        let palette = Scene { on_chat: true, sub_open: false, palette_open: true };
+        let palette = Scene { on_chat: true, sub_open: false, palette_open: true, layer_owns_focus: false };
         // HandlePaletteKey(:17755)：Esc 收浮层、↑/↓ 移选中项、Tab 与 Enter 采纳。
         assert_eq!(classify(VK_RETURN, false, false, KeyOwner::Composer, palette), KeyAction::PaletteAccept);
         assert_eq!(classify(VK_TAB, false, false, KeyOwner::Composer, palette), KeyAction::PaletteAccept);
@@ -532,22 +636,54 @@ mod tests {
         // 因为 Shift `return false`）⇒ 两遍都是放行。
         assert_eq!(classify(VK_RETURN, true, false, KeyOwner::Composer, palette), KeyAction::Pass);
         // 浮层挂在输入框的 PreviewKeyDown 上 ⇒ 焦点不在 composer 时这几档一概不开火。
-        for vk in [VK_RETURN, VK_TAB, VK_UP, VK_DOWN, VK_ESCAPE] {
+        // ⚠ `VK_ESCAPE` 今天从这枚循环里**拆出来单列**（#206 刀A′）：它比另外四档多一条准入支
+        //   （`layer_owns_focus`），混在循环里就把「放宽了哪一档」糊成一团。剩余四档的 `Pass`
+        //   断言一枚不减；拆出来的那一枚在下面成对补齐（①可达 / ②反证）。
+        for vk in [VK_RETURN, VK_TAB, VK_UP, VK_DOWN] {
             assert_eq!(
                 classify(vk, false, false, KeyOwner::Other, palette),
                 KeyAction::Pass,
                 "焦点不在 composer 时 {vk:#04x} 不该被浮层吃掉"
             );
         }
+        // ①可达（正向）：`Other` + 浮层开着 + 场上那张层**自带焦点域** ⇒ Esc 仍该关层。
+        //   这正是纯 `inv:` / 冷启动 / 设置页那三条腿（那三条上 `key_owner` 恒停在 `Other`）；
+        //   报位由后面几刀逐档放行（刀A′ 本身不喂 ⇒ 今天产品态仍走 ②）。
+        assert_eq!(
+            classify(
+                VK_ESCAPE,
+                false,
+                false,
+                KeyOwner::Other,
+                Scene { layer_owns_focus: true, ..palette }
+            ),
+            KeyAction::PaletteClose,
+            "层自带焦点域时 Esc 该关层，不许因为 owner 停在 Other 就放行"
+        );
+        // ②反证（防谓词被改宽）：同一发键、同一个 `Other`、同一个浮层场景，**只**把那一枚改回
+        //   `false` ⇒ 必须逐字回落到今天的 `Pass`（= 拆键前那枚循环第五档的原样）。
+        //   谁把 `VK_ESCAPE if scene.palette_open && (…)` 写成不看 `layer_owns_focus` 的宽判据，
+        //   这一发就红。
+        assert_eq!(
+            classify(
+                VK_ESCAPE,
+                false,
+                false,
+                KeyOwner::Other,
+                Scene { layer_owns_focus: false, ..palette }
+            ),
+            KeyAction::Pass,
+            "没有层报焦点域 ⇒ Esc 在 `Other` 手里必须放行（回落安全哨兵）"
+        );
         // 浮层优先于二级页：根那条 Esc 见浮层可见就让路（:9262 `return`）。
-        let both = Scene { on_chat: false, sub_open: true, palette_open: true };
+        let both = Scene { on_chat: false, sub_open: true, palette_open: true, layer_owns_focus: false };
         assert_eq!(classify(VK_ESCAPE, false, false, KeyOwner::Composer, both), KeyAction::PaletteClose);
         // OnRootPreviewKeyDown(:9245)：非聊天页 + 没二级页 ⇒ 回聊天页；有二级页先收二级页。
-        let settings = Scene { on_chat: false, sub_open: false, palette_open: false };
+        let settings = Scene { on_chat: false, sub_open: false, palette_open: false, layer_owns_focus: false };
         for owner in [KeyOwner::Composer, KeyOwner::Other] {
             assert_eq!(classify(VK_ESCAPE, false, false, owner, settings), KeyAction::ReturnToChat);
         }
-        let settings_sub = Scene { on_chat: false, sub_open: true, palette_open: false };
+        let settings_sub = Scene { on_chat: false, sub_open: true, palette_open: false, layer_owns_focus: false };
         assert_eq!(classify(VK_ESCAPE, false, false, KeyOwner::Other, settings_sub), KeyAction::CloseSub);
         // 聊天页、没浮层 ⇒ Esc 什么都不做（主干根上那条只认 SettingsPage 可见）。
         assert_eq!(classify(VK_ESCAPE, false, false, KeyOwner::Other, Scene::default()), KeyAction::Pass);
@@ -573,7 +709,12 @@ mod tests {
                                     shift,
                                     ctrl,
                                     owner,
-                                    Scene { on_chat: true, sub_open: sub, palette_open: false }
+                                    Scene {
+                                        on_chat: true,
+                                        sub_open: sub,
+                                        palette_open: false,
+                                        layer_owns_focus: false,
+                                    }
                                 ),
                                 "门面与全表在 {vk:#04x} shift={shift} ctrl={ctrl} {owner:?} sub={sub} 上不一致"
                             );
@@ -631,7 +772,7 @@ mod tests {
         assert_eq!(fired.drain(), vec![KeyAction::Submit], "按住 Enter 只投一条发送");
 
         // 浮层档：把接缝当已经开着验一次语义（不改 `main.rs` 的调用，只在测试里造场景）。
-        let palette = Scene { on_chat: true, sub_open: false, palette_open: true };
+        let palette = Scene { on_chat: true, sub_open: false, palette_open: true, layer_owns_focus: false };
         assert_eq!(classify(VK_UP, false, false, KeyOwner::Composer, palette), KeyAction::PaletteMove(-1));
         assert!(repeat_dispatches(KeyAction::PaletteMove(-1)), "↑ 长按必须连发");
         for action in [
@@ -655,10 +796,16 @@ mod tests {
         let fired = SinkLog::new();
         sync(KeyOwner::Other, false);
         sync_pages(false, false);
-        assert_eq!(scene(), Scene { on_chat: false, sub_open: false, palette_open: false });
+        assert_eq!(
+            scene(),
+            Scene { on_chat: false, sub_open: false, palette_open: false, layer_owns_focus: false }
+        );
         // 设置页 + 二级页也开着 ⇒ 先收二级页（主干 `InSettingsSubPage ? CloseSettingsSubPage()`）。
         sync(KeyOwner::Other, true);
-        assert_eq!(scene(), Scene { on_chat: false, sub_open: true, palette_open: false });
+        assert_eq!(
+            scene(),
+            Scene { on_chat: false, sub_open: true, palette_open: false, layer_owns_focus: false }
+        );
         assert!(decide(0, VK_ESCAPE as usize, 1usize as *const c_void));
         assert_eq!(fired.drain(), vec![KeyAction::CloseSub]);
         // 关掉二级页 ⇒ 同一发 Esc 变成「回聊天页」（主干 `else ShowChatPage()`）。

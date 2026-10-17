@@ -40,17 +40,25 @@
     WINDOW=<title> FOUND-VIA=... / HWND=...
     <depth> | <ControlType> | <Name> | <IsKeyboardFocusable> | <BoundingRectangle>
     INVOKED=<name> / NOTINVOKED=<name> ... / NOTFOUND=<name>
+    INVOKED=<name> via=<pattern> match=<id-eq|name-eq|id-re|name-re> candidates=<n>
     TREE-CHANGED|TREE-UNCHANGED|WAITFOR-MET|WAITFOR-TIMEOUT ...
     WAITFORLOG-MET=<line>|WAITFORLOG-TIMEOUT=...|WAITFORLOG-SKIPPED=...
     SHOT=<path>                  when -Out is given
-    RESULT=ok|error  <detail>
+    PROBLEMS=<n> tolerated=<n> elements=<n> kinds=[...]
+    RESULT=ok problems=0 | RESULT=FAIL problems=<n>   (exit code follows the SAME number)
 
   NOTE on -Invoke: PowerShell 5.1 with -File cannot bind a parameter twice, so pass
   several names in ONE argument separated by comma or semicolon (they are split here).
+  NOTE on exit codes (T3K hole #1): every failure line printed by this script is also pushed
+  into $script:UiaProblems by W(), so a WAITFORLOG-TIMEOUT / NOTFOUND / NOTINVOKED / WARN= now
+  ends the run with `RESULT=FAIL` and exit code 1. Before this knife the tail was an unconditional
+  `RESULT=ok` + `exit 0` (ledger DR6P §1-B: "the two nastiest lines"), which let a whole round be
+  wrong behind a green banner. A known-mainline-identical absence may be waived ONLY by naming it
+  in -TolerateAbsent; the default waives nothing.
   NOTE on liveness: RESULT=ok / WINDOW= alone does NOT prove the UI is alive - a stubbed-out
   tree still prints WINDOW=. Require the `elements=<n>` line with n >= 5 (this script itself
-  warns with WARN=tree looks empty below that bar), and prefer -WaitForLog over -WaitFor for
-  anything the app no longer renders.
+  warns with WARN=tree looks empty below that bar, and that WARN is now a counted problem),
+  and prefer -WaitForLog over -WaitFor for anything the app no longer renders.
   NOTE on the kernel-state marker: the fork publishes `内核: <status>` on the title-bar element's
   UIA Name (a container's Name is never rendered, so it costs zero layout), so the old recipe
   `-WaitFor '内核: 已连接'` keeps working; -WaitForLog 'STATUS: 内核: 已连接' is the preferred,
@@ -85,14 +93,66 @@ param(
     [int]$LookupCap = 800,
     [int]$SettleSec = 8,
     [string]$Log = '',
-    [switch]$Kill
+    [switch]$Kill,
+    # T3K 洞 #2：定位现在有两通道（AutomationId 与 Name），命中的是通道哪一条会打在 match= 上。
+    # 落到正则兜底桶、或一次命中多颗，都记一条问题（-LooseFind 可降级为纯打印）。
+    [switch]$LooseFind,
+    # 主干同形的“量不到”白名单（';' 分隔的正则）。默认空 = 一颗都不豁免（fail-closed）。
+    # 已定案例：windows-reactor 只搬 SetName/SetAutomationId ⇒ 只设 AutomationId 的布局宿主
+    # （ReferencePalette 那颗 Border 根）根本不进 UIA 树，量不到是**应有**、不是缺陷。
+    [string]$TolerateAbsent = ''
 )
 
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
-function W([string]$m) { [Console]::Out.WriteLine($m) }
+# ---------------------------------------------------------------- T3K 洞 #1: 退出码不许说谎
+# 以前这颗脚本末尾是无条件 `RESULT=ok` + `exit 0`（DR6P §1-B 点名「与 dr4-drive 并列为两颗最狠」）：
+# WAITFORLOG-TIMEOUT / NOTFOUND / NOTINVOKED / WARN=tree looks empty 全都不改退出码。
+# 母本同款硬停 = shot_harness.ps1 的 `if ($abiFails -gt 0) { … SELFTEST-RESULT=FAIL … exit 1 }`，
+# 这边把「abiFails」换成「这一轮真正打印过的失败证据条数」。
+$script:UiaProblems = @()
+$script:UiaTolerated = @()
+$script:UiaFailureTokens = @(
+    'NOTFOUND=', 'NOTINVOKED=', 'WAITFORLOG-TIMEOUT=', 'WAITFORLOG-SKIPPED=', 'WAITFOR-TIMEOUT',
+    'WARN=', 'SETTEXT-SKIPPED', 'SETTEXTFAILED=', 'SHOT-SKIPPED', 'SHOTFAILED=', 'TREE-THIN=',
+    'FIND-BY-REGEX=', 'AMBIGUOUS-FIND='
+)
+function Write-UiaLine([string]$m) { [Console]::Out.WriteLine($m) }
+function Test-UiaFailureToken([string]$m) {
+    if ($null -eq $m -or $m -eq '') { return '' }
+    foreach ($t in $script:UiaFailureTokens) { if ($m.StartsWith($t, [System.StringComparison]::Ordinal)) { return $t } }
+    return ''
+}
+function Test-UiaTolerated([string]$m) {
+    if ($null -eq $TolerateAbsent -or $TolerateAbsent -eq '') { return $false }
+    foreach ($one in ($TolerateAbsent -split ';')) {
+        $t = $one.Trim(); if ($t -eq '') { continue }
+        try { if ($m -match $t) { return $true } } catch { }
+    }
+    return $false
+}
+function Mark-UiaProblem([string]$kind, [string]$detail) {
+    $line = ($kind + $detail)
+    if (Test-UiaTolerated $line) {
+        $script:UiaTolerated = @($script:UiaTolerated) + $line
+        Write-UiaLine ($line + ' [TOLERATED]')
+        return $false
+    }
+    $script:UiaProblems = @($script:UiaProblems) + [pscustomobject]@{ Kind = $kind; Detail = $detail }
+    Write-UiaLine ($line + ' [PROBLEM ' + $script:UiaProblems.Count + ']')
+    return $true
+}
+function W([string]$m) {
+    Write-UiaLine $m
+    $tok = Test-UiaFailureToken $m
+    if ($tok -ne '') {
+        $det = ''
+        if ($m.Length -gt $tok.Length) { $det = ($m.Substring($tok.Length) -replace '\s+', ' ').Trim() }
+        [void](Mark-UiaProblem $tok $det)
+    }
+}
 
 # The app spawns a kernel child process; a bare Stop-Process orphans it and it keeps
 # target/debug/*.exe locked, so the next `cargo build` fails with os error 5.
@@ -354,20 +414,45 @@ function Get-Descendants($root, [int]$cap) {
     return $list
 }
 
+# T3K 洞 #2（DR6P §1-B「会假 FAIL」的那颗）：这里以前**只比 Name**，把产品侧 105 处
+# automation_id 全部看不见 ⇒ 本轮要验的权限钮 `-Invoke PermissionPreset_read-only` 必 NOTFOUND，
+# 而元素其实在位。现在两通道并走，命中的是哪一条打在 match= 上：
+#   id-eq / name-eq / id-re / name-re
+# 备案（不许反过来判成缺陷）：windows-reactor 只搬 SetName/SetAutomationId，所以**只设 id 的布局
+# 宿主压根不进 UIA 树** —— 量不到 id-only 的 `ReferencePalette` 根是主干同形，不是缺陷；要看它
+# 请读 ReferencePaletteHeader / ReferencePaletteList 两颗可达的。真要把这条写进判据，
+# 就显式给 -TolerateAbsent，默认空串 = 一颗都不豁免。
 function Find-ByName($root, [string]$needle, [int]$cap) {
     $all = Get-Descendants $root $cap
-    if ($all.Count -eq 0) { W 'WARN=name scan saw 0 descendants (tree not ready or UIA query failed)' }
-    $exact = @(); $re = @()
+    if ($all.Count -eq 0) { W 'WARN=name+id scan saw 0 descendants (tree not ready or UIA query failed)' }
+    $idEq = @(); $nameEq = @(); $idRe = @(); $nameRe = @()
     foreach ($el in $all) {
         $info = Get-ElInfo $el
         if ($null -eq $info) { continue }
-        $nm = [string]$info.Name
-        if ($nm -eq $needle) { $exact += $el; continue }
-        try { if ($nm -match $needle) { $re += $el } } catch { }
+        $nm = ''
+        $aid = ''
+        try { $nm = [string]$info.Name } catch { }
+        try { $aid = [string]$info.AutomationId } catch { }
+        if ($aid -eq $needle) { $idEq += $el; continue }
+        if ($nm -eq $needle) { $nameEq += $el; continue }
+        try { if ($aid -ne '' -and $aid -match $needle) { $idRe += $el; continue } } catch { }
+        try { if ($nm -ne '' -and $nm -match $needle) { $nameRe += $el } } catch { }
     }
-    if ($exact.Count -gt 0) { return @{ how = 'eq'; els = $exact } }
-    if ($re.Count -gt 0) { return @{ how = 'match'; els = $re } }
-    return @{ how = 'none'; els = @() }
+    $f = $null
+    if ($idEq.Count -gt 0) { $f = @{ how = 'id-eq'; els = $idEq } }
+    elseif ($nameEq.Count -gt 0) { $f = @{ how = 'name-eq'; els = $nameEq } }
+    elseif ($idRe.Count -gt 0) { $f = @{ how = 'id-re'; els = $idRe } }
+    elseif ($nameRe.Count -gt 0) { $f = @{ how = 'name-re'; els = $nameRe } }
+    else { return @{ how = 'none'; els = @() } }
+    if ($f.how.EndsWith('-re') -and -not $LooseFind) {
+        [void](Mark-UiaProblem 'FIND-BY-REGEX=' ('how=' + $f.how + ' needle=' + $needle + ' n=' + $f.els.Count +
+            ' - a half-written needle resolves through the regex fallback and can drive the wrong element; write the full AutomationId or Name (or pass -LooseFind)'))
+    }
+    if ($f.els.Count -gt 1) {
+        [void](Mark-UiaProblem 'AMBIGUOUS-FIND=' ('how=' + $f.how + ' needle=' + $needle + ' n=' + $f.els.Count +
+            ' - more than one element answers to this needle, so the verdict cannot be attributed to a single one'))
+    }
+    return $f
 }
 
 # Snapshot of the visible tree, used to detect that an action actually changed the UI.
@@ -430,6 +515,10 @@ function Get-NameMatch([string]$pattern) {
 }
 
 # ---------------------------------------------------------------- -WaitForLog helpers
+# T3K 过期账 B（DR6P §5-3）：分叉的 push_log 无条件加 `DIAG: ` 前缀，18 处调用点自己又写了一遍
+# `DIAG: …` ⇒ 实盘行首是 `DIAG: DIAG: `。这里的 needle 一律是**字面 Ordinal 子串**（不是正则），
+# 所以内层子串成立、锚行首的写法必假 FAIL。下面这句在每次超时里回读给操作者，省掉一整轮猜。
+$script:UiaLogPrefixCaliber = 'log lines really start "DIAG: DIAG: " (push_log prefixes + 18 call sites write DIAG: themselves) -> match the INNER substring; a line-start anchor is ALWAYS a false FAIL'
 # -Log writes the child's stdout/stderr via Start-Process redirection, so the app still owns
 # those handles: open them with FileShare ReadWrite or every poll throws a sharing violation.
 # Returns the first line containing the literal substring ('' when not there yet). Whole file
@@ -544,7 +633,7 @@ function Wait-Outcome([string]$pre, [int]$budgetMs, [string]$preHit) {
             if ($preLogHit -ne '' -and $preLogHit -eq $hit) { $note = ' NOTE: already true before the action' }
             W ('WAITFORLOG-MET=' + (Format-Name $hit) + ' waited=' + $waited + 'ms' + $note)
         }
-        else { W ('WAITFORLOG-TIMEOUT=' + (Format-Name $WaitForLog) + ' waited=' + $waited + 'ms files=[' + (Format-LogState) + '] (raise -SettleSec)') }
+        else { W ('WAITFORLOG-TIMEOUT=' + (Format-Name $WaitForLog) + ' waited=' + $waited + 'ms files=[' + (Format-LogState) + '] (raise -SettleSec) caliber=' + $script:UiaLogPrefixCaliber) }
         return
     }
     if ($WaitFor -ne '') {
@@ -707,7 +796,9 @@ W ('--- TREE window=[' + (Format-Name $title) + '] ---')
 Dump-Tree $win $MaxElements
 W '--- END TREE ---'
 if ($null -eq $elements -or $elements.Count -lt 5) {
-    W 'WARN=tree looks empty; WinUI 3 content may still be virtualizing or names not exposed'
+    W ('TREE-THIN=' + $(if ($null -eq $elements) { 'null' } else { [string]$elements.Count }) +
+       ' elements - below the liveness floor of 5 this tool chain documents (dr4-drive.ps1 uses the same bar); ' +
+       'find/inv verdicts taken on a tree this empty mean nothing, so this run cannot end green')
 }
 
 # -WaitForLog with NO -Invoke/-SetText still has to gate the run: callers use it as the
@@ -846,11 +937,23 @@ if ($Out -ne '') {
     Drop-After-Shot $hwnd
 }
 
-W 'RESULT=ok'
+# ---------------------------------------------------------------- verdict (T3K 洞 #1)
+$uiaKinds = @($script:UiaProblems | ForEach-Object { [string]$_.Kind } | Sort-Object -Unique)
+W ('PROBLEMS=' + $script:UiaProblems.Count + ' tolerated=' + $script:UiaTolerated.Count +
+   ' elements=' + $(if ($null -eq $elements) { 'null' } else { $elements.Count }) + ' kinds=[' + ($uiaKinds -join ' ') + ']')
+W ('VERDICT-CALIBER RESULT=ok here only means "no failure line was printed and the tree cleared the >=5 liveness bar"; ' +
+   'a green RESULT=ok has never proved the UI is alive (see the liveness NOTE in the header) and says nothing about anything this run did not look at')
+$rc = 0
+if ($script:UiaProblems.Count -gt 0) { $rc = 1 }
 if ($Kill) {
     Stop-ProcTree ([int]$pi.Id)
     W 'KILLED'
 } else {
     W ('LEFT-RUNNING pid=' + $pi.Id + ' (taskkill //PID ' + $pi.Id + ' //F)')
 }
+if ($rc -gt 0) {
+    W ('RESULT=FAIL problems=' + $script:UiaProblems.Count + ' (each [PROBLEM n] line above is one step that did not succeed)')
+    exit $rc
+}
+W ('RESULT=ok problems=0 tolerated=' + $script:UiaTolerated.Count)
 exit 0

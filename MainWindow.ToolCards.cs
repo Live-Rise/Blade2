@@ -1010,11 +1010,13 @@ public sealed partial class MainWindow
             tb.FontSize = 11;
         }
         AutomationProperties.SetAutomationId(tb, id);
+        // 全圆角（胶囊）：卡内状态/用时/差异统计 chip 一律椭圆端头。此前写死 4，与同行
+        // 技能引用 chip 的胶囊端头并排时一方一圆，形状语言不统一。
         return new Border
         {
             Child = tb,
             Background = SoftBrushFrom(brush, 0.1),
-            CornerRadius = new CornerRadius(4),
+            CornerRadius = new CornerRadius(TokenDouble("RadiusPill", 24)),
             Padding = new Thickness(Sp4, 1, Sp4, 1),
         };
     }

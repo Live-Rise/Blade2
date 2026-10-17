@@ -125,13 +125,40 @@ fn fx1_lock_chrome_roster_is_falsifiable() {
 /// 闸少读一个条件 / 键改名 / 冒第二处键 ⇒ 各自都要红。
 #[test]
 fn fx1_lock_host_gate_is_falsifiable() {
+    // #239：宿主闸从 `Shell::body` 里的内联写法（`let host_visible = self.dock.open && on_chat;`）
+    // 收成了方法 `dock_host_visible` ⇒ 原判据（内联串在窗内出现）随重构一起失效。
+    // 「宿主闸丢条件」等义拆成两发：调用点一发、闸本体一发，变异语义一字不松（闸少一颗 /
+    // 少一条件都得红）。两发都沿用产品锁的**紧窗**：宽窗起点锚 `fn body(` 在更前面的文档注释里
+    // 就出现过，会把 `overlay_host_box` / `chat_box` 两枚合法读者一起罩进来（产品锁注释里
+    // 踩过并记录的同款坑，起点锚用完整签名）。
+    let body_gate = |s: &str| {
+        fx1_window(
+            s,
+            "fn body(&self, context: &mut ViewContext<Shell>, p: Palette, row: i32) -> View {",
+            "fn column_splitter(",
+        )
+    };
+    let gate_def = |s: &str| fx1_window(s, "fn dock_host_visible(", "fn dock_col_w_dip(");
     fx1_two_state(
-        "锁③·宿主闸丢条件",
-        "let host_visible = self.dock.open && on_chat;",
-        "let host_visible = on_chat;",
+        "锁③·宿主闸调用点丢一颗（改成无条件恒真）",
+        "let host_visible = self.dock_host_visible();",
+        "let host_visible = true;",
         |s| {
-            fx1_window(s, "fn body(", "fn column_splitter(")
-                .contains("let host_visible = self.dock.open && on_chat;")
+            body_gate(s)
+                .matches("let host_visible = self.dock_host_visible();")
+                .count()
+                == 1
+        },
+    );
+    fx1_two_state(
+        "锁③·闸本体丢条件（丢掉 `dock.open` 半边）",
+        "self.dock.open && self.page == Page::Chat",
+        "self.page == Page::Chat",
+        |s| {
+            gate_def(s)
+                .matches("self.dock.open && self.page == Page::Chat")
+                .count()
+                == 1
         },
     );
     fx1_two_state(
@@ -158,9 +185,11 @@ fn fx1_lock_host_gate_is_falsifiable() {
                 .contains("self.dock_host(")
         },
     );
+    // #239：「第二份真相复活」的变异串同样跟着闸收成方法走——把现役那颗闸调用点换回
+    // 恒 `false` 的死字段 `right_host_visible`；判据不变（全仓不许再冒 `self.right_host_visible`）。
     fx1_two_state(
         "锁③·第二份真相复活",
-        "let host_visible = self.dock.open && on_chat;",
+        "let host_visible = self.dock_host_visible();",
         "let host_visible = self.right_host_visible;",
         |s| fx1_count_word(s, "self.right_host_visible") == 0,
     );
@@ -192,10 +221,10 @@ fn fx1_lock_dock_menu_mutex_is_falsifiable() {
         );
     }
     fx1_two_state(
-        "锁④·收点枚数 19 漂走（把 19 处全换成直写）",
+        "锁④·收点枚数 21 漂走（把 21 处全换成直写）",
         "dock_menu_close(&mut self.dock_menu);",
         "self.dock_menu = None;",
-        |s| fx1_count_word(s, "dock_menu_close(&mut self.dock_menu);") == 19,
+        |s| fx1_count_word(s, "dock_menu_close(&mut self.dock_menu);") == 21,
     );
 }
 

@@ -9,3 +9,15 @@ edition = "2024"
 [dependencies]
 serde_json = "1.0.151"
 windows-reactor = "0.100"
+# skinvideo.rs 的 MF 抽帧腿。**版本偏差备案**：简报要求「对齐 lock 的 0.100 家族」，但
+# `windows` 元 crate 在 crates.io **没有 0.100 发布**（实测 `cargo info windows@0.100.0`
+# 找不到，最新 0.62.2，其依赖 `windows-core ^0.62.2`）；0.100 只推到了 support crate
+# （lock 里 windows-core/collections/future/numerics = 0.100.0）。MF 绑定只存在于元 crate，
+# 故取唯一可用版本 0.62.2（同 vendor 同 API 面；与 windows-reactor 的 0.100 support 家族
+# 互不引用，各自成树，不产生类型冲突）。feature 集以 skinvideo.rs 实际编译需要为准：
+# COM 初始化（Win32_System_Com）+ Media Foundation 全套（Win32_Media_MediaFoundation），
+# 后者自带 Win32_Foundation。mtime/文件元数据一律 std::fs，不拉 Storage/SystemInformation。
+# 循环播放的 seek 另要两枚：PROPVARIANT（Win32_System_Com_StructuredStorage）与 VT_I8 的
+# `From` 实现（Win32_System_Variant）—— 都只为 `IMFSourceReader::SetCurrentPosition` 那个
+# 100ns 位置参数服务，见 skinvideo.rs `Rgb32Reader::rewind`。
+windows = { version = "0.62.2", features = ["Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_Media_MediaFoundation"] }

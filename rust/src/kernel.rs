@@ -26,6 +26,37 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(90);
 /// 不抄进这里。分叉 `mux.rs` 的 `READ_TICK`（120 ms）是轮询节拍、不是超时，主干无对应物。
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// 认证那一发的**发数上限**（#195 B2 · K1b）。出处 = 主干 `MainWindow.xaml.cs:2869`
+/// `catch (Exception ex) when (attempt < 30)`（那一圈是 `for (var attempt = 1; ; attempt++)` 包着
+/// `await _rpc.AuthenticateAsync(url, ct)`）：第 30 发仍失败时 `when` 落不上，异常直接上抛，
+/// 引导按「内核启动失败」收敛 ⇒ 分叉侧同一格也只有**耗尽**才 `Err`。
+const AUTH_MAX_ATTEMPTS: u32 = 30;
+
+/// 两发认证之间的间隔（#195 B2 · K1b）。出处 = 主干 `MainWindow.xaml.cs:2872`
+/// `await Task.Delay(500, ct);`。主干注释（`:2858`）自陈「~15s 封顶」，实测口径是
+/// **29 觉 × 500 ms ≈ 14.5 s**（第 30 发落上去时不再睡）。
+///
+/// **不与 mux 那一族的 2 s / 60 s 共用、也不把它再乘一遍**：单轮 2 s 是 `mux.rs` 的
+/// `HANDSHAKE_BUDGET`（B1 已落，出处同样是主干 `:2898`），60 s 总窗在分叉住壳侧 `main.rs`
+/// （B3）。主干那两道是**两条独立兜底**、各数各的档，这里再立一颗「握手 2 s」就是把两条捏成一条。
+const AUTH_RETRY_DELAY: Duration = Duration::from_millis(500);
+
+/// [`kernel_log_tail`] 取多少行内核现场（#195 B2 · K4）。**行数是分叉自持口径**：主干那发
+/// `DiagLine($"[line] {line}")`（`Dsh/DshKernelHost.cs:117`）无条件全量落自己的文件，
+/// 分叉这根现场要进**失败卡 detail 与状态栏**（`main.rs` 的 `Msg::Failed` → `kernel_boot_failed`
+/// → `set_status` + `push_log`），不许把整份内核 stdout 灌进一行文案里。取末 12 行的理由：
+/// 首发失败卡的成因永远在末尾那几行（主干自己就是靠 `[line]` 尾巴定位的，PP3 §2 ①b 同判）。
+const KERNEL_LOG_TAIL_LINES: usize = 12;
+
+/// [`build_env`] 注入的第三颗 env 的**键名**，逐字照主干 `Dsh/DshKernelHost.cs:94`
+/// 的 `psi.EnvironmentVariables["NODE_COMPILE_CACHE"]`。
+const NODE_COMPILE_CACHE_KEY: &str = "NODE_COMPILE_CACHE";
+
+/// 那颗键的目录名尾段，逐字照同一句的 `Path.Combine(dshHome, "kernel-compile-cache")`。
+/// 目录**不需要**预先存在（node 自建）、写失败**静默忽略**（node 自己吞）、随 `DSH_HOME` 隔离
+/// —— 三条语义都抄主干 `:91-93` 那段注释，本层一颗 `fs` 调用都不发。
+const NODE_COMPILE_CACHE_DIR: &str = "kernel-compile-cache";
+
 pub struct Launch {
     pub exe: PathBuf,
     pub args: Vec<String>,
@@ -179,12 +210,17 @@ fn probe_npm_dsh_cmd() -> Option<PathBuf> {
     candidate.is_file().then_some(candidate)
 }
 
-/// 纯（§3.3）：交给内核的环境变量。主干 `DshKernelHost.cs:90-94` 是**两级共用的一份、无分支**：
+/// 纯（§3.3）：交给内核的环境变量。主干 `DshKernelHost.cs:89-94` 是**两级共用的一份、无分支**：
 /// ① `DSH_HOME = dshHome`（主干无条件给）；
 /// ② PATH 前置 `<install>\Kernel\bin`，但 `DshPluginBootstrap.PrependPath`（`:591-594`）在
 ///    **该目录不存在时直接 return 不注入**，且原 PATH 为空（含空串）时只写新目录。
 /// 分叉此前没有那个早退：内置目录缺失时会把一条不存在的路径塞进内核 PATH。这里对齐。
 /// `prepend_exists` 把存在性判定从 fs 里拎出来，好让「目录在/不在 × PATH 有/无」四例都能离线钉。
+/// ③（#195 B2 · K2）`NODE_COMPILE_CACHE = <dshHome>\kernel-compile-cache` —— 主干 `:94` 那一行
+///    逐字；**只在 `dsh_home` 为 `Some` 时给**（主干那颗恒非空，分叉这里有回退级臂）。
+///    **注入位次是兼容既有锁的妥协**：主干纸面顺序是 DSH_HOME → CACHE → PATH，而 `PATH` 由本文件
+///    `build_env_covers_prepend_exists_times_path_present` 那发按位钉过（`both[1]`）；env 的
+///    **顺序无语义**（内核侧是查表不是数下标），于是 CACHE 追加在尾、那两枚按位断言一个字不动。
 pub fn build_env(
     dsh_home: Option<&Path>,
     path_prepend: Option<&Path>,
@@ -201,6 +237,12 @@ pub fn build_env(
             None => bin.display().to_string(),
         };
         env.push(("PATH".to_string(), value));
+    }
+    if let Some(home) = dsh_home {
+        env.push((
+            NODE_COMPILE_CACHE_KEY.to_string(),
+            home.join(NODE_COMPILE_CACHE_DIR).display().to_string(),
+        ));
     }
     env
 }
@@ -859,9 +901,14 @@ pub struct PermissionsProjection {
 /// `dsh-permission-presets` 的 `optionOf()` 出的就是 `value = name = spec.name`）。
 /// 所以翻译属于视图层侧的最后一道，但表放在数据层这里，`i18n.rs` 只有键没有这张映射。
 /// 键 = 内核表键 + 派生的 `custom`；认不得的 id 原样回显（主干的 `_ => value`）。
-/// `"auto"` 是 0.1.7 内核保留的**活集成预设 id**（`dsh-approval-gate` 注册后出现在 `options` 里），
+/// `"auto"` 是内核保留的**活集成预设 id**（`dsh-approval-gate` 注册后出现在 `options` 里），
 /// 与配置表里的 `auto-approve` 并存 —— 主干 `MainWindow.xaml.cs:16735-16747` 给它单开一臂、
 /// 两者同译「自动审批」；分叉缺这一臂时中文界面直出裸 `auto`。
+/// 版本轴两件事分开说：「哪一版起保留」= **0.1.7**（历史起点）；「验到哪一版仍在册」=
+/// **0.2.0-rc.2 实测在册**（2026-09-30 逐字节复核：两树 `dsh-permission-presets/lib/index.js`
+/// md5 同为 `2a0c71d300ac9c9fbb23f43fda6a2dad` ⇒ byte-identical，其中 `"auto"` 的 invariant 行逐字
+/// `permission: "${AUTO_PRESET}" is reserved and cannot name a configured preset`（`AUTO_PRESET = "auto"`）；
+/// 台账 `rust/tmp/kv1-020-api-diff.md` §5「权限预设面零差分」）。
 pub fn permission_preset_zh(catalog: &Catalog, value: &str) -> String {
     match value {
         "read-only" => catalog.l("仅可查看"),
@@ -1510,7 +1557,7 @@ pub const EVENT_RESULT_METHOD: &str = "$events/result";
 /// 审批卡的两颗钮（`DshRpcClient.cs:717` 硬校验，第三个字面量直接抛）。
 pub const APPROVAL_OUTCOMES: [&str; 2] = ["allowed-once", "rejected"];
 
-/// `$events` 上**常驻订阅的事件名全表**（10 发 = 8 发 `OnEvent` + 2 发 `OnWaterfall`）。
+/// `$events` 上**常驻订阅的事件名全表**（11 发 = 9 发 `OnEvent` + 2 发 `OnWaterfall`）。
 ///
 /// **这张表是唯一事实源**：消费端（`main.rs` 的事件泵）分流只能查它，不许再抄第二张名字表；
 /// 内核新增/撤一条常驻订阅时，改这里即可（`events_subscription` 与单测会跟着变红）。
@@ -1521,11 +1568,18 @@ pub const APPROVAL_OUTCOMES: [&str; 2] = ["allowed-once", "rejected"];
 /// · `MainWindow.xaml.cs:2845` `OnEvent("commands/change")` —— 命令表失效重拉
 /// · `:2918/2919/2920` `OnEvent("api-session/{added,removed,status}")` —— 左栏增行/掉行/状态点
 /// · `MainWindow.Cordis.cs:104/105/106/107` `OnEvent("cordis/{request-run,request-run-resolved,dynamic-package,dynamic-retract}")`
+/// · `MainWindow.xaml.cs` 的 `SetupRpc` 区内 `OnEvent("permission-presets/catalog-changed")` —— #190
+///   的 dsh-permission-presets 新事件（**载荷为空**：消费者只「收到 ⇒ 重拉目录」，不许解 `args`；
+///   版本轴分开说：「起自哪版」= 0.1.7，「验到哪个版本仍在册」= **0.2.0-rc.2 实测在册**
+///   （2026-09-30 现测：转发名册两树 md5 同为 `f75557092e732d291479324bdcddde90` ⇒ byte-identical，
+///    台账 `rust/tmp/kv1-020-api-diff.md` §4.1/§5）；
+///   转发白名单出处 `dsh-api-remotes/lib/types/remote-events.js` 的 `{ event: 'permission-presets/catalog-changed', mode: 'emit' }`。
+///   主干侧行号会漂 ⇒ 这里按符号锚，抄行号就是给自己埋第二次「名字带数说谎」）
 /// · `MainWindow.xaml.cs:2912/2925` `OnWaterfall("approval/request")` / `("user-questions/request")` —— #74 已端到端
 ///
 /// 判据口径：后两条走 waterfall 那一支（名字复用 #74 已有的 waterfall 权威判据
-/// `PendingKind::of`，**不在这张表里另立第二份归属**）；前 8 条只可能从 `emit` 那一支认出。
-pub const EVENTS_SUBSCRIPTIONS: [&str; 10] = [
+/// `PendingKind::of`，**不在这张表里另立第二份归属**）；前 9 条只可能从 `emit` 那一支认出。
+pub const EVENTS_SUBSCRIPTIONS: [&str; 11] = [
     "commands/change",
     "api-session/added",
     "api-session/removed",
@@ -1534,6 +1588,7 @@ pub const EVENTS_SUBSCRIPTIONS: [&str; 10] = [
     "cordis/request-run-resolved",
     "cordis/dynamic-package",
     "cordis/dynamic-retract",
+    "permission-presets/catalog-changed",
     APPROVAL_EVENT,
     QUESTION_EVENT,
 ];
@@ -2606,6 +2661,10 @@ const DAY_MS: i64 = 86_400_000;
 pub const STATS_HEAT_WEEKS: usize = 26;
 
 /// 热力图口径（主干 `_statsHeatMetric`，:14211 默认 `"day"`；选择器是那条 SelectorBar）。
+///
+/// 变体序 = 选择器三颗 `SelectorBarItem` 的次序（`MX:1631-1633`：每日 / 每周 / 累计）
+/// ⇒ [`HeatMetric::from_index`] 与 `main.rs` 的 `STATS_HEAT_METRIC_CHOICES` 共用这一张序，
+/// 下标错位就是口径错位。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum HeatMetric {
     /// 每日：格子 = 当天的 token 合计。
@@ -2615,6 +2674,18 @@ pub enum HeatMetric {
     Week,
     /// 累计：从窗口第一天起逐日累加（主干 :15404-15407）。
     Total,
+}
+
+impl HeatMetric {
+    /// 选择器下标 → 口径。越界（含 `usize` 回绕）回落 [`HeatMetric::Day`]
+    /// —— 与主干那句 `switch` 的 `default:` 臂同向（未知 tag 按每日算）。
+    pub const fn from_index(index: usize) -> Self {
+        match index {
+            1 => Self::Week,
+            2 => Self::Total,
+            _ => Self::Day,
+        }
+    }
 }
 
 /// 日序 → 星期几，**0 = 周一**（主干 `(int)DayOfWeek + 6) % 7` 的同果版）。
@@ -3467,6 +3538,143 @@ pub fn session_create_request(
     request
 }
 
+/// [`auth_step`] 的三态去向（形制照 B1 落在 `mux.rs` 的 `handshake_step`：判据拆成纯函数，
+/// 方向离线钉死，真内核那一发一律不许起）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuthStep {
+    /// 这一发拿到了 < 400 的响应 ⇒ 前进（主干：`AuthenticateAsync` 没抛，`break`）。
+    Proceed,
+    /// 这一发没成，但主干那个 `when (attempt < 30)` 还落得上 ⇒ 睡一拍再打一发。
+    Retry,
+    /// 第 30 发仍没成 ⇒ 放弃，把最后一次的失败原文冒出去（主干：`when` 落不上，异常直接上抛）。
+    Abandon,
+}
+
+/// 纯（#195 B2 · K1b 的判据本体）：第 `attempt` 发认证（**从 1 数**）的返回码 `status` 之后该往哪走。
+/// `status`：`None` = 连不上 / 读不到（主干那一发是 `HttpRequestException`，最常见是「拒绝连接」），
+/// `Some(>= 400)` = 网关路由还没挂上（主干是 404 抛）。
+///
+/// 判据**只有「发数」这一根，刻意不吃已耗时**：主干 `MainWindow.xaml.cs:2860-2874` 那段封顶靠的就是
+/// `attempt < 30` 这一根，没有秒表（有秒表的是 mux 那一族 `:2892` / `:2903` 的 60 s 总窗）。
+/// 在这里加一根时间闸就是主干没有的额外档 ⇒ 多做即缺陷。
+pub fn auth_step(attempt: u32, status: Option<u16>) -> AuthStep {
+    if status.is_some_and(|code| code < 400) {
+        return AuthStep::Proceed;
+    }
+    if attempt < AUTH_MAX_ATTEMPTS {
+        AuthStep::Retry
+    } else {
+        AuthStep::Abandon
+    }
+}
+
+/// [`auth_backoff`] 那一拍等待的结果 —— 「可中断」这一半的形状。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuthWait {
+    /// 睡满了 `AUTH_RETRY_DELAY`（含假唤醒提前到点，见 `Err(mpsc::RecvTimeoutError::Timeout)` 那条口径）。
+    Slept,
+    /// 内核日志通道断了 = 两条泵线程的 sender 都掉了 ⇒ 内核已经没了。
+    /// 再打下去必然白等满剩下的发数（连不上那一发只会一直「拒绝连接」），当场收束。
+    /// 这一支不是「主干没有的额外档」：主干那一觉吃的是引导 `ct`（`MainWindow.xaml.cs` 的
+    /// `Task.Delay(500, ct)`），壳侧一取消就醒；分叉 `Kernel::start` 拿不到那颗 token —— 壳侧落点
+    /// = `main.rs` 里 `fn start_kernel(` 那一发的后台闭包（形如 `spawn_background(move |_token| …)`，
+    /// 行号会随批漂，故只锚函数名），token 被直接弃了 ⇒ 这里只用手边真拿得到的信号。
+    /// #195 B4 的裁定：**真取消口结构上不可能落在本文件** —— 取消意图只在壳侧生成，而壳侧递不进
+    /// `Kernel::start`（入参只有 `&Launch` 一颗；给 `Launch` 加字段会当场打红 `tests/**` 里那些按
+    /// 字面量构造 `Launch` 的用例，那是本批的禁碰面）⇒ 那一发整件登记给壳侧接线那一批，
+    /// 本文件为此**一行产品码都不加**（加一个零调用方的入口 = 主干没有的那一面）。
+    KernelGone,
+}
+
+/// 纯（#195 B2 · K1b 的驱动）：认证段的重试圈。把「打一发」`attempt_http` 与「睡一拍」`wait`
+/// 都做成入参，好在离线里把**发数**、**觉数**与**去向**三样都钉死（不起真内核、不起真 socket）。
+///
+/// 返回：
+/// * `Ok((status, headers))` —— 拿到了 < 400 的那一发，`headers` 交给 `cookie_from`；
+/// * `Err(text)` —— 放弃。text 逐字保留**最后一次的失败原文**（`鉴权失败: HTTP {status}` /
+///   `鉴权请求失败: {e}`）再缀上内核现场（K4）；重试**不许**把它换成一句泛化话 ——
+///   换了你就不可能区分「路由还没挂上」与「内核压根不起来」。
+///
+/// 首发语义与主干同：第一发**立刻**打（不预先睡），耗尽那一发**不补觉**。
+pub fn auth_backoff<F, W>(
+    mut attempt_http: F,
+    mut wait: W,
+    log: &mut Vec<String>,
+) -> Result<(u16, String), String>
+where
+    F: FnMut() -> Result<(u16, String, String), String>,
+    W: FnMut(&mut Vec<String>, Duration) -> AuthWait,
+{
+    let mut attempt: u32 = 0;
+    loop {
+        attempt += 1;
+        let outcome = attempt_http();
+        let step = auth_step(
+            attempt,
+            match &outcome {
+                Ok((code, _, _)) => Some(*code),
+                Err(_) => None,
+            },
+        );
+        if step == AuthStep::Proceed {
+            let (code, headers, _) = match outcome {
+                Ok(hit) => hit,
+                // 判据被改歪（Proceed 却拿不到响应）时也必须冒 Err，绝不静默再来一发 ——
+                // 静默就是 B1 那条「既不出 Ok 也不出 Err」的同族病。
+                Err(_) => {
+                    return Err(kernel_start_failure("鉴权判据漂了：Proceed 却没有响应", log));
+                }
+            };
+            return Ok((code, headers));
+        }
+        let reason = match &outcome {
+            Ok((code, _, _)) => format!("鉴权失败: HTTP {code}"),
+            Err(error) => format!("鉴权请求失败: {error}"),
+        };
+        // 每一发的失败都进 `log`：主干靠 `DiagLine($"[auth] attempt {attempt} FAIL: …")`
+        // （`MainWindow.xaml.cs:2871`）定位首发 404；分叉同一位置只有这根 `log`
+        // （→ `Msg::Connected` → `push_log` → `emit_line("DIAG: …")` = 分叉自持诊断口）。
+        log.push(format!(
+            "[auth] attempt {attempt}/{} FAIL: {reason}",
+            AUTH_MAX_ATTEMPTS
+        ));
+        if step == AuthStep::Abandon || wait(log, AUTH_RETRY_DELAY) == AuthWait::KernelGone {
+            return Err(kernel_start_failure(&reason, log));
+        }
+    }
+}
+
+/// 纯（#195 B2 · K4）：取末 [`KERNEL_LOG_TAIL_LINES`] 行内核现场，逐行加主干那颗 `[line] ` 前缀
+/// （`Dsh/DshKernelHost.cs:117` `DiagLine($"[line] {line}");`），行之间用 ` · ` 连成**一行** ——
+/// 这根串要进失败卡 detail 与状态栏，不许带换行。空表回空串（调用方据此不缀分隔符）。
+/// 口径（2026-09-30 内核换档后钉死，**数值不动**）：`KERNEL_LOG_TAIL_LINES = 12` 的语义是
+/// 「**至多取末 12 行**」的**上限**，不是「期望恰好有 12 行」的假设 ⇒ 尾窗按**实际行数**给，**上限不变**。
+/// 0.2.0-rc.2 实测内核 stdout/stderr 行数比 0.1.7 少 4（`[probe] webserver/credentials/web-startup/connection`
+/// 那一族内核不再打；台账 `rust/tmp/kv2-020-live-boot.md` §3.3 的 diff `<` 四行 + 隔离重跑反证），
+/// 现场因此**变薄** —— 这是**接受**而非修：重算数值 = 把上限当计数用，为此造新诊断腿 = 多做
+/// （内核没有的东西壳不许有）。
+pub fn kernel_log_tail(log: &[String]) -> String {
+    let skip = log.len().saturating_sub(KERNEL_LOG_TAIL_LINES);
+    log[skip..]
+        .iter()
+        .map(|line| format!("[line] {line}"))
+        .collect::<Vec<String>>()
+        .join(" · ")
+}
+
+/// 纯（#195 B2 · K4）：`Kernel::start` 三条早退路的错误原文组装器。
+/// 过去那三条（握手超时 / 内核提前退出 / 认证失败）只留一句定性、把已经攒下的 `log` **整个丢掉**，
+/// 而这三条正是真机最需要现场的那三条（主干就是靠 `[line]` 尾巴定位的）。
+/// 定性原文排在前、原样不动 ⇒ 失败卡的定性（以及吃它的锁）不受影响，现场只缀在 detail 尾巴上。
+pub fn kernel_start_failure(qualifier: &str, log: &[String]) -> String {
+    let tail = kernel_log_tail(log);
+    if tail.is_empty() {
+        qualifier.to_string()
+    } else {
+        format!("{qualifier} ｜ 内核现场: {tail}")
+    }
+}
+
 impl Kernel {
     pub fn start(launch: &Launch) -> Result<Self, String> {
         let mut command = Command::new(&launch.exe);
@@ -3536,7 +3744,10 @@ impl Kernel {
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
                 let _ = child.kill();
-                return Err("内核握手超时（90s 未见 dsh web: 行）".to_string());
+                return Err(kernel_start_failure(
+                    "内核握手超时（90s 未见 dsh web: 行）",
+                    &log,
+                ));
             }
             match rx.recv_timeout(left) {
                 Ok(line) => {
@@ -3548,7 +3759,10 @@ impl Kernel {
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     let status = child.try_wait().ok().flatten();
                     let _ = child.kill();
-                    return Err(format!("内核提前退出: {status:?}"));
+                    return Err(kernel_start_failure(
+                        &format!("内核提前退出: {status:?}"),
+                        &log,
+                    ));
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     // 只有 deadline 走到头才算握手超时。Windows 的 condvar 允许假唤醒，
@@ -3566,8 +3780,34 @@ impl Kernel {
             Some(query) => format!("/?{query}"),
             None => "/".to_string(),
         };
-        let (status, headers, _) =
-            http(&ep, "GET", &path, None, None).map_err(|e| format!("鉴权请求失败: {e}"))?;
+        // 认证带退避（#195 B2 · K1b，主干 `MainWindow.xaml.cs:2857-2874`）：URL 是内核**提前播报**
+        // 出来的（`49f6107d` 那手渐进启动补丁），静态路由/网关可能还在注册 ⇒ 这一发撞上的是
+        // 「连接拒绝」或 404，而不是「内核坏了」。主干用 30 发 × 500 ms 把这一窗压过去，
+        // 耗尽才让异常上抛 ⇒ 分叉这里也只有耗尽才 `Err`（一发失败就翻失败卡 = 比主干多一档）。
+        // 「睡一拍」这里走 `rx.recv_timeout` 而不是裸 `thread::sleep`：① 内核在这半秒里死了
+        // ⇒ 通道断、当场收束，不白等满剩下的发数；② 这半秒内核吐的行**进 `log`** 而不是烂在泵
+        // 线程里 —— 正是耗尽那条 `Err` 要带出去的现场（K4）。
+        let (status, headers) = auth_backoff(
+            || http(&ep, "GET", &path, None, None),
+            |captured: &mut Vec<String>, budget| {
+                let until = Instant::now() + budget;
+                loop {
+                    let left = until.saturating_duration_since(Instant::now());
+                    if left.is_zero() {
+                        break AuthWait::Slept;
+                    }
+                    match rx.recv_timeout(left) {
+                        Ok(line) => captured.push(line),
+                        // Windows 的 condvar 允许假唤醒（本文件上面 `Err(Timeout)` 那条注释同规）：
+                        // 这里把「单次 Timeout」一律当「到点」论，最坏只是这一觉短一点，
+                        // **发数上限不动** ⇒ 不会因此越过主干那 30 发的档。
+                        Err(mpsc::RecvTimeoutError::Timeout) => break AuthWait::Slept,
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break AuthWait::KernelGone,
+                    }
+                }
+            },
+            &mut log,
+        )?;
         let cookie = cookie_from(&headers);
         let mut log = log;
         // 缺口 #68 ⑤：作业对象到底挂没挂上，运行时只能从这一行看出来（主干那句是
@@ -3585,9 +3825,9 @@ impl Kernel {
         }) {
             log.push(format!("auth < {line}"));
         }
-        if status >= 400 {
-            return Err(format!("鉴权失败: HTTP {status}"));
-        }
+        // 这里**不再**有 `if status >= 400 { … }` 那一支直路闸：那道判据已经搬进 `auth_step`
+        // /`auth_backoff`（`>= 400` 那一发根本 break 不出驱动，耗尽才冒 Err），
+        // 留在直路上就是「一发定生死」的老形状，正是本刀要消掉的东西。
         Ok(Self {
             ep,
             cookie,
@@ -4012,7 +4252,18 @@ mod tests {
     /// 正常值 / 键缺席 / 空串（还有类型不对）/ 整份 JSON 是坏的。
     #[test]
     fn package_version_only_accepts_a_non_empty_string() {
-        // ① 正常：随包发行的那份就是这种形状（本机 `Kernel/dsh/package.json` = 0.1.5-rc.2）。
+        // ① 正常：`package.json` 的常见形状（`version` 是非空字符串）就是这一发。
+        //   **刻意不把版本值钉进这句注释**（钉了必再烂：这里原写的是「本机 = 0.1.5-rc.2」，换档当天就成了谎）。
+        //   三把尺各是什么：
+        //   · 随包 bundle = `<install>\Kernel\dsh\package.json`（即 `kernel_dir_from(current_exe())` 认的那颗）；
+        //   · npm 全局 = `%APPDATA%\npm\node_modules\@deepseek-ai\dsh\package.json`；
+        //   · 关于页读的是第三把：`kernel_version()` 里那颗 `OnceLock` 走
+        //     `kernel_dir_for_read().and_then(|dir| kernel_version_from(&dir))`，而 `kernel_dir_for_read()`
+        //     = `BLADE2_KERNEL_DIR` 优先、否则 `kernel_dir_from(current_exe())`
+        //     ⇒ **显示的永远是「我要起的那颗」，不是「随包的那颗」**（换 `BLADE2_KERNEL_DIR` 就换一颗；
+        //     `kernel_version()` 只把它缓一次，见那颗 `OnceLock`）。
+        //   2026-09-30 现测快照：bundle `0.1.7-rc.2` / npm 全局 `0.2.0-rc.2` —— **这是快照不是判据**，
+        //   本发用例喂的是任意样串（下面 `0.1.5-rc.2` 那两发与 `"0.1.5"` 那一发同），与本机装了什么无关。
         assert_eq!(
             parse_package_version(r#"{"name":"@deepseek-ai/dsh","version":"0.1.5-rc.2"}"#),
             Some("0.1.5-rc.2".to_string())
@@ -4300,7 +4551,7 @@ mod tests {
         assert_eq!(
             permission_preset_zh(&zh, "danger-full-access"),
             "完全权限",
-            "主干表里的六个档一个都不许漏（含 0.1.7 保留的活 auto 预设，另见 the_reserved_auto_preset_*）"
+            "主干表里的六个档一个都不许漏（含内核保留的活 auto 预设：0.1.7 起保留、0.2.0-rc.2 实测仍在册，另见 the_reserved_auto_preset_*）"
         );
         assert_eq!(permission_preset_zh(&zh, "read-only"), "仅可查看");
         assert_eq!(permission_preset_zh(&zh, "auto-approve"), "自动审批");
@@ -4339,7 +4590,10 @@ mod tests {
         assert!(!parsed.is_empty());
     }
 
-    /// 内核 0.1.7 保留的活集成预设 id `"auto"`（`dsh-approval-gate` 注册后出现在 `options` 里）。
+    /// 内核保留的活集成预设 id `"auto"`（`dsh-approval-gate` 注册后出现在 `options` 里）。
+    /// 版本轴两件事分开：「哪一版起保留」= **0.1.7**（历史起点），「验到哪一版仍在册」=
+    /// **0.2.0-rc.2 实测在册**（`dsh-permission-presets/lib/index.js` 两树 byte-identical，
+    /// md5 `2a0c71d300ac9c9fbb23f43fda6a2dad`，台账 `rust/tmp/kv1-020-api-diff.md` §5）。
     /// 主干 `MainWindow.xaml.cs:16735-16747` 给它单开一臂、与配置表的 `auto-approve` 同译「自动审批」；
     /// 分叉补臂前少这一臂 ⇒ 中文界面直出裸 `auto`。两条硬判据：
     /// ① 两档都走 `catalog.l`（A 道）—— 下拉/表体不过 i18n 表就是 #62 那类缺陷，英文界面会露中文；
@@ -5200,9 +5454,11 @@ mod tests {
         assert!(launcher_command_line(&Launcher::Missing).is_none());
     }
 
-    /// §3.3：env 注入四例（目录在/不在 × PATH 有/无）。两个关键点：
+    /// §3.3：env 注入四例（目录在/不在 × PATH 有/无）。三个关键点：
     /// ① `DSH_HOME` 两级都给、无条件；② `Kernel\bin` **不存在时不注入 PATH**
-    /// （主干 `PrependPath` 那句 `return`），且原 PATH 为空时只写新目录。
+    /// （主干 `PrependPath` 那句 `return`），且原 PATH 为空时只写新目录；
+    /// ③（#195 B2 · K2）`NODE_COMPILE_CACHE` 只跟着 `dsh_home` 走、**追加在尾**，
+    /// 目录在/不在都不影响它（主干那颗吃的也是 `dshHome`，与 `Kernel\bin` 无关）。
     #[test]
     fn build_env_covers_prepend_exists_times_path_present() {
         let home = Path::new(r"C:\Users\me\AppData\Local\Blade2");
@@ -5220,16 +5476,25 @@ mod tests {
         // 空串与原 PATH 缺席同形（主干那颗也判 `IsNullOrEmpty`）。
         assert_eq!(build_env(Some(home), Some(bin), true, Some("")), no_path);
 
-        // ③④ 目录不在 ⇒ **一个 PATH 键都不加**（两种 PATH 形态各钉一次）。
+        // ③④ 目录不在 ⇒ **一个 PATH 键都不加**（两种 PATH 形态各钉一次）；
+        // 整向量现在多的是 `NODE_COMPILE_CACHE` 那颗（K2），`DSH_HOME` 仍是唯一不受早退影响的。
         for path_env in [Some(r"C:\Windows"), None] {
             let without = build_env(Some(home), Some(bin), false, path_env);
             assert_eq!(
                 without,
-                vec![(home_str.to_string(), r"C:\Users\me\AppData\Local\Blade2".to_string())],
+                vec![
+                    (home_str.to_string(), r"C:\Users\me\AppData\Local\Blade2".to_string()),
+                    (
+                        "NODE_COMPILE_CACHE".to_string(),
+                        r"C:\Users\me\AppData\Local\Blade2\kernel-compile-cache".to_string()
+                    ),
+                ],
                 "Kernel\\bin 不存在时不许往内核 PATH 里塞一条不存在的路径"
             );
         }
         // 自测口那种：两颗都没有 ⇒ 空 env（对齐分叉既有 `BLADE2_KERNEL_EXE` 形态）。
+        // `dsh_home` 缺席时 `NODE_COMPILE_CACHE` 也必须缺席 —— 主干那颗恒有 `dshHome`，
+        // 分叉的回退级臂没有，硬注入就是往内核塞一条无家可归的缓存路径。
         assert!(build_env(None, None, false, Some("x")).is_empty());
     }
 
@@ -5580,7 +5845,7 @@ mod tests {
         assert_eq!(bare.kind(), "waterfall");
     }
 
-    /// 登记层（`EVENTS_SUBSCRIPTIONS` 是唯一事实源）：表上 10 发名字都要被认出来，
+    /// 登记层（`EVENTS_SUBSCRIPTIONS` 是唯一事实源）：表上 11 发名字都要被认出来，
     /// 且**只在自己那一支上**被认出 —— 主干那两条 `if` 各查各的注册表
     /// （`DshRpcClient.cs:590-611` 只喂 `emit`、`:618-628` 只喂 `waterfall`），串门即漏。
     #[test]
@@ -5613,8 +5878,8 @@ mod tests {
             assert!(EVENTS_FRAME_TYPES.contains(&parsed.kind()));
             assert_eq!(parsed.subscription(), Some(name));
         }
-        // 表 10 条、无重复 ⇒ 下一刀按它分流时不会有两条臂抢同一发名字。
-        assert_eq!(EVENTS_SUBSCRIPTIONS.len(), 10);
+        // 表 11 条、无重复 ⇒ 下一刀按它分流时不会有两条臂抢同一发名字。
+        assert_eq!(EVENTS_SUBSCRIPTIONS.len(), 11);
         let unique: std::collections::BTreeSet<&'static str> =
             EVENTS_SUBSCRIPTIONS.into_iter().collect();
         assert_eq!(unique.len(), EVENTS_SUBSCRIPTIONS.len());
@@ -9165,6 +9430,74 @@ mod usage_stats_tests {
         assert_eq!(aggregate.kpis(TODAY).total_tokens, 5);
         assert_eq!(aggregate.sessions.len(), 2);
     }
+
+    // ---------------- 热力图口径（#143 的选择器三档） --------------------------
+
+    /// 下标 → 口径，含越界回落。主干那句 `switch (_statsHeatMetric)` 的 `default:` 臂
+    /// 把未知 tag 按每日算（`:15529-15545`）⇒ 分叉 `_ => Day` 同向。
+    /// 变异：把 `_ => Self::Day` 改成 `_ => Self::Total` ⇒ 末条翻红。
+    #[test]
+    fn heat_metric_from_index_keeps_the_selector_order_and_falls_back_to_day() {
+        assert_eq!(HeatMetric::from_index(0), HeatMetric::Day);
+        assert_eq!(HeatMetric::from_index(1), HeatMetric::Week);
+        assert_eq!(HeatMetric::from_index(2), HeatMetric::Total);
+        assert_eq!(HeatMetric::default(), HeatMetric::Day, "默认档 = 主干 IsSelected=True 的那颗");
+        // 越界与 `usize` 回绕都不许 panic：壳侧那一发 `Msg::StatsHeatMetric(index, on)`
+        // 的下标就来自视图回调，脏格子必须回落而不是炸。
+        for index in [3usize, 4, 99, usize::MAX - 1, usize::MAX] {
+            assert_eq!(HeatMetric::from_index(index), HeatMetric::Day, "下标 {index} 没回落每日");
+        }
+    }
+
+    /// 三种口径从**同一扇窗**里各算各的，且互不相同（否则那颗选择器等于没接）。
+    /// `TODAY`(20720) 的 `weekday_index` 是 3（周四）⇒ 本周一 = 20717。
+    /// 变异：把 `heat_cells` 里某个 match 臂摘掉 ⇒ 对应那条翻红。
+    #[test]
+    fn heat_cells_recomputes_all_three_metrics_from_the_same_window() {
+        let mut aggregate = UsageAggregate::default();
+        aggregate.absorb(&feed(vec![
+            message(1, (TODAY - 3) * DAY_MS, 100, "p", "a"), // 本周一 20717
+            message(2, (TODAY - 1) * DAY_MS, 5, "p", "a"),   // 20719
+            message(3, TODAY * DAY_MS, 10, "p", "a"),        // 20720 = 今天
+        ]));
+        let day = |cells: &[(i64, i64)], day: i64| cells.iter().find(|(d, _)| *d == day).map(|(_, v)| *v);
+
+        let daily = aggregate.heat_cells(TODAY, STATS_HEAT_WEEKS, HeatMetric::Day);
+        let weekly = aggregate.heat_cells(TODAY, STATS_HEAT_WEEKS, HeatMetric::Week);
+        let total = aggregate.heat_cells(TODAY, STATS_HEAT_WEEKS, HeatMetric::Total);
+
+        // 同一扇窗：起于本周一往前 25 周，止于今天（`heat_window` 的口径）。
+        assert_eq!(daily.len(), weekly.len(), "三个口径的格子数必须同窗");
+        assert_eq!(daily.len(), total.len());
+        assert_eq!(daily.last().map(|(d, _)| *d), Some(TODAY), "末格就是今天");
+        assert_eq!(
+            daily.first().map(|(d, _)| *d),
+            Some(monday_of(TODAY) - (STATS_HEAT_WEEKS - 1) as i64 * 7),
+            "首格 = 本周一往前 25 周",
+        );
+
+        assert_eq!(day(&daily, TODAY), Some(10), "每日口径 = 当天合计");
+        assert_eq!(day(&daily, TODAY - 1), Some(5));
+        assert_eq!(day(&daily, TODAY - 3), Some(100));
+        assert_eq!(day(&daily, TODAY - 2), Some(0), "没记录的日子给 0，不跳过");
+
+        // 每周口径：本周 7 格都取该周合计（100 + 5 + 10），跨周则各自为政。
+        assert_eq!(day(&weekly, TODAY), Some(115), "本周合计铺满本周 7 格");
+        assert_eq!(day(&weekly, TODAY - 3), Some(115), "本周一也是 115");
+        assert_eq!(day(&weekly, TODAY - 4), Some(0), "上周没有数据 ⇒ 0");
+
+        // 累计口径：从窗口第一天起逐日累加 ⇒ 单调不减，且末格 = 窗口内总量。
+        assert_eq!(day(&total, monday_of(TODAY) - 4), Some(0), "本周一之前一格");
+        assert_eq!(day(&total, TODAY - 3), Some(100), "周一首次见到本周的量");
+        assert_eq!(day(&total, TODAY - 1), Some(105), "周二仍是 100（周二无数据）");
+        assert_eq!(day(&total, TODAY), Some(115), "末格 = 全窗总量");
+        assert!(total.windows(2).all(|pair| pair[0].1 <= pair[1].1), "累计口径必须单调不减");
+
+        // 三个口径不能给出同一列数（否则那颗选择器是装饰）。
+        assert_ne!(daily, weekly, "每日与每周给出一模一样的格子");
+        assert_ne!(daily, total, "每日与累计给出一模一样的格子");
+        assert_ne!(weekly, total, "每周与累计给出一模一样的格子");
+    }
 }
 
 // ==================== #135 家 A/B：`step/start` / `step/end` 两臂的折叠本体 ====================
@@ -11230,11 +11563,11 @@ mod kw2_cordis_tests {
     }
 }
 
-// ==================== RD9 表A · C5+C6：credentials 3 + settings 5 + llm 2 的构造与回执 ====================
+// ==================== RD9 表A · C5+C6：credentials 3 + settings 3 + llm 2 的构造与回执 ====================
 // 本节只有两件事：进 `payload.args` 的那棵树、回帧的形状。宿主与派发在 `main.rs`（下一批），UI 一颗不碰。
 // 追加在文件末尾的理由同 `:7741` 那条 —— 本仓 `include_str!` 源码锁按「起始锚 → 结束锚首次出现」开窗。
 //
-// **十发全平铺，无一裹 `request`**（与 `session/selectModel` 那颗相反，也与 workspace 那六发相反）：
+// **八发全平铺，无一裹 `request`**（与 `session/selectModel` 那颗相反，也与 workspace 那六发相反）：
 // 两族描述符的 `invocation.kind` 都是 `direct`，`parameters[].wire` 就是顶层键名；网关
 // `assertExactArguments`（`@deepseek-ai/dsh-api-gateway/lib/types/index.js`）拿 `Reflect.ownKeys(args)`
 // 与 `descriptor.parameters.map(p => p.wire)` 比**集合** —— 多一颗报 `unexpected "x"`、少一颗报
@@ -11245,23 +11578,40 @@ mod kw2_cordis_tests {
 //
 // 描述符出处（逐颗读过 `parameters` 与 `result` 的 schema）：
 // · credentials 三发 → `@deepseek-ai/dsh-api-settings-controller#credentialsController`
-// · settings 五发 → 同包的 `#settingsController`（`settings/describe` 的 result 复用
+// · settings 三发 → 同包的 `#settingsController`（`settings/describe` 的 result 复用
 //   `@deepseek-ai/dsh-settings/types#SettingsDescribeValue`，ns 元素复用 `#SettingsNamespaceView`）
 // · llm 两发 → `@deepseek-ai/dsh-llm#llm`
+//
+// 台账 #224 B4（死臂末层）：这一族原先还多一颗「预设目录可否打开」的能力门控发。
+// 主干自内核 0.1.7 起把那一发与它的「打开目录」姊妹发一起撤了入口（`MW:13349-13350`、`:13405`
+// 两处注释逐字记着这次撤除），B4 摘的是**只有分叉自造的那半发**：整串方法名、名册成员行、
+// 构造器与回执判据 `fn` 一并从本文件消失，宿主腿（B3）、假内核派发臂与 `tests/ipc.rs` 的同名
+// 用例同批摘净。名册基数由十降到九，五把基数闸（本文件四把 + `tests/ipc.rs` 一把孪生）一起抬。
+// ⚠ 那句「五把」记的是 **B4 落地之前**的账：B4 自己的反向锁又往本文件落了一枚带字面基数的闸，
+//   下面 B5 那段的现测计数才是当前真值（本文件五把 + 孪生一把 = 六把）。
+// 反向锁见 `kw3_rd9_settings_tests::b4_the_cut_preset_dir_capability_stays_cut_and_the_roster_counts_itself`。
+//
+// 台账 #224 B5（死臂第四刀）：上面那句「姊妹发」这次也摘了。同一把内核尺（`0.1.7-rc.2` 整包逐字，
+// 正对照现测有效）下那一发的方法名与它的回执类型名**都是 0 命中**；主干侧只剩两句撤除注释、
+// 零活生产者，分叉侧 `src/main.rs` 只剩一行注释、标识符尺零命中 ⇒ 与 B4 判据同形，死臂成立。
+// 本刀摘的层：const、名册成员行、构造器整段、回执枚举与它的判据整段，外加 `tests/ipc.rs` 的
+// 正向回执格与两枚参数拒绝元组、假内核那条派发臂（摘后落同文件 `other` 兜底回 404 + `not_found`）。
+// 名册基数由九降到八：**六把**基数闸（本文件五把 + `tests/ipc.rs` 一把孪生）一起抬，本文件那枚
+// `[&str; N]` 形的对照集也同步改窄（它不是切片 ⇒ 漏改直接编译错）。带内回执判据由五处降到四处；
+// 一枚专钉那发回执两态的用例这次**整枚摘**（它剩下的半边就是本刀那发，留着就是给死臂留判据）。
+// 反向锁见 `kw3_rd9_settings_tests::b5_the_cut_open_preset_dir_arm_stays_cut_and_the_roster_counts_itself`。
 
-/// 十发的方法名（集中一处，下一批 main.rs 与 `tests/ipc.rs` 都按这组常量对表，改不漏）。
+/// 八发的方法名（集中一处，下一批 main.rs 与 `tests/ipc.rs` 都按这组常量对表，改不漏）。
 pub const CREDENTIALS_DESCRIBE: &str = "credentials/describe";
 pub const CREDENTIALS_SET: &str = "credentials/set";
 pub const CREDENTIALS_UNSET: &str = "credentials/unset";
 pub const SETTINGS_DESCRIBE: &str = "settings/describe";
 pub const SETTINGS_REPLACE: &str = "settings/replace";
 pub const SETTINGS_UPDATE: &str = "settings/update";
-pub const SETTINGS_CAN_OPEN_PRESET_DIR: &str = "settings/canOpenAgentPresetDirectory";
-pub const SETTINGS_OPEN_PRESET_DIR: &str = "settings/openAgentPresetDirectory";
 pub const LLM_LIST_CONFIGURABLE_PROVIDERS: &str = "llm/listConfigurableProviders";
 pub const LLM_DISCOVER_MODELS: &str = "llm/discoverModels";
 
-/// C5 + C6 的十发名单（基数锁用；测试按「恰十颗」与「逐颗在源码里有 const」两头钉）。
+/// C5 + C6 的八发名单（基数锁用；测试按「恰八颗」与「逐颗在源码里有 const」两头钉）。
 pub const RD9_C5_C6_METHODS: &[&str] = &[
     CREDENTIALS_DESCRIBE,
     CREDENTIALS_SET,
@@ -11269,8 +11619,6 @@ pub const RD9_C5_C6_METHODS: &[&str] = &[
     SETTINGS_DESCRIBE,
     SETTINGS_REPLACE,
     SETTINGS_UPDATE,
-    SETTINGS_CAN_OPEN_PRESET_DIR,
-    SETTINGS_OPEN_PRESET_DIR,
     LLM_LIST_CONFIGURABLE_PROVIDERS,
     LLM_DISCOVER_MODELS,
 ];
@@ -11336,9 +11684,13 @@ fn with_expected_revision(mut args: Value, expected_revision: Option<f64>) -> Va
 /// 回执 = `#SettingsNamespaceView`，主干**整个丢弃**（`await` 无接收者，随后 `_settingsSnapshot = null`
 /// 重拉 describe）⇒ 本层不为它造解析器（同 `cordis_resolve_request_run` 的「await 但不消费」口径）。
 ///
-/// 在册历史：`tests/mw2_deadbuttons.rs` 正向钉着 main.rs 的
-/// `count("分叉未接入 settings/replace") == 1`。那颗锁不在本文件、本轮不改 ⇒
-/// 本发是「ctor 已落、派发与撤钉在下一批」。
+/// 在册现值（2026-09-30 现测，旧文案在此处是**谎**故改口）：`tests/mw2_deadbuttons.rs` 钉的是
+/// main.rs 的 `count("分叉未接入 settings/replace") == 0`（那颗假桩串已**整文件归零**，`src/main.rs`
+/// 现测该串 0 发），同文件另一发正锁钉「桩拆了且腿真接上」⇒ **ctor 与派发都已落地**
+/// （`Msg::ResetSection` → `Shell::run_settings_replace` 有真调用点）。
+/// 旧句写的「== 1 …派发与撤钉在下一批」登记的是一次**批间过渡态**，dt4a 那批撤钉 + 接臂后它陈述的
+/// 已是不存在的事实（那颗锁自陈逐字：「#140 刀A（B-1b）已把派发臂接上，留一枚 = 又有人往那颗上退回「装活」」）
+/// ⇒ 留给下一把刀当假事实源的风险由这一句堵。那颗锁住在 `tests/**`，不在本文件、本轮不改。
 #[must_use]
 pub fn settings_replace(ns: &str, section: &Value, expected_revision: Option<f64>) -> RpcCall {
     RpcCall::new(
@@ -11362,23 +11714,6 @@ pub fn settings_update(ns: &str, patch: &Value, expected_revision: Option<f64>) 
         SETTINGS_UPDATE,
         with_expected_revision(json!({ "ns": ns, "patch": patch }), expected_revision),
     )
-}
-
-/// `settings/canOpenAgentPresetDirectory`（主干 `RenderPresetsSectionAsync` 的能力门控）：
-/// **零颗**字段 ⇒ `{}`；回执是**裸布尔**（`result` 的 schema 就是 `z.boolean()`），
-/// 不是 `{canOpen:…}` 那种对象。
-#[must_use]
-pub fn settings_can_open_agent_preset_directory() -> RpcCall {
-    RpcCall::new(SETTINGS_CAN_OPEN_PRESET_DIR, json!({}))
-}
-
-/// `settings/openAgentPresetDirectory`（主干 `OpenPresetDirectoryAsync`）：一颗
-/// `agentPreset`（`z.string()`）⇒ 平铺 `{agentPreset}`，不裹 `request`。
-/// 描述符另有 `cancellation: {parameter:'signal'}`（主干那发带 `lifetime.Token`）⇒
-/// 分叉的 unary 通道没有取消位，这一条**留给派发侧**说明，ctor 层不造假。
-#[must_use]
-pub fn settings_open_agent_preset_directory(agent_preset: &str) -> RpcCall {
-    RpcCall::new(SETTINGS_OPEN_PRESET_DIR, json!({ "agentPreset": agent_preset }))
 }
 
 /// `llm/listConfigurableProviders`（主干 `LoadProviderRowsAsync` 的第一发）：**零颗**字段 ⇒ `{}`。
@@ -11553,37 +11888,6 @@ pub fn parse_settings_describe(described: &Value) -> Result<Vec<SettingsNamespac
         .collect()
 }
 
-/// `canOpenAgentPresetDirectory` 的回执：主干判据逐字 `v.ValueKind == JsonValueKind.True`，
-/// 且整发被 `catch (Exception)` 包成「判定失败按不可用处理」⇒ **不是 `Result`**：
-/// 抛由 [`Kernel::call`] 负责，形状不合（内核回了对象之类）与 `false` 在壳侧同一个终点。
-#[must_use]
-pub fn parse_can_open_preset_dir(value: &Value) -> bool {
-    value.as_bool().unwrap_or(false)
-}
-
-/// `openAgentPresetDirectory` 的回执（`AgentPresetDirectoryOpenValue` 的两档 union）。
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PresetDirectoryOpen {
-    /// `{opened:true}` —— 内核已经原生打开。
-    Opened,
-    /// `{opened:false, path}` —— 打不开时把路径交回壳显示。
-    /// 描述符里 false 档的 `path` 必填，主干却按 `TryGetProperty("path")` 取
-    /// （拿不到就 `GetString()` 出 `null`，文案里照样插空串）⇒ 这里留 `Option`，不替内核造路径。
-    NotOpened { path: Option<String> },
-}
-
-/// 两档的判分按主干那一行：`opened` 键在且为 `true` ⇒ 已开；其余（缺键、`false`、别的类型）
-/// 一律走「把路径显示出来」那一支。多余键（内核真发了 `path` 配 `opened:true`）不进判据。
-#[must_use]
-pub fn parse_preset_directory_open(value: &Value) -> PresetDirectoryOpen {
-    if value.get("opened").and_then(Value::as_bool) == Some(true) {
-        return PresetDirectoryOpen::Opened;
-    }
-    PresetDirectoryOpen::NotOpened {
-        path: opt_str(value, "path"),
-    }
-}
-
 /// `llm/listConfigurableProviders` 的一条目录项（`LlmConfigurableProvider`）。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LlmConfigurableProvider {
@@ -11688,7 +11992,7 @@ pub fn parse_discovered_models(value: &Value) -> Vec<DiscoveredModel> {
 }
 
 #[cfg(test)]
-/// RD9 表A · C5+C6（KW3 批）：十发 args 的逐字节钉子 + 六处回执形状的两态钉子。
+/// RD9 表A · C5+C6（KW3 批）：八发 args 的逐字节钉子 + 四处回执形状的两态钉子。
 ///
 /// 全部离线断言（构造与解析都是纯函数），零派发、零 `tests/ipc.rs`；自锁只指本文件
 /// （`src/main.rs` 正被 MR2 改，锁它必然假红）。
@@ -11704,8 +12008,8 @@ mod kw3_rd9_settings_tests {
     }
 
     #[test]
-    fn ten_consts_match_rd9_table_a_and_are_the_only_ten() {
-        assert_eq!(RD9_C5_C6_METHODS.len(), 10);
+    fn eight_consts_match_rd9_table_a_and_are_the_only_eight() {
+        assert_eq!(RD9_C5_C6_METHODS.len(), 8);
         for method in RD9_C5_C6_METHODS {
             assert!(
                 KW3_SELF.contains(&format!("\"{method}\"")),
@@ -11726,14 +12030,6 @@ mod kw3_rd9_settings_tests {
             "settings/update"
         );
         assert_eq!(
-            settings_can_open_agent_preset_directory().method,
-            "settings/canOpenAgentPresetDirectory"
-        );
-        assert_eq!(
-            settings_open_agent_preset_directory("p").method,
-            "settings/openAgentPresetDirectory"
-        );
-        assert_eq!(
             llm_list_configurable_providers().method,
             "llm/listConfigurableProviders"
         );
@@ -11744,8 +12040,8 @@ mod kw3_rd9_settings_tests {
     }
 
     #[test]
-    fn none_of_the_ten_wraps_its_arguments_in_a_request_envelope() {
-        // 本仓已确证过的坑（`session/selectModel` 反过来**必须**裹）。这十发全是 `direct` +
+    fn none_of_the_eight_wraps_its_arguments_in_a_request_envelope() {
+        // 本仓已确证过的坑（`session/selectModel` 反过来**必须**裹）。这八发全是 `direct` +
         // 顶层 `wire` 名 ⇒ 裹一层就是 `unexpected "request"`。`llm/discoverModels` 的 `request`
         // 是描述符的第二颗命名参数，比的是「外层只两颗、`request` 里面还有一颗 `settingsNs`」这型错。
         for call in [
@@ -11755,8 +12051,6 @@ mod kw3_rd9_settings_tests {
             settings_describe(),
             settings_replace("n", &json!({}), Some(1.0)),
             settings_update("n", &json!({}), Some(1.0)),
-            settings_can_open_agent_preset_directory(),
-            settings_open_agent_preset_directory("p"),
             llm_list_configurable_providers(),
             llm_discover_models("ns", &DiscoveryProbe::default()),
         ] {
@@ -11768,9 +12062,8 @@ mod kw3_rd9_settings_tests {
                 call.args
             );
         }
-        // 零颗的三发：`{}`，一颗都不能有
+        // 零颗的两发：`{}`，一颗都不能有
         assert_eq!(settings_describe().args.to_string(), "{}");
-        assert_eq!(settings_can_open_agent_preset_directory().args.to_string(), "{}");
         assert_eq!(llm_list_configurable_providers().args.to_string(), "{}");
         // 内层也不许长出第二层
         let models = llm_discover_models("ns", &DiscoveryProbe::default()).args;
@@ -11944,32 +12237,6 @@ mod kw3_rd9_settings_tests {
     }
 
     #[test]
-    fn preset_directory_receipts_are_the_two_shapes_mainline_reads() {
-        assert!(parse_can_open_preset_dir(&json!(true)));
-        assert!(!parse_can_open_preset_dir(&json!(false)));
-        assert!(!parse_can_open_preset_dir(&json!({"canOpen": true})), "对象不是裸布尔 ⇒ 判不可开");
-        assert!(!parse_can_open_preset_dir(&Value::Null));
-
-        assert_eq!(
-            parse_preset_directory_open(&json!({"opened": true})),
-            PresetDirectoryOpen::Opened
-        );
-        assert_eq!(
-            parse_preset_directory_open(&json!({"opened": false, "path": "C:/presets"})),
-            PresetDirectoryOpen::NotOpened { path: Some("C:/presets".to_string()) }
-        );
-        // false 档缺 path：主干 `TryGetProperty` 取不到就显示空路径，不造兜底
-        assert_eq!(
-            parse_preset_directory_open(&json!({})),
-            PresetDirectoryOpen::NotOpened { path: None }
-        );
-        assert_eq!(
-            parse_preset_directory_open(&json!({"opened": "true"})),
-            PresetDirectoryOpen::NotOpened { path: None }
-        );
-    }
-
-    #[test]
     fn provider_catalog_follows_the_mainline_tolerant_lookups() {
         let rows = json!([
             {"provider": "deepseek-official", "displayName": "DeepSeek",
@@ -12057,9 +12324,134 @@ mod kw3_rd9_settings_tests {
             "replace/update 的回执符号名没写进注释 ⇒ 下一批会以为漏了东西"
         );
     }
+
+    /// 台账 #224 B4（死臂末层）**反向锁**：那发「预设目录可否打开」的能力门控在本文件的
+    /// **生产者层**（const + 名册成员行 + 构造器 + 回执判据）已整条摘净 —— 宿主腿由 B3 摘、
+    /// 假内核派发臂与 `tests/ipc.rs` 的同名用例本刀同批摘。三件一起钉，缺一枚就是假绿：
+    /// ① 死臂的整串 RPC 名与那三枚标识符在本文件里**一枚命中都不许长回来**（全文件尺，注释也
+    ///    算读者）；needle 一律 `concat!` 拆串 —— 本锁的源码就在本文件里，整名一旦落纸
+    ///    `matches` 就命中自己 ⇒ 判据恒假（形制同本文件 B2 那把与 `tokens.rs` 那把）。
+    /// ② 名册基数闸的数字必须**从名册实际成员数出来**，等值判据（禁 `>=` 下限形），且在册成员
+    ///    逐枚等于那张活常量表 ⇒ 闸与表脱钩、往名册里长回被摘的那枚、摘错活的那枚都当场红。
+    /// ③ 正向半边防 ② 的对照集自己空转：在册那八枚活常量的整串必须真在本文件源码里登记过。
+    ///
+    /// ⚠ ② 的对照集是 `[&str; N]` **定长数组**（不是名册那一形的切片）⇒ 名册换枚时这里漏改
+    ///   数组长度就直接编译错，不会静默。B5 把「打开目录」那一发也摘了，那张表跟着窄一枚。
+    #[test]
+    fn b4_the_cut_preset_dir_capability_stays_cut_and_the_roster_counts_itself() {
+        for needle in [
+            concat!("settings/canOpen", "AgentPresetDirectory"),
+            concat!("settings_can_open_agent_", "preset_directory"),
+            concat!("parse_can_open_", "preset_dir"),
+            concat!("SETTINGS_CAN_OPEN_", "PRESET_DIR"),
+        ] {
+            assert_eq!(
+                KW3_SELF.matches(needle).count(),
+                0,
+                "B4 摘掉的死臂生产层又长回 kernel.rs 了：{needle}"
+            );
+        }
+        // ② 八 = 摘后在册的活枚数（与 `eight_consts_match_rd9_table_a_and_are_the_only_eight` 同数）。
+        let alive: [&str; 8] = [
+            CREDENTIALS_DESCRIBE,
+            CREDENTIALS_SET,
+            CREDENTIALS_UNSET,
+            SETTINGS_DESCRIBE,
+            SETTINGS_REPLACE,
+            SETTINGS_UPDATE,
+            LLM_LIST_CONFIGURABLE_PROVIDERS,
+            LLM_DISCOVER_MODELS,
+        ];
+        assert_eq!(
+            RD9_C5_C6_METHODS.len(),
+            alive.len(),
+            "名册基数闸与名册实际长度脱钩 ⇒ 有人只改了闸没改名册（或反之）"
+        );
+        assert_eq!(
+            RD9_C5_C6_METHODS.len(),
+            8,
+            "B4 摘掉门控那一发、B5 摘掉打开目录那一发之后，这张名册只该有活的那八发"
+        );
+        assert_eq!(
+            RD9_C5_C6_METHODS,
+            &alive[..],
+            "名册成员与活常量表不是逐枚同序同值 ⇒ 上面的等值基数闸比的是同一枚数，测不出换血"
+        );
+        // ③ 八枚整串都必须在源码里真登记过，否则上面那场对表是空的。
+        for method in alive {
+            assert!(
+                KW3_SELF.contains(&format!("\"{method}\"")),
+                "{method} 的 const 整串不在本文件源码里 ⇒ 上面那场对表是空的"
+            );
+        }
+    }
+
+    /// 台账 #224 B5（死臂第四刀）**反向锁**：B4 那把锁钉的是「可否打开」那半枚能力门控；
+    /// 这一把钉它的姊妹发「打开预设目录」—— 同一族、同一把内核尺下的死臂（`0.1.7-rc.2` 整包
+    /// 逐字 0 命中，正对照同尺有效），分叉侧的生产者层这次整族摘净：const、名册成员行、构造器、
+    /// 回执枚举与它的判据、`tests/ipc.rs` 的正向回执格与两枚参数拒绝元组、假内核派发臂。
+    /// 三半缺一枚就是假绿（形制逐条照上面的 B4 锁）：
+    /// ① 那发的 RPC 整串与四枚标识符（const 名 / 构造器名 / 判据名 / 回执枚举名）在全文件尺
+    ///    `matches().count() == 0` —— 注释也算读者，所以 needle 一律 `concat!` 拆串。
+    /// ② 名册基数闸**从名册实际成员数出来**：与 `alive.len()` 等值、与字面八也等值，再逐枚
+    ///    `assert_eq!(名册, &alive[..])` 对表（**禁 `>=` 下限形**）⇒ 只抬闸不改名册、只改名册不抬闸、
+    ///    往名册长回被摘的那枚、摘错活的那枚，四种漂移各自当场红。
+    /// ③ 正向半边防 ② 的对照集空转：那八枚活常量的整串必须真在本文件源码里登记过。
+    ///
+    /// M2 那把变异（不加死臂、只往名册多塞一枚**活**成员）专门打 ② 的等值半边 —— 它证明 ②
+    /// 不是恒真式；写这把锁的人不许把自己的 `alive` 表当成不需要对照的第二份真相。
+    #[test]
+    fn b5_the_cut_open_preset_dir_arm_stays_cut_and_the_roster_counts_itself() {
+        for needle in [
+            concat!("settings/openAgent", "PresetDirectory"),
+            concat!("SETTINGS_OPEN_", "PRESET_DIR"),
+            concat!("settings_open_agent_preset_", "directory"),
+            concat!("parse_preset_directory_", "open"),
+            concat!("Preset", "DirectoryOpen"),
+        ] {
+            assert_eq!(
+                KW3_SELF.matches(needle).count(),
+                0,
+                "B5 摘掉的死臂生产层又长回 kernel.rs 了：{needle}"
+            );
+        }
+        // ② 与本文件的 B4 锁、`eight_consts_…` 那把孪生闸同数（三处一起数，别只改一处）。
+        let alive: [&str; 8] = [
+            CREDENTIALS_DESCRIBE,
+            CREDENTIALS_SET,
+            CREDENTIALS_UNSET,
+            SETTINGS_DESCRIBE,
+            SETTINGS_REPLACE,
+            SETTINGS_UPDATE,
+            LLM_LIST_CONFIGURABLE_PROVIDERS,
+            LLM_DISCOVER_MODELS,
+        ];
+        assert_eq!(
+            RD9_C5_C6_METHODS.len(),
+            alive.len(),
+            "名册基数闸与名册实际长度脱钩 ⇒ 有人只改了闸没改名册（或反之）"
+        );
+        assert_eq!(
+            RD9_C5_C6_METHODS.len(),
+            8,
+            "B5 之后这张名册只该有活的那八发（被摘的那两枚都不许在册）"
+        );
+        assert_eq!(
+            RD9_C5_C6_METHODS,
+            &alive[..],
+            "名册成员与活常量表不是逐枚同序同值 ⇒ 上面的等值基数闸比的是同一枚数，测不出换血"
+        );
+        // ③ 八枚整串都必须在源码里真登记过，否则上面那场对表是空的。
+        for method in alive {
+            assert!(
+                KW3_SELF.contains(&format!("\"{method}\"")),
+                "{method} 的 const 整串不在本文件源码里 ⇒ 上面那场对表是空的"
+            );
+        }
+    }
 }
 
-// ==================== RD9 表A · C4+C9：agentPresets 4 + sessionFeedback/record 的构造与回执 ====================
+// ==================== RD9 表A · C4+C9：agentPresets 2 + sessionFeedback/record 的构造与回执 ====================
 //
 // 本节只有两件事：进 `payload.args` 的那棵树、`Kernel::call` 剥完**第一层** `ok` 之后剩下的那格形状。
 // 宿主与派发在 `main.rs`（本批一颗不碰），UI 一颗不碰，`tests/ipc.rs` 只读复用不写。
@@ -12070,9 +12462,6 @@ mod kw3_rd9_settings_tests {
 //     `CallOkAsync("agentPresets/read", new { agentPreset = id })`；回帧只读两颗：
 //     `name`（`TryGetProperty` + 是串才要，否则 `null` 回落对话框标题）、
 //     `content`（`TryGetProperty` + 是串才要，否则空串）。
-//   · `agentPresets/copy`  = 主干 `CopyPresetAsync`（`MainWindow.xaml.cs`），
-//     `new { from = fromId, id = newId, name = nameBox.Text.Trim() }`。
-//   · `agentPresets/deletePreset` = 主干 `DeletePresetAsync`（同文件），`new { id }`。
 //   · `agentPresets/select` = 主干 `SelectPresetAsync`（同文件）与 `StartCreatorDraftAsync`
 //     （`MainWindow.SettingsExtras.cs`）**两处**，形状同一 `new { agentId = sid, agentPreset = id }`；
 //     两处的差别只在**回帧消不消费**：`SelectPresetAsync` 读 `applied.GetString()`（回执是**裸串**
@@ -12086,32 +12475,41 @@ mod kw3_rd9_settings_tests {
 //     `Reflect.ownKeys` 比**集合**：多一颗 `unexpected`、少一颗 `missing`，只有声明
 //     `acceptsUndefined` 的那颗允许缺席。假内核那一面的镜像 = `wire_fields_error`
 //     （`src/bin/fake_dsh.rs`），本轮逐颗读到的 spec 是
-//     `read ["agentPreset"]` / `copy ["from","id","?name"]` / `deletePreset ["id"]` /
-//     `select ["agentId","agentPreset"]` ⇒ **`copy` 的 `name` 是唯一那颗可选**（`?` 前缀），
-//     其余全必填。
+//     `read ["agentPreset"]` / `select ["agentId","agentPreset"]` ⇒ **在册这两颗全必填**；
+//     `?` 那一型在桩里另有两枚活例（`settings/mutate|update|replace` 的 `?expectedRevision`、
+//     `directoryPicker/list` 的 `?path`），不靠本族样本。
 //
-// **四发平铺、一发裹 `request`**：`agentPresets/*` 四颗的 wire 字段就是顶层键名，裹一层
+// **两发平铺、一发裹 `request`**：`agentPresets/*` 剩下两颗的 wire 字段就是顶层键名，裹一层
 // `{request:…}` 立刻 `unexpected "request"`；`sessionFeedback/record` 反过来**必须**裹
 // （`CallAsync` 那一族的 `request` 是描述符的命名参数，与 `workspace/*` 那六发同型）。
-// 同族可选性逐颗现测过，没有按族推：`copy.name` 可选，而 `read.agentPreset` /
-// `deletePreset.id` / `select` 两颗都不可省。
+// 同族可选性逐颗现测过，没有按族推：`read.agentPreset` 与 `select` 那两颗都不可省。
+//
+// 台账 #224 B6（死臂第五刀）：这一族原先有**五发**，本节标题与下面那串常量都曾按「四发平铺、
+// 一发裹」写。摘掉的两发是「复制为新增」与「删除预设」——三轴齐死（两版内核整包逐字尺各 0 命中，
+// 正对照同尺 6/6/4 有效、注册器 `typert.host.js` 只编 list/read/select 三枚描述符；主干那两颗包装
+// `CopyPresetAsync` / `DeletePresetAsync` 在整仓 `.cs`/`.xaml` 里 0 命中，只剩 `MainWindow.xaml.cs` 两句撤除注释；
+// 分叉 `src/main.rs` 只剩两句「主干原话」注释、标识符尺与 `.call(` 尺各 0 命中）⇒ 与 B4/B5 同判据。
+// 本刀摘的层：两枚 const、名册两枚成员行、两枚构造器整段（含「唯一那颗可选」那整页说明），
+// 外加 `kw4_rd9_tests` 里一枚专钉那发可选键的用例**整枚摘**、三枚混钉活臂的用例**只摘断言**；
+// 假内核两条派发臂同摘（摘后落同文件 `other` 兜底回 404 + `not_found`）、`tests/ipc.rs` 的
+// 正向回执格与五枚参数拒绝元组同摘并换**反向格**。名册基数由五降到三：**五把**基数闸
+// （本文件四把 + `tests/ipc.rs` 一把孪生）一起抬，反向锁再落一枚 `[&str; 3]` **定长数组**形对照集
+// （形制照 B5 那把：漏改长度连编译都过不去）。回执判据**一枚没少** —— 那两发从来 `z.void()`、
+// 主干整发丢弃、本层从不造解析器，「三处回执形状」摘前摘后都是三处。
+// 反向锁见 `kw4_rd9_tests::b6_the_cut_preset_copy_and_delete_arms_stay_cut_and_the_roster_counts_itself`。
 //
 // **C3（那族第四批想补的颗）不在本节**：主干那四颗包装除定义行外全仓零调用方，且那颗
 // partial 自己的架构说明写的是「桌面壳不可达，不伪造调用」；`kw2_cordis_tests` 已按这一事实
 // 下了源码反向锁。本轮复核**确认 KW2 的判据成立**，故不在此建常量/构造器（详见批报告 §3），
 // 并把这一事实钉成 `kw4_rd9_tests` 里的第二道锁。
 
-/// 五发的方法名（集中一处；下一批 `main.rs` 与假内核桩都按这组常量对表，改不漏）。
+/// 三发的方法名（集中一处；下一批 `main.rs` 与假内核桩都按这组常量对表，改不漏）。
 pub const AGENT_PRESETS_READ: &str = "agentPresets/read";
-pub const AGENT_PRESETS_COPY: &str = "agentPresets/copy";
-pub const AGENT_PRESETS_DELETE: &str = "agentPresets/deletePreset";
 pub const AGENT_PRESETS_SELECT: &str = "agentPresets/select";
 pub const SESSION_FEEDBACK_RECORD: &str = "sessionFeedback/record";
 
-/// C4 + C9 的名单（基数锁用；测试按「恰五颗」与「逐颗在源码里有 const」两头钉）。
+/// C4 + C9 的名单（基数锁用；测试按「恰三颗」与「逐颗在源码里有 const」两头钉）。
 pub const RD9_C4_C9_METHODS: &[&str] = &[
-    AGENT_PRESETS_COPY,
-    AGENT_PRESETS_DELETE,
     AGENT_PRESETS_READ,
     AGENT_PRESETS_SELECT,
     SESSION_FEEDBACK_RECORD,
@@ -12136,29 +12534,6 @@ pub const SESSION_FEEDBACK_CATEGORIES: [&str; 7] = [
 #[must_use]
 pub fn agent_presets_read(agent_preset: &str) -> RpcCall {
     RpcCall::new(AGENT_PRESETS_READ, json!({ "agentPreset": agent_preset }))
-}
-
-/// `agentPresets/copy`（主干 `CopyPresetAsync`）：平铺 `{from, id[, name]}`。
-///
-/// `name` 是本批**唯一**那颗可选（描述符带 `acceptsUndefined`，假内核的 spec 是 `?name`）：
-/// `None` ⇒ 键整个缺席（**不是** `"name":null`，那颗 union 不放行 null）；`Some` ⇒ 键在。
-/// 主干两处实参都过了 `Trim()`（`newId`、`nameBox.Text`）—— 取值动作属于 UI 侧，本层不 trim、
-/// 不校验非空，`Some("")` 是合法形状（内核拿它当「没给名字」由假内核那侧回落 `from`）。
-/// 回帧 `z.void()` ⇒ 主干整个丢弃（见 [`RD9_C4_C9_METHODS`] 末段的反向锁）。
-#[must_use]
-pub fn agent_presets_copy(from: &str, id: &str, name: Option<&str>) -> RpcCall {
-    let mut args = json!({ "from": from, "id": id });
-    if let Some(name) = name {
-        args["name"] = json!(name);
-    }
-    RpcCall::new(AGENT_PRESETS_COPY, args)
-}
-
-/// `agentPresets/deletePreset`（主干 `DeletePresetAsync`）：一颗必填 `id` ⇒ 平铺 `{id}`。
-/// 二次确认与「删完重拉 `agent-presets` 那一节」都在宿主；回帧同 `copy` = `z.void()` 不消费。
-#[must_use]
-pub fn agent_presets_delete(id: &str) -> RpcCall {
-    RpcCall::new(AGENT_PRESETS_DELETE, json!({ "id": id }))
 }
 
 /// `agentPresets/select`（主干 `SelectPresetAsync` 与 `StartCreatorDraftAsync` 两处）：
@@ -12264,7 +12639,7 @@ pub fn parse_session_feedback_record(value: &Value) -> SessionFeedbackReceipt {
 }
 
 #[cfg(test)]
-/// RD9 表A · C4+C9（KW4 批）：五发 args 的逐字节钉子 + 三处回执形状的两态钉子
+/// RD9 表A · C4+C9（KW4 批）：三发 args 的逐字节钉子 + 三处回执形状的两态钉子
 /// + C3 那四颗的**第二道**源码反向锁 + 主干不消费的回执不造判据。
 ///
 /// 全部离线断言（构造与解析都是纯函数），零派发、零 `tests/ipc.rs`；自锁只指本文件
@@ -12287,8 +12662,8 @@ mod kw4_rd9_tests {
     }
 
     #[test]
-    fn the_five_consts_are_rd9_c4_c9_and_are_all_present_in_this_file() {
-        assert_eq!(RD9_C4_C9_METHODS.len(), 5);
+    fn the_three_consts_are_rd9_c4_c9_and_are_all_present_in_this_file() {
+        assert_eq!(RD9_C4_C9_METHODS.len(), 3);
         for method in RD9_C4_C9_METHODS {
             assert!(
                 KW4_SELF.contains(&format!("\"{method}\"")),
@@ -12296,8 +12671,6 @@ mod kw4_rd9_tests {
             );
         }
         assert_eq!(agent_presets_read("p").method, "agentPresets/read");
-        assert_eq!(agent_presets_copy("f", "t", None).method, "agentPresets/copy");
-        assert_eq!(agent_presets_delete("p").method, "agentPresets/deletePreset");
         assert_eq!(
             agent_presets_select("s-1", "p").method,
             "agentPresets/select"
@@ -12309,13 +12682,11 @@ mod kw4_rd9_tests {
     }
 
     #[test]
-    fn exactly_one_of_the_five_wraps_its_arguments_in_a_request_object() {
-        // 本仓已确证过的坑（`workspace/*` 那六发反过来**必须**裹）。这四发是 `direct` +
-        // 顶层 `wire` 名 ⇒ 裹一层就是 `unexpected "request"` + `missing "from"`。
+    fn exactly_one_of_the_three_wraps_its_arguments_in_a_request_object() {
+        // 本仓已确证过的坑（`workspace/*` 那六发反过来**必须**裹）。这两发是 `direct` +
+        // 顶层 `wire` 名 ⇒ 裹一层就是 `unexpected "request"` + `missing "agentPreset"`。
         for call in [
             agent_presets_read("p"),
-            agent_presets_copy("f", "t", Some("n")),
-            agent_presets_delete("t"),
             agent_presets_select("s-1", "p"),
         ] {
             assert!(
@@ -12333,39 +12704,13 @@ mod kw4_rd9_tests {
     }
 
     #[test]
-    fn preset_read_and_delete_send_their_single_required_key() {
+    fn preset_read_sends_its_single_required_key() {
         assert_eq!(
             agent_presets_read(sample_id()).args.to_string(),
             r#"{"agentPreset":"my-reviewer"}"#
         );
-        assert_eq!(
-            agent_presets_delete(sample_id()).args.to_string(),
-            r#"{"id":"my-reviewer"}"#
-        );
         // 必填就是必填：空串照发（内核那边回 `agent-preset/invalid`，不是壳的活）
         assert_eq!(agent_presets_read("").args["agentPreset"], json!(""));
-        assert_eq!(agent_presets_delete("").args["id"], json!(""));
-    }
-
-    #[test]
-    fn preset_copy_name_is_the_only_optional_key_and_absent_is_not_null() {
-        assert_eq!(
-            agent_presets_copy(sample_id(), "pk-copy", Some("复盘助手")).args.to_string(),
-            r#"{"from":"my-reviewer","id":"pk-copy","name":"复盘助手"}"#
-        );
-        let bare = agent_presets_copy(sample_id(), "pk-copy", None);
-        assert_eq!(bare.args.to_string(), r#"{"from":"my-reviewer","id":"pk-copy"}"#);
-        assert!(!keys(&bare.args).contains(&"name".to_string()));
-        assert_ne!(
-            bare.args.to_string(),
-            r#"{"from":"my-reviewer","id":"pk-copy","name":null}"#,
-            "`None` 被写成了显式 null —— 那颗可选键的 union 不放行 null"
-        );
-        // `Some("")` 合法（主干的 `Trim()` 结果就能是空串），本层不替它丢掉
-        assert_eq!(
-            agent_presets_copy("f", "t", Some("")).args["name"],
-            json!("")
-        );
     }
 
     #[test]
@@ -12506,23 +12851,24 @@ mod kw4_rd9_tests {
     }
 
     #[test]
-    fn unconsumed_preset_receipts_get_no_parser_here() {
-        // 主干对 `copy` / `deletePreset`（`z.void()`）与 `StartCreatorDraftAsync` 那一处
-        // `select` 都是**整发丢弃**：成败只看抛不抛 ⇒ 本层跟着不造解析器（造了就是比主干
-        // 多一道判据，与上一批 `settings/replace` 同规）。
+    fn unconsumed_session_feedback_receipt_get_no_parser_here() {
+        // 台账 #224 B6 之前这一把还钉着「复制为新增」与「删除预设」那两发的 `z.void()` 回执；
+        // 那两发整条摘掉 ⇒ 剩下的半边是 `sessionFeedback/record` 与 `StartCreatorDraftAsync`
+        // 那一处 `select`：主干都是**整发丢弃**，成败只看抛不抛 ⇒ 本层跟着不造解析器
+        // （造了就是比主干多一道判据，与上一批 `settings/replace` 同规）。
         // needle 用 `concat!` 拆开，否则本测试自己的文字就会命中自己（正向恒真、反向恒假）。
-        for forbidden in [
-            concat!("parse_agent_presets_", "copy_receipt"),
-            concat!("parse_agent_presets_", "delete_receipt"),
-            concat!("parse_session_feedback_", "envelope"),
-        ] {
+        for forbidden in [concat!("parse_session_feedback_", "envelope")] {
             assert!(
                 !KW4_SELF.contains(forbidden),
                 "本层给主干不消费的回执造了判据：{forbidden}"
             );
         }
-        // 反向锁不是空转：三处「不消费」的形状说明都真在本文件里
-        assert!(KW4_SELF.contains("z.void()"), "`z.void()` 那两发的形状说明没落进来");
+        // 反向锁不是空转：两处「不消费」的形状说明都真在本文件里。
+        // ⚠ 下面三枚 needle 都是**没拆串的整串** ⇒ 每一枚都命中自己这一行，形式上恒真；
+        //   B6 现测它们各自在**产品层**注释里另有真读者（`z.void()` 见 `credentials_unset` 的文档、
+        //   `整发丢弃` 见本节 header、`CallAsync` 见 `session_feedback_record` 的文档），
+        //   所以摘掉被摘那两发不会把这三枚变成假事实。不当基数判据用。
+        assert!(KW4_SELF.contains("z.void()"), "`z.void()` 那一发的形状说明没落进来");
         assert!(KW4_SELF.contains("整发丢弃"), "「丢弃」这条口径没落进来");
         assert!(
             KW4_SELF.contains("CallAsync"),
@@ -12548,7 +12894,7 @@ mod kw4_rd9_tests {
                 "本文件出现了主干零调用方的那一面：{prefix}{tail}"
             );
         }
-        // 基数两头：八发名单不许被这批塞成十二发；五发名单不许混进那一族的颗。
+        // 基数两头：八发名单不许被这批塞成十二发；三发名单不许混进那一族的颗。
         assert_eq!(CORDIS_METHODS.len(), 8);
         for method in RD9_C4_C9_METHODS {
             assert!(
@@ -12560,26 +12906,90 @@ mod kw4_rd9_tests {
         assert!(KW4_SELF.contains(prefix));
         assert!(KW4_SELF.contains("resolveInspectQuery"));
     }
+
+    /// 台账 #224 B6（死臂第五刀）**反向锁**：B4/B5 那两把钉的是 `settings/` 那一族的两枚姊妹发；
+    /// 这一把钉本族被摘的那两发「复制为新增」与「删除预设」—— 同一把内核尺下的死臂（两版内核整包
+    /// 逐字各 0 命中、正对照同尺 6/6/4 有效、注册器 `typert.host.js` 只编 list/read/select 三枚
+    /// 描述符），分叉侧的生产者层这次整块摘净：两枚 const、两枚名册成员行、两枚构造器整段
+    /// （含「本批唯一那颗可选键」那整页说明）、一枚专钉那发可选键的用例、假内核两条派发臂、
+    /// `tests/ipc.rs` 的正向回执格与五枚参数拒绝元组。三半缺一枚就是假绿（形制逐条照 B5 锁）：
+    /// ① 那两发的 RPC 整串与四枚标识符（两枚 const 名 / 两枚构造器名）在全文件尺
+    ///    `matches().count() == 0` —— 注释也算读者，所以 needle 一律 `concat!` 拆串。
+    /// ② 名册基数闸**从名册实际成员数出来**：与 `alive.len()` 等值、与字面三也等值，再逐枚
+    ///    `assert_eq!(名册, &alive[..])` 对表（**禁 `>=` 下限形**）⇒ 只抬闸不改名册、只改名册不抬闸、
+    ///    往名册长回被摘的那两枚、摘错活的那枚，四种漂移各自当场红。
+    ///    `alive` 是 `[&str; 3]` **定长数组**形（本族摘前没有这一形，是这把锁新落的）⇒ 换枚漏改
+    ///    长度连编译都过不去。
+    /// ③ 正向半边防 ② 的对照集空转：在册那三枚活常量的整串必须真在本文件源码里登记过。
+    ///
+    /// 变异 M2 那把（不加死臂、只往名册多塞一枚**活**成员）专门打 ② 的等值半边 —— 它证明 ②
+    /// 不是恒真式；写这把锁的人不许把自己的 `alive` 表当成不需要对照的第二份真相。
+    #[test]
+    fn b6_the_cut_preset_copy_and_delete_arms_stay_cut_and_the_roster_counts_itself() {
+        for needle in [
+            concat!("agentPresets/", "copy"),
+            concat!("agentPresets/", "deletePreset"),
+            concat!("AGENT_PRESETS_", "COPY"),
+            concat!("AGENT_PRESETS_", "DELETE"),
+            concat!("agent_presets_", "copy"),
+            concat!("agent_presets_", "delete"),
+        ] {
+            assert_eq!(
+                KW4_SELF.matches(needle).count(),
+                0,
+                "B6 摘掉的死臂生产层又长回 kernel.rs 了：{needle}"
+            );
+        }
+        // ② 与本文件另外三把同数闸、`tests/ipc.rs` 那把孪生同数（五处一起数，别只改一处）。
+        let alive: [&str; 3] = [
+            AGENT_PRESETS_READ,
+            AGENT_PRESETS_SELECT,
+            SESSION_FEEDBACK_RECORD,
+        ];
+        assert_eq!(
+            RD9_C4_C9_METHODS.len(),
+            alive.len(),
+            "名册基数闸与名册实际长度脱钩 ⇒ 有人只改了闸没改名册（或反之）"
+        );
+        assert_eq!(
+            RD9_C4_C9_METHODS.len(),
+            3,
+            "B6 之后这张名册只该有活的那三发（被摘的那两枚都不许在册）"
+        );
+        assert_eq!(
+            RD9_C4_C9_METHODS,
+            &alive[..],
+            "名册成员与活常量表不是逐枚同序同值 ⇒ 上面的等值基数闸比的是同一枚数，测不出换血"
+        );
+        // ③ 三枚整串都必须在源码里真登记过，否则上面那场对表是空的。
+        for method in alive {
+            assert!(
+                KW4_SELF.contains(&format!("\"{method}\"")),
+                "{method} 的 const 整串不在本文件源码里 ⇒ 上面那场对表是空的"
+            );
+        }
+    }
 }
 
 // ===========================================================================
-// K-1 · 能力面板两发 + 子代理三发：五颗 `RpcCall` 构造器
+// K-1 · 能力面板两发 + 子代理两发：四颗 `RpcCall` 构造器
+// K-1 原文是「两发 + 三发 = 五颗」；#224 B2 摘掉死臂 `subagents` 目录那一发（两版内核都不服务、
+// 主干与分叉宿主侧零调用）⇒ 本节现测四颗。名册基数与「不许长回」的反向锁见 `kx1_ctor_tests`。
 // ===========================================================================
 //
 // 为什么这一段是**追加**而不是并进上面的族：本文件里已有的那三张方法名登记表各自配着
 // 一条基数断言与一族反向锁（禁串表 + 须在串表），把新发掺进去会连带改掉别族的判据 ——
 // 那是别的批次的事。这里另起两张小表，见 `CAPABILITY_METHODS` / `SUBAGENTS_METHODS`。
 //
-// 五发的实参形状**既不平铺也不成律**，逐发照主干调用点抄，别「顺手统一」：
+// 四发的实参形状**既不平铺也不成律**，逐发照主干调用点抄，别「顺手统一」：
 //   `goals/get`                   平铺 `{agentId}` —— 键名是 `agentId`，值传的是会话 id
 //   `skills/list`                 裹一层 `{request:{sessionId}}`
-//   `subagents/list`              平铺 `{parentSessionId}`
 //   `subagents/prompt`            裹一层，且 `requestId` 由**调用方**现造（lib 不碰熵源）
 //   `subagents/interruptByParent` 平铺 `{childSessionId,parentSessionId,mode}` —— child 在前
 //
-// 五发一律**不建 `parse_*`**：`goals/get` 与 `skills/list` 的回执消费者已经在
+// 四发一律**不建 `parse_*`**：`goals/get` 与 `skills/list` 的回执消费者已经在
 // `capabilities` 模块里（`parse_goal_summary` / `parse_goal_panel` / `parse_skills_list`），
-// 本层再造一份就是第二真相；后三发的落点见文件末尾那把新自锁。
+// 本层再造一份就是第二真相；后两发的落点见文件末尾那把新自锁。
 
 /// `goals/get`（主干 `MainWindow.Capabilities.cs` 的
 /// `CallOkAsync("goals/get", new { agentId = sessionId }, lifetime.Token)`）：平铺一颗。
@@ -12591,11 +13001,7 @@ pub const GOALS_GET: &str = "goals/get";
 /// 这一发**要裹** `request`，与上一发的平铺正好相反 —— 两发在同一个文件里，形状却不通用。
 pub const SKILLS_LIST: &str = "skills/list";
 
-/// `subagents/list`（主干 `MainWindow.Subagents.cs` 的
-/// `CallOkAsync("subagents/list", new { parentSessionId }, ct)`）：平铺一颗。
-pub const SUBAGENTS_LIST: &str = "subagents/list";
-
-/// `subagents/prompt`（同文件）：裹一层 `request`，内含六颗键，其中 `requestId`
+/// `subagents/prompt`（主干 `MainWindow.Subagents.cs:33`）：裹一层 `request`，内含六颗键，其中 `requestId`
 /// 主干是 `$"c2-{Guid.NewGuid():N}"` ⇒ **现造在调用方**，本层不碰随机数也不为此加依赖。
 pub const SUBAGENTS_PROMPT: &str = "subagents/prompt";
 
@@ -12605,9 +13011,8 @@ pub const SUBAGENTS_INTERRUPT_BY_PARENT: &str = "subagents/interruptByParent";
 /// K-1 能力面板那两发的登记表（与既有三张表互不相交，基数由本文件末尾的锁钉住）。
 pub const CAPABILITY_METHODS: [&str; 2] = [GOALS_GET, SKILLS_LIST];
 
-/// K-1 子代理那三发的登记表。
-pub const SUBAGENTS_METHODS: [&str; 3] = [
-    SUBAGENTS_LIST,
+/// K-1 子代理那两发的登记表（基数由 `kx1_ctor_tests` 的反向锁逐枚对表，不许只改闸不改表）。
+pub const SUBAGENTS_METHODS: [&str; 2] = [
     SUBAGENTS_PROMPT,
     SUBAGENTS_INTERRUPT_BY_PARENT,
 ];
@@ -12621,12 +13026,6 @@ pub fn goals_get(agent_id: &str) -> RpcCall {
 /// 一层包裹，别手抄第二份 `{ "request": … }` 字面量。
 pub fn skills_list(session_id: &str) -> RpcCall {
     RpcCall::new(SKILLS_LIST, wrapped(json!({ "sessionId": session_id })))
-}
-
-/// `subagents/list`：`{parentSessionId}`。形状的唯一真相仍在
-/// `crate::subagents::list_args`，这里只是把它包成一颗可发的调用。
-pub fn subagents_list(parent_session_id: &str) -> RpcCall {
-    RpcCall::new(SUBAGENTS_LIST, crate::subagents::list_args(parent_session_id))
 }
 
 /// `subagents/prompt`：整颗 `request` 体由调用方拼好（含 `requestId`）再递进来 ——
@@ -12896,10 +13295,10 @@ mod l2_goals_ctor_tests {
     fn the_new_mutation_table_stays_small_and_disjoint() {
         assert_eq!(GOALS_MUTATION_METHODS.len(), 6);
         assert_eq!(CAPABILITY_METHODS.len(), 2, "K-1 那张表的基数被这一刀动了");
-        assert_eq!(SUBAGENTS_METHODS.len(), 3, "K-1 那张表的基数被这一刀动了");
+        assert_eq!(SUBAGENTS_METHODS.len(), 2, "K-1 那张表的基数被这一刀动了");
         assert_eq!(CORDIS_METHODS.len(), 8, "既有那族的基数被这一刀动了");
-        assert_eq!(RD9_C5_C6_METHODS.len(), 10, "既有那族的基数被这一刀动了");
-        assert_eq!(RD9_C4_C9_METHODS.len(), 5, "既有那族的基数被这一刀动了");
+        assert_eq!(RD9_C5_C6_METHODS.len(), 8, "既有那族的基数被这一刀动了");
+        assert_eq!(RD9_C4_C9_METHODS.len(), 3, "既有那族的基数被这一刀动了");
         for method in GOALS_MUTATION_METHODS {
             assert!(
                 !CORDIS_METHODS.contains(&method)
@@ -12938,16 +13337,16 @@ mod l2_goals_ctor_tests {
 
 #[cfg(test)]
 mod kx1_ctor_tests {
-    //! K-1 的自锁：① 五发的实参形状逐字钉回主干那五个调用点；② 两张新表小而互斥，
+    //! K-1 的自锁：① 四发的实参形状逐字钉回主干那四个调用点；② 两张新表小而互斥，
     //! 不许被并进既有那三族；③ 主干 `await` 之后**丢弃**回执的那两发，本层不建解析器。
     use super::*;
 
     /// 自锁读的是**本文件**，路径写法与本文件既有那几族一致。
     const SELF_SRC: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/kernel.rs"));
 
-    /// 五发的形状：值必须落到**主干那颗键**上，一颗都不许多、一颗都不许多包一层。
+    /// 四发的形状：值必须落到**主干那颗键**上，一颗都不许多、一颗都不许多包一层。
     #[test]
-    fn the_five_ctors_emit_the_mainline_argument_shapes_verbatim() {
+    fn the_four_ctors_emit_the_mainline_argument_shapes_verbatim() {
         let (method, args) = goals_get("sess-1").into_parts();
         assert_eq!(method, "goals/get");
         assert_eq!(args, json!({ "agentId": "sess-1" }), "goals/get 是平铺，不许裹 request");
@@ -12959,10 +13358,6 @@ mod kx1_ctor_tests {
             json!({ "request": { "sessionId": "sess-1" } }),
             "skills/list 要裹 request，且里面只有 sessionId 一颗"
         );
-
-        let (method, args) = subagents_list("parent-1").into_parts();
-        assert_eq!(method, "subagents/list");
-        assert_eq!(args, json!({ "parentSessionId": "parent-1" }));
 
         let request = crate::subagents::PromptRequest {
             request_id: "c2-0123456789abcdef0123456789abcdef",
@@ -12996,10 +13391,10 @@ mod kx1_ctor_tests {
     #[test]
     fn the_two_new_tables_stay_small_and_disjoint_from_the_existing_families() {
         assert_eq!(CAPABILITY_METHODS.len(), 2);
-        assert_eq!(SUBAGENTS_METHODS.len(), 3);
+        assert_eq!(SUBAGENTS_METHODS.len(), 2);
         assert_eq!(CORDIS_METHODS.len(), 8, "既有那族的基数被这一刀动了");
-        assert_eq!(RD9_C5_C6_METHODS.len(), 10, "既有那族的基数被这一刀动了");
-        assert_eq!(RD9_C4_C9_METHODS.len(), 5, "既有那族的基数被这一刀动了");
+        assert_eq!(RD9_C5_C6_METHODS.len(), 8, "既有那族的基数被这一刀动了");
+        assert_eq!(RD9_C4_C9_METHODS.len(), 3, "既有那族的基数被这一刀动了");
         let fresh = CAPABILITY_METHODS
             .iter()
             .chain(SUBAGENTS_METHODS.iter())
@@ -13037,6 +13432,46 @@ mod kx1_ctor_tests {
         assert!(SELF_SRC.contains(concat!("subagents/", "interruptByParent")));
         assert!(SELF_SRC.contains("回执整发丢弃"), "「不建解析」的理由没落进注释 ⇒ 反向判据是空的");
     }
+
+    /// **B2 反向锁**（死臂台账 #224 第二刀）：`subagents` 族那枚目录发（两版内核都不服务、
+    /// 主干与分叉宿主侧零调用）已从本文件摘除 ⇒ 这里钉三件事，缺一枚就是假绿：
+    /// ① 死臂的整串 RPC 名与那颗 ctor 名在本文件里**一枚命中都不许长回来**（含注释，注释也算
+    ///    读者）；needle 一律 `concat!` 拆写 —— 本测试的源码就在本文件里，整名一旦落纸
+    ///    `contains`/`matches` 就命中自己 ⇒ 判据恒假（本仓已确证过的坑）。
+    /// ② 名册基数 = **2**，且这个 2 是**从名册实际成员数出来的**：在册成员必须逐枚等于那两枚
+    ///    活常量，双向对表 ⇒ 长回第三枚（摘掉的那发）或摘错活的那发都当场红，不是恒真。
+    /// ③ 正向半边防 ② 空转：那两枚活常量的整串必须真在本文件源码里（形制同
+    ///    `b1_settings_mutate_tests::the_new_roster_stays_alone_and_disjoint` 那把「三头登记」针）。
+    #[test]
+    fn b2_the_cut_subagents_catalog_arm_stays_cut_and_the_roster_counts_itself() {
+        let resurrected_rpc = concat!("subagents/", "list");
+        let resurrected_ctor = concat!("subagents_", "list(");
+        for needle in [resurrected_rpc, resurrected_ctor] {
+            assert_eq!(
+                SELF_SRC.matches(needle).count(),
+                0,
+                "B2 摘掉的死臂又长回 kernel.rs 了：{needle}"
+            );
+        }
+        // ② 基数由名册自己数出来：活的那两发逐枚对表（闸与表脱钩就红，别只改一处）。
+        let alive: [&str; 2] = [SUBAGENTS_PROMPT, SUBAGENTS_INTERRUPT_BY_PARENT];
+        assert_eq!(
+            SUBAGENTS_METHODS.len(),
+            alive.len(),
+            "名册长度与实际在册成员数脱钩 ⇒ 有人只改了闸没改名册"
+        );
+        assert_eq!(SUBAGENTS_METHODS.len(), 2, "B2 之后这张名册只该有活的那两发");
+        for method in SUBAGENTS_METHODS {
+            assert!(alive.contains(&method), "{method} 长回了子代理名册，却不在活常量里");
+        }
+        // ③ 防 ② 的对照集自己空转：两枚活常量的整串必须真在本文件源码里登记过。
+        for method in alive {
+            assert!(
+                SELF_SRC.contains(&format!("\"{method}\"")),
+                "{method} 的 const 整串不在本文件源码里 ⇒ 上面那场对表是空的"
+            );
+        }
+    }
 }
 
 // ==================== B-1 · #162 第三族「恢复默认模型」的 `settings/mutate` ctor ====================
@@ -13049,7 +13484,7 @@ mod kx1_ctor_tests {
 // 描述符出处（本轮逐字读过 `Kernel/dsh/node_modules/@deepseek-ai/dsh-api-settings-controller/lib/typert.host.js:237-282`，
 // 端点在架那步的取证也出自同一处）：
 //   id `@deepseek-ai/dsh-api-settings-controller#settings/mutate`、`invocation: { kind: 'direct' }`
-//   ⇒ 参数**平铺**在 `payload.args` 顶层，无一裹 `request`（与本节上方那十发同规）。三颗 `parameters`：
+//   ⇒ 参数**平铺**在 `payload.args` 顶层，无一裹 `request`（与本节上方那八发同规）。三颗 `parameters`：
 //   · `ns`   → `z.string()`，**没有** `acceptsUndefined` ⇒ 这颗键必在；
 //   · `ops`  → `z.array(z.union([ {op:'set', path: string[], value: JsonValue},
 //                                  {op:'unset', path: string[]} ]))`，同样**没有** `acceptsUndefined`
@@ -13070,11 +13505,17 @@ pub const SETTINGS_MUTATE: &str = "settings/mutate";
 
 /// B-1 自开的名册（第 2 头：登记表），**只有这一发**（基数锁见 `the_new_roster_stays_alone_and_disjoint`）。
 ///
-/// 为什么不并进 [`RD9_C5_C6_METHODS`]：那十发的基数 `== 10` 在本文件里被四处钉死
-/// （`ten_consts_match_rd9_table_a_and_are_the_only_ten`、`the_new_mutation_table_stays_small_and_disjoint`、
-/// `the_two_new_tables_stay_small_and_disjoint_from_the_existing_families` 各一枚，外加逐颗 const 校验），
-/// 附近还有「新发不落进既有那三族」的排斥式断言 ⇒ 往里塞一颗当场红。登记法本身没改：
-/// const + 名册 + `fn` 三头齐，与 `settings_update` 同一套。
+/// 为什么不并进 [`RD9_C5_C6_METHODS`]：那八发的基数 `== 8` 在本文件里被**六处**钉死
+/// （`eight_consts_match_rd9_table_a_and_are_the_only_eight`、
+/// `b4_the_cut_preset_dir_capability_stays_cut_and_the_roster_counts_itself`、
+/// `b5_the_cut_open_preset_dir_arm_stays_cut_and_the_roster_counts_itself`、
+/// `the_new_mutation_table_stays_small_and_disjoint`、
+/// `the_two_new_tables_stay_small_and_disjoint_from_the_existing_families`、
+/// `the_new_roster_stays_alone_and_disjoint` 各一枚），`tests/ipc.rs` 里
+/// `ip8_the_mutate_roster_stays_a_single_entry_and_the_other_rosters_do_not_move` 是第七把**同数孪生**
+/// ⇒ 动这一族的基数得七把一起抬，只改一处当场红。两把反向锁的对照集还是 `[&str; N]` **定长数组**
+/// 形（不是名册那一形的切片）⇒ 那里漏改长度连编译都过不去。附近还有「新发不落进既有那三族」的
+/// 排斥式断言 ⇒ 往里塞一颗也当场红。登记法本身没改：const + 名册 + `fn` 三头齐，与 `settings_update` 同一套。
 pub const SETTINGS_MUTATE_METHODS: &[&str] = &[SETTINGS_MUTATE];
 
 /// 一枚 `set` op：`{op:"set", path:[…], value:…}`（主干 `xaml.cs:13227` 的
@@ -13319,18 +13760,18 @@ mod b1_settings_mutate_tests {
         assert_eq!(SETTINGS_MUTATE_METHODS.len(), 1, "B-1 这张名册只该有一发");
         assert_eq!(SETTINGS_MUTATE_METHODS, [SETTINGS_MUTATE].as_slice());
         assert_eq!(CORDIS_METHODS.len(), 8, "既有那族的基数被这一刀动了");
-        assert_eq!(RD9_C5_C6_METHODS.len(), 10, "既有那族的基数被这一刀动了");
-        assert_eq!(RD9_C4_C9_METHODS.len(), 5, "既有那族的基数被这一刀动了");
+        assert_eq!(RD9_C5_C6_METHODS.len(), 8, "既有那族的基数被这一刀动了");
+        assert_eq!(RD9_C4_C9_METHODS.len(), 3, "既有那族的基数被这一刀动了");
         assert_eq!(CAPABILITY_METHODS.len(), 2, "既有那族的基数被这一刀动了");
-        assert_eq!(SUBAGENTS_METHODS.len(), 3, "既有那族的基数被这一刀动了");
+        assert_eq!(SUBAGENTS_METHODS.len(), 2, "既有那族的基数被这一刀动了");
         assert_eq!(GOALS_MUTATION_METHODS.len(), 6, "既有那族的基数被这一刀动了");
         assert!(
             !RD9_C5_C6_METHODS.contains(&SETTINGS_MUTATE),
-            "settings/mutate 被塞进了 RD9 那十发"
+            "settings/mutate 被塞进了 RD9 那八发"
         );
         assert!(
             !RD9_C4_C9_METHODS.contains(&SETTINGS_MUTATE),
-            "settings/mutate 被塞进了 C4/C9 那五发"
+            "settings/mutate 被塞进了 C4/C9 那三发"
         );
         for foreign in CORDIS_METHODS
             .iter()
@@ -13342,7 +13783,7 @@ mod b1_settings_mutate_tests {
         {
             assert_ne!(*foreign, SETTINGS_MUTATE, "{foreign} 与本发撞名");
         }
-        // 三头登记齐：const 的整串真在本文件源码里（口径同 `ten_consts_match_rd9_table_a_and_are_the_only_ten`）
+        // 三头登记齐：const 的整串真在本文件源码里（口径同 `eight_consts_match_rd9_table_a_and_are_the_only_eight`）
         for method in SETTINGS_MUTATE_METHODS {
             assert!(
                 B1_SELF.contains(&format!("\"{method}\"")),
@@ -13482,5 +13923,771 @@ mod b1_settings_mutate_tests {
                 "{file} 不是以 `}}` 收尾 ⇒ 读短了 = 半颗文件，上面的 needle 命中数会假 0"
             );
         }
+    }
+}
+
+// ==================== PK1 · #190 刀 P1：`permissionPresets/catalog` 的 ctor 与回执解析 ====================
+//
+// 为什么这一段**追加在文件末尾**：本仓 `include_str!` 源码锁按「起始锚 → 结束锚首次出现」开窗
+// （理由逐字同本文件那三处「追加在文件末尾」的自陈），落在最后就不动任何既有窗口。
+//
+// 一句话背景：dsh-permission-presets 把「可切预设表」从 `permissions` 投影里**整颗挪走**。
+// 版本轴分开说（别把两件事挤成一句）：「哪一版起挪走」= **0.1.7**（历史起点）；
+// 「验到哪一版仍然挪走」= **0.2.0-rc.2 实测仍然挪走**（2026-09-30 现测：两树
+// `dsh-permission-presets/lib/index.js` md5 同为 `2a0c71d300ac9c9fbb23f43fda6a2dad` ⇒ byte-identical，
+// 下面那两行 `selectionSchema` / `view:` 原文两版逐字一致，台账 `rust/tmp/kv1-020-api-diff.md` §5）。
+// 本轮现测（不是转述 PP2）：`Kernel/dsh/node_modules/@deepseek-ai/dsh-permission-presets/lib/index.js`
+// 里 `const selectionSchema = z$1.object({ currentValue: z$1.string().min(1) });` 与
+// `view: (state) => ({ currentValue: this.derive(state) })` ⇒ 投影今天**只剩 `currentValue` 一格**。
+// 表搬进了下面这一发新 RPC，内容变化时推 `permission-presets/catalog-changed`（`emit` 侧、**载荷为空**，
+// 已登记进 [`EVENTS_SUBSCRIPTIONS`]）。分叉不发这一发 ⇒ 挂真内核时会话权限钮整颗消失。
+//
+// 回执 schema 逐字出处（本轮现读 `.../dsh-permission-presets/lib/typert.host.js`）：
+//   'options' / 'defaultOptions' : z.array(z.object({ value: z.string(), name: z.string(),
+//                                    description: z.string().optional() })),
+//   'defaultPreset'              : z.string(),
+//   invocation: { kind: 'direct' } , parameters: [] , result: { mode: 'strict' }
+//   （`parameters: []` 的**逐字书写**两源有别：`typert.host.js` 把空数组拆成 `parameters: [` + 换行 + `]`
+//    两行，单行 `parameters: []` 的原文在 `dsh-api-remotes/lib/client.js` 的 TYPERT_REMOTE 描述符里
+//    ⇒ 两源同义：**零颗** parameter。）
+// ⇒ 三条直接落进本段的判据：
+//   ① 请求侧**零颗** wire 字段 ⇒ args 逐字平铺 `{}`（母本 = [`settings_describe`]，同为零颗 direct 发）。
+//      裹成信封形会被网关 `assertExactArguments` 判 `unexpected "request"` ⇒ 本段的锁里有一颗禁串针。
+//   ② `description` 是 `.optional()` 而**不是** nullable ⇒ 「键缺席」才是常态，显式 `null` 不是内核
+//      产得出的形状 ⇒ 本层不写任何「吞 null」的分支（口径同 [`PermissionOption`] 与投影那一臂）。
+//   ③ `result.mode: 'strict'` ⇒ 回执不可能有第四颗键 ⇒ 解析器**一概不读**表外键（正锁里那发
+//      「多一键」的回执就是这条的反证：读了它才是给不存在的世界写分支）。
+
+/// `permissionPresets/catalog` 的方法名。版本轴两件事分开：
+/// · 「哪一版起有这一发」= **0.1.7 新增**（0.1.5 的投影自带 `options`、没这一发 ⇒ 派发侧要容 404，
+///   那三支「不覆写」判据属宿主层，见刀 P3）；
+/// · 「验到哪一版仍在册」= **0.2.0-rc.2 实测在册**（2026-09-30 现读该树
+///   `dsh-permission-presets/lib/typert.host.js`：`id: '@deepseek-ai/dsh-permission-presets#permissionPresets/catalog'`）。
+/// 分叉实际依赖的那半截**两版未变**：**零颗**参数（`parameters: []`、`invocation.kind: 'direct'`）+
+/// 回执三格 `{options, defaultOptions, defaultPreset}`（台账 `rust/tmp/kv1-020-api-diff.md` §5/W-4）。
+pub const PERMISSION_PRESETS_CATALOG: &str = "permissionPresets/catalog";
+
+/// `permissionPresets/catalog`（主干 `RefreshPermissionCatalogAsync` 那一发）：**零颗** wire 字段
+/// ⇒ args 逐字 `{}`。**不许**裹 `request`（描述符 `parameters: []`、`invocation.kind: 'direct'`）。
+#[must_use]
+pub fn permission_presets_catalog() -> RpcCall {
+    RpcCall::new(PERMISSION_PRESETS_CATALOG, json!({}))
+}
+
+/// `permissionPresets/catalog` 的回执三格：`{options, defaultOptions, defaultPreset}`。
+/// 条目**复用** [`PermissionOption`] —— 它与旧投影响应的条目逐键同构（`value`/`name`/`description`），
+/// 长第二张条目结构体就是让 P3 的宿主同时喂两张表（本仓「唯一事实源」律正面违反）。
+/// `default_preset` 做成 `Option`：schema 里它必填，但主干读它的那一支是
+/// 「`TryGetProperty` + `ValueKind == String` 才收，否则 `null`」⇒ 「非串就当没有」，分叉照抄；
+/// 三格各自的「不覆写旧值」语义（空表保旧表、`None` 保旧值）住在**宿主层**，不在本结构体里。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PermissionCatalog {
+    pub options: Vec<PermissionOption>,
+    pub default_options: Vec<PermissionOption>,
+    pub default_preset: Option<String>,
+}
+
+/// 目录那两张表共用一颗条目解析器（主干 `ParsePermissionCatalog(catalog)` 里 `options` 与
+/// `defaultOptions` 就走的是同一颗 `ParsePermissionCatalogOptions(catalog, field)`）。逐条判据：
+/// 条目不是对象 ⇒ 跳过；`value` 缺席/非串/空串 ⇒ 跳过（真内核 `z.string()` 不填 `min(1)`，
+/// 但一条没有 `value` 的行在视图层无从渲染，口径与投影那一臂同）；`name` 缺席 ⇒ 回落**该条目的
+/// `value`**；`description` 缺席 ⇒ 空串（见上面第 ② 条：缺席是常态，`null` 不是合法形状）。
+fn permission_catalog_options(record: &Value, field: &str) -> Vec<PermissionOption> {
+    record[field]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let value = item["value"].as_str()?.to_string();
+                    if value.is_empty() {
+                        return None;
+                    }
+                    Some(PermissionOption {
+                        name: item["name"]
+                            .as_str()
+                            .unwrap_or(value.as_str())
+                            .to_string(),
+                        description: string_field(item, "description"),
+                        value,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 解 `permissionPresets/catalog` 的回执（[`Kernel::call`] 已剥掉信封那层 `ok`，剩下的就是这三格）。
+/// 整棵不是对象、或 `defaultPreset` 不是串 ⇒ `None`（主干据此保留旧值，不清表）。
+/// 表外键一概不读：strict schema 产不出第四键。
+pub fn parse_permission_catalog(value: &Value) -> Option<PermissionCatalog> {
+    if !value.is_object() {
+        return None;
+    }
+    let default_preset = value["defaultPreset"].as_str().map(str::to_string)?;
+    Some(PermissionCatalog {
+        options: permission_catalog_options(value, "options"),
+        default_options: permission_catalog_options(value, "defaultOptions"),
+        default_preset: Some(default_preset),
+    })
+}
+
+#[cfg(test)]
+mod pk1_permission_catalog_tests {
+    //! PK1（#190 刀 P1）的六把自锁（现测本 mod 的 test 属性枚数 = 6，与下面列举的 ①..⑥ 逐一对表）：
+    //! ① 请求形状逐字 `{}`；② 那一发**不许**裹信封（源码窗口禁串针，
+    //! 靶**限定**在本段函数窗内）；③ 回执逐格比对，含「无 `value` / 无 `name` / 非对象条目」三种脏行；
+    //! ④ `{}` 与非串 `defaultPreset` ⇒ `None`，空串 `defaultPreset` ⇒ 照收（schema 只写 `z.string()`）；
+    //! ⑤ strict 反证：多一键的回执与干净回执**同解**；⑥ 新事件名在册、只活在自己那一支。
+    //!
+    //! 针一律 `concat!` 拆（整名落纸则本测试自己命中自己 ⇒ 反向恒假 = 假绿）；函数锚只写到左括为止
+    //! （本仓实测有一批锚假设签名是单行，多行参数表会 0 命中）。
+    use super::*;
+
+    const PK1_SELF: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/kernel.rs"));
+
+    /// 禁串针的**靶窗口**：`[那一发的 ctor 定义行, 本测试 mod 之前)`。
+    /// 为什么开窗而不打全文件：全文件尺会命中 [`wrapped`] 的定义与 workspace 那六发**合法持有**的
+    /// 裹形 ⇒ 一把恒红的假闸（与本仓 `message_details_production_band` 同一个理由）。
+    /// 锚找不到直接 panic ⇒ 绝不让反向针静默空转。
+    fn pk1_catalog_ctor_band() -> String {
+        let start = PK1_SELF
+            .find(concat!("pub fn permission_presets_catalog", "("))
+            .expect("ctor 锚漂了 ⇒ 本针会静默空转");
+        let end = PK1_SELF
+            .find(concat!("#[cfg(test)]\nmod pk1_", "permission_catalog_tests"))
+            .expect("带尾锚漂了");
+        assert!(start < end, "两枚锚的行序错了 ⇒ 窗口开反");
+        let band = PK1_SELF[start..end].to_string();
+        // 窗口不许是空的、也不许罩错地方：正向先钉一枚「构造体真在窗里」。
+        assert!(
+            band.contains(concat!("RpcCall::new(PERMISSION_PRESETS_", "CATALOG")),
+            "窗口没罩住那一发的构造体 ⇒ 下面的禁串针是假绿"
+        );
+        band
+    }
+
+    /// ① 请求形状：方法名与 args 逐字钉死（`{}` 平铺，零颗键）。
+    #[test]
+    fn catalog_call_is_the_flat_zero_key_shape() {
+        assert_eq!(PERMISSION_PRESETS_CATALOG, "permissionPresets/catalog");
+        let call = permission_presets_catalog();
+        assert_eq!(call.method, PERMISSION_PRESETS_CATALOG);
+        assert_eq!(call.args, json!({}));
+        assert_eq!(call.args.to_string(), "{}");
+        assert_eq!(call.args.as_object().map(|map| map.len()), Some(0));
+        // 母本对照：`settings_describe()` 是同一条零颗 direct 发 ⇒ 两发逐字同形。
+        assert_eq!(
+            call.args.to_string(),
+            settings_describe().args.to_string(),
+            "零颗参发的 args 形制漂了"
+        );
+    }
+
+    /// ② 禁串针：本发的函数窗里一枚信封字样都不许出现（正向那把 `args == json!({})` 是判据，
+    /// 这一把是**防手滑**：谁把 args 改成裹形，哪怕忘了改测试，这一把也红）。
+    #[test]
+    fn that_one_call_never_wraps_its_arguments_in_an_envelope() {
+        let band = pk1_catalog_ctor_band();
+        assert!(!band.is_empty(), "窗口开空了 ⇒ 下面两枚禁串全是假绿");
+        for banned in [concat!("\"re", "quest\""), concat!("wra", "pped(")] {
+            assert!(
+                !band.contains(banned),
+                "`permissionPresets/catalog` 的 args 不许裹信封：窗口里出现了 {banned}"
+            );
+        }
+    }
+
+    /// ③ 逐格比对，含三种脏行（非对象条目 / 无 `value` / 空 `value` / 非串 `value`）与两枚回落。
+    #[test]
+    fn catalog_receipt_parses_cell_by_cell_and_drops_the_dirty_rows() {
+        let receipt = json!({
+            "options": [
+                { "value": "read-only", "name": "read-only", "description": "Only read." },
+                { "name": "没有 value 的脏行" },
+                { "value": "", "name": "value 是空串的脏行" },
+                { "value": 42, "name": "value 非串的脏行" },
+                "非对象条目",
+                { "value": "workspace-write" },
+                { "value": "auto", "name": "auto" },
+            ],
+            "defaultOptions": [
+                { "value": "danger-full-access", "name": "danger-full-access" },
+            ],
+            "defaultPreset": "workspace-write",
+        });
+        let catalog = parse_permission_catalog(&receipt).expect("三格齐备的回执该解得动");
+        assert_eq!(
+            catalog.options,
+            vec![
+                PermissionOption {
+                    value: "read-only".to_string(),
+                    name: "read-only".to_string(),
+                    description: "Only read.".to_string(),
+                },
+                // 无 `name` ⇒ 回落该条目的 value；无 `description` ⇒ 空串（不是 None、不是 panic）。
+                PermissionOption {
+                    value: "workspace-write".to_string(),
+                    name: "workspace-write".to_string(),
+                    description: String::new(),
+                },
+                PermissionOption {
+                    value: "auto".to_string(),
+                    name: "auto".to_string(),
+                    description: String::new(),
+                },
+            ],
+            "脏行没被丢掉 / 或回落方向错了"
+        );
+        assert_eq!(
+            catalog.default_options,
+            vec![PermissionOption {
+                value: "danger-full-access".to_string(),
+                name: "danger-full-access".to_string(),
+                description: String::new(),
+            }],
+            "`defaultOptions` 与 `options` 走的是同一颗条目解析器 ⇒ 语义必须一致"
+        );
+        assert_eq!(catalog.default_preset.as_deref(), Some("workspace-write"));
+        // 中文 `name` 是真机事实（应用侧往 patch 里写了中文标签）：本层**不翻译、不改写**，
+        // 原样带出 ⇒ 过不过表是视图层那一道（`permission_preset_zh`）。
+        let labeled = parse_permission_catalog(&json!({
+            "options": [{ "value": "auto-approve", "name": "自动审批", "description": "中文说明" }],
+            "defaultOptions": [],
+            "defaultPreset": "auto-approve",
+        }))
+        .expect("合法回执");
+        assert_eq!(labeled.options[0].name, "自动审批");
+        assert_eq!(labeled.options[0].description, "中文说明");
+        assert!(labeled.default_options.is_empty(), "空表就是空 vec，不是 None");
+    }
+
+    /// ④ `{}` 与非串 `defaultPreset` ⇒ `None`；空串 `defaultPreset` ⇒ **照收**（schema 只写
+    /// `z.string()`，没写 `.min(1)` ⇒ 造一条「空串也算没有」的判据就是替内核多设一道闸）。
+    #[test]
+    fn empty_or_off_schema_receipts_are_not_parsed() {
+        assert_eq!(parse_permission_catalog(&json!({})), None, "空对象回执三格都没有");
+        assert_eq!(parse_permission_catalog(&json!(null)), None);
+        assert_eq!(parse_permission_catalog(&json!([])), None);
+        assert_eq!(parse_permission_catalog(&json!("x")), None);
+        assert_eq!(parse_permission_catalog(&Value::Null), None);
+        for missing in [
+            json!({ "options": [], "defaultOptions": [] }),
+            json!({ "options": [], "defaultOptions": [], "defaultPreset": null }),
+            json!({ "options": [], "defaultOptions": [], "defaultPreset": 7 }),
+            json!({ "options": [], "defaultOptions": [], "defaultPreset": true }),
+            json!({ "options": [], "defaultOptions": [], "defaultPreset": ["a"] }),
+        ] {
+            assert_eq!(
+                parse_permission_catalog(&missing),
+                None,
+                "`defaultPreset` 不是串 ⇒ 整发作废（主干那支也是这个方向）：{missing}"
+            );
+        }
+        assert_eq!(
+            parse_permission_catalog(&json!({
+                "options": [], "defaultOptions": [], "defaultPreset": ""
+            })),
+            Some(PermissionCatalog {
+                options: Vec::new(),
+                default_options: Vec::new(),
+                default_preset: Some(String::new()),
+            }),
+            "空串是合法的 `z.string()` ⇒ 不许当缺失"
+        );
+        // 表体整格坏掉（非数组）⇒ 该格折成空 vec，整发照样解得动（主干 `ParsePermissionCatalogOptions`
+        // 同方向：`TryGetProperty` 拿不到数组就是零行，不抛）。
+        let broken_rows = parse_permission_catalog(&json!({
+            "options": "not an array", "defaultOptions": {"value": "x"}, "defaultPreset": "workspace-write"
+        }))
+        .expect("defaultPreset 是串就解得动");
+        assert!(broken_rows.options.is_empty() && broken_rows.default_options.is_empty());
+    }
+
+    /// ⑤ strict 反证：多一键的回执与干净回执**同解** ⇒ 解析器没读表外键。
+    #[test]
+    fn the_parser_reads_no_key_the_strict_schema_cannot_send() {
+        let clean = json!({ "options": [], "defaultOptions": [], "defaultPreset": "workspace-write" });
+        for extra in [
+            json!({ "currentValue": "danger-full-access" }),
+            json!({ "ns": "permission" }),
+            json!({ "request": { "value": "read-only" } }),
+            json!({ "description": "整发级说明" }),
+        ] {
+            let mut polluted = clean.as_object().unwrap().clone();
+            for (key, value) in extra.as_object().unwrap() {
+                polluted.insert(key.clone(), value.clone());
+            }
+            let polluted = Value::Object(polluted);
+            assert_eq!(
+                parse_permission_catalog(&polluted),
+                parse_permission_catalog(&clean),
+                "解析器读了表外键：{polluted}"
+            );
+        }
+        // 第二半边：把 `defaultPreset` 整颗抽掉时，表外那几键**不许**当它的替身。
+        // 上面那把循环抓不到这一型 —— `defaultPreset` 在场时「去找别键」那条支根本走不到；
+        // 本刀的 M4 变异（`.or_else(…currentValue…)`）正是从这里溜过去的（现测），故补这半边。
+        let no_preset = json!({ "options": [], "defaultOptions": [] });
+        for extra in [
+            json!({ "currentValue": "danger-full-access" }),
+            json!({ "defaultPresets": "workspace-write" }),
+            json!({ "preset": "workspace-write" }),
+        ] {
+            let mut polluted = no_preset.as_object().unwrap().clone();
+            for (key, value) in extra.as_object().unwrap() {
+                polluted.insert(key.clone(), value.clone());
+            }
+            let polluted = Value::Object(polluted);
+            assert_eq!(
+                parse_permission_catalog(&polluted),
+                None,
+                "表外那一键被当成了 defaultPreset 的替身：{polluted}"
+            );
+        }
+    }
+
+    /// ⑥ 登记表那本账：新名字在册、只从 `emit` 那一支认出、`waterfall` 那一支不认（串门即漏）。
+    #[test]
+    fn catalog_changed_event_is_registered_and_only_lives_on_the_emit_side() {
+        const CATALOG_CHANGED: &str = "permission-presets/catalog-changed";
+        assert!(
+            EVENTS_SUBSCRIPTIONS.contains(&CATALOG_CHANGED),
+            "新事件没登记进唯一事实源：{EVENTS_SUBSCRIPTIONS:?}"
+        );
+        assert_eq!(EVENTS_SUBSCRIPTIONS.len(), 11);
+        assert_eq!(
+            events_subscription(&json!({ "type": "emit", "event": CATALOG_CHANGED, "args": [] })),
+            Some(CATALOG_CHANGED),
+            "真内核那发走 emit 支（转发白名单里的 mode 就是 emit）"
+        );
+        assert_eq!(
+            events_subscription(&json!({
+                "type": "waterfall", "event": CATALOG_CHANGED, "eventId": "e-1", "request": {},
+            })),
+            None,
+            "它走错支了：waterfall 那一支不该认它"
+        );
+        assert!(
+            PendingKind::of(CATALOG_CHANGED).is_none(),
+            "waterfall 归属表不许混进 emit 侧的名字"
+        );
+        // 载荷为空是设计（typert 原文：Payload-free by design）⇒ 本层不给它造任何载荷解析器。
+        // 禁名 `concat!` 拆，靶 = 全文件（这一族整发都不该有）。
+        assert!(
+            !PK1_SELF.contains(concat!("parse_", "catalog_changed")),
+            "事件层给一颗载荷为空的帧造了解析器 ⇒ 与内核设计相反"
+        );
+    }
+}
+
+// ===========================================================================
+// #195 B2 · 引导可靠性第二棒（K1b 认证退避 / K2 `NODE_COMPILE_CACHE` / K4 失败带出现场）
+// 追加在文件末尾的理由同 `:7898` 那条注释 —— 本仓 `include_str!` 源码锁按「起始锚 → 结束锚首次
+// 出现」开窗，新 mod 只能落在所有既开窗锚之后。
+// ===========================================================================
+
+#[cfg(test)]
+mod pb2_boot_fallback_tests {
+    use super::*;
+
+    /// 自锁读本文件，路径写法与 `KW2_SELF` / `B1_SELF` / `PK1_SELF` 那几族一致。
+    const PB2_SELF: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/kernel.rs"));
+
+    /// 主干源**运行时**读（不 `include_str!`，形制同本文件的 `b1_mainline`）。
+    /// 与那颗的差别是刻意的：本族**读不到就 panic** —— 简报禁「拿不到就跳过」那种
+    /// `assert!(true)` 假绿，出处针空转比红更坏。现测主干这几颗都是 CRLF ⇒ 归一是必须的。
+    fn trunk(file: &str) -> String {
+        let path = format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), file);
+        std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("读不到主干源 {path}（{err}）⇒ 本锁没有出处，不许跳过"))
+            .replace("\r\n", "\n")
+    }
+
+    /// 从主干原文里**抠出**参数，而不是把 30 / 500 抄进测试：先定位 `scope_anchor`（本轮实测
+    /// 唯一命中），再在它之后 400 字里找 `num_anchor`、抠紧跟的第一串数字。为什么要绕这一圈：
+    /// `await Task.Delay(` 在 `MainWindow.xaml.cs` 里有 7 处命中（本轮实测），按「第一处」抠数
+    /// 就会抠到别家的节拍 ⇒ 一把恒红的假闸。
+    fn trunk_number(hay: &str, scope_anchor: &str, num_anchor: &str) -> u64 {
+        assert_eq!(
+            hay.matches(scope_anchor).count(),
+            1,
+            "主干锚 {scope_anchor:?} 不是唯一命中 ⇒ 抠出来的数不知道是谁家的"
+        );
+        let scope = hay.find(scope_anchor).expect("上面数过了，不会找不到");
+        // 按**字符**开窗不按字节：主干那份 xaml.cs 里有大量中文注释，字节切片会切到多字节中间
+        // （本轮实测第一版就是这么 panic 的）。
+        let window: String = hay[scope..].chars().take(400).collect();
+        let at = window
+            .find(num_anchor)
+            .unwrap_or_else(|| panic!("{scope_anchor} 之后 400 字里找不到 {num_anchor}"));
+        let digits: String = window[at + num_anchor.len()..]
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        digits
+            .parse()
+            .unwrap_or_else(|_| panic!("{num_anchor} 之后不是一串数字：{digits:?}"))
+    }
+
+    /// 按「起始锚 → 结束锚」开窗；锚找不到直接 panic，绝不让针静默空转。
+    fn band(open: &str, close: &str) -> String {
+        assert!(PB2_SELF.len() > 20_000, "自锁没读到文件 ⇒ 下面的零命中全是假的");
+        let start = PB2_SELF.find(open).unwrap_or_else(|| panic!("带首锚漂了：{open}"));
+        let end = PB2_SELF.find(close).unwrap_or_else(|| panic!("带尾锚漂了：{close}"));
+        assert!(start < end, "两枚锚的行序错了 ⇒ 窗口开反");
+        PB2_SELF[start..end].to_string()
+    }
+
+    /// ① 取值出处锁：两颗预算常量 = 从主干盘上抠出来的那两个数（不从简报、不从旧报告）。
+    #[test]
+    fn the_auth_budget_constants_are_read_off_the_mainline_source() {
+        let boot = trunk("MainWindow.xaml.cs");
+        // 主干那两行逐字（本轮实测：两处 needle 在全仓各只有一处命中）。
+        assert!(
+            boot.contains("catch (Exception ex) when (attempt < 30)"),
+            "主干那圈 `when (attempt < 30)` 漂了 ⇒ 分叉的上限失去出处"
+        );
+        assert!(
+            boot.contains("await Task.Delay(500, ct);"),
+            "主干那一觉 `Task.Delay(500, ct)` 漂了 ⇒ 分叉的间隔失去出处"
+        );
+        let attempts = trunk_number(&boot, "catch (Exception ex) when (attempt < ", "await Task.Delay(");
+        let shots = trunk_number(&boot, "for (var attempt = 1; ; attempt++)", "attempt < ");
+        assert_eq!(
+            AUTH_MAX_ATTEMPTS as u64, shots,
+            "分叉的认证发数上限与主干 `when (attempt < {shots})` 不是同一个数"
+        );
+        assert_eq!(
+            AUTH_RETRY_DELAY,
+            Duration::from_millis(attempts),
+            "分叉的认证间隔与主干那一觉 `Task.Delay({attempts}, ct)` 不是同一个数"
+        );
+        // 反「乘第二遍」（B1 交下来的纪律）：这两颗不长成 mux 那一族的单轮 2 s / 总窗 60 s。
+        assert_ne!(AUTH_RETRY_DELAY, Duration::from_secs(2));
+        assert_ne!(AUTH_RETRY_DELAY, Duration::from_secs(60));
+    }
+
+    /// ② 有界性锁：判据自己收束 ⇒ 第 30 发必放弃，从第 1 发数到放弃**恰好** 30 步。
+    /// 谁把上限改成「永不放弃」，这一发在护栏处当场红（护栏在 `break` 之前 ⇒ 不会挂死）。
+    #[test]
+    fn the_backoff_decision_converges_at_the_mainline_attempt_count() {
+        assert_eq!(AUTH_MAX_ATTEMPTS, 30, "认证发数上限漂了");
+        assert_eq!(
+            auth_step(1, None),
+            AuthStep::Retry,
+            "首发失败就该再来一发：主干不是「一失败就翻失败卡」"
+        );
+        assert_eq!(auth_step(AUTH_MAX_ATTEMPTS - 1, None), AuthStep::Retry);
+        assert_eq!(
+            auth_step(AUTH_MAX_ATTEMPTS, None),
+            AuthStep::Abandon,
+            "打到上限还不放弃 ⇒ 退避变成了无限的"
+        );
+        assert_eq!(auth_step(AUTH_MAX_ATTEMPTS, Some(404)), AuthStep::Abandon);
+        // 成功那一支不看发数：任何一发拿到 < 400 都立刻前进。
+        for attempt in [1u32, 2, 29, 30] {
+            assert_eq!(auth_step(attempt, Some(200)), AuthStep::Proceed);
+        }
+        // 分界逐字沿用分叉既有闸口 `status >= 400`（老代码就是这个判据）⇒ 不新增档、不收严。
+        assert_eq!(auth_step(1, Some(302)), AuthStep::Proceed, "3xx 是老代码认的一发");
+        assert_eq!(auth_step(1, Some(400)), AuthStep::Retry);
+        // 数一遍收束。
+        let mut attempt = 0u32;
+        loop {
+            attempt += 1;
+            match auth_step(attempt, None) {
+                AuthStep::Abandon => break,
+                AuthStep::Retry => {
+                    assert!(attempt <= 1_000, "退避不收束：第 {attempt} 发还在判 Retry")
+                }
+                AuthStep::Proceed => panic!("全程失败却判成 Proceed ⇒ 判据被改歪"),
+            }
+        }
+        assert_eq!(attempt, AUTH_MAX_ATTEMPTS, "从第 1 发数到放弃的步数不是 30");
+    }
+
+    /// ③ 驱动锁（**可注入**：假 HTTP、假一觉，不起真内核、不开真 socket）。
+    /// 钉的是三样：发数、觉数、去向 —— 包括「首发之前不睡」「耗尽那一发不补觉」。
+    #[test]
+    fn the_driver_counts_shots_and_sleeps_exactly_like_the_mainline_loop() {
+        // 首发就成 ⇒ 一发、零觉、零失败行（主干 `for (var attempt = 1; ; attempt++)` 第一发前没有 Delay）。
+        let mut calls = 0u32;
+        let mut sleeps = 0u32;
+        let mut log: Vec<String> = Vec::new();
+        let got = auth_backoff(
+            || {
+                calls += 1;
+                Ok((200, "set-cookie: t=1\n".to_string(), String::new()))
+            },
+            |_, _| {
+                sleeps += 1;
+                AuthWait::Slept
+            },
+            &mut log,
+        )
+        .expect("首发 200 就该前进");
+        assert_eq!(
+            (calls, sleeps),
+            (1, 0),
+            "首发之前不许先睡：主干那一觉只落在失败的臂上"
+        );
+        assert_eq!(got.0, 200);
+        assert!(log.is_empty(), "成功路上不该冒失败行");
+
+        // 首发 404、二发 200（主干兜的那个「路由还在注册」窗）⇒ 两发、一觉，失败行留在 log 里。
+        let mut calls = 0u32;
+        let mut sleeps = 0u32;
+        let mut log: Vec<String> = Vec::new();
+        let got = auth_backoff(
+            || {
+                calls += 1;
+                if calls == 1 {
+                    Ok((404, String::new(), String::new()))
+                } else {
+                    Ok((200, "h".to_string(), String::new()))
+                }
+            },
+            |_, _| {
+                sleeps += 1;
+                AuthWait::Slept
+            },
+            &mut log,
+        )
+        .expect("网关挂上之后那一发就该前进");
+        assert_eq!((calls, sleeps), (2, 1), "「压成多等 0.5s」这一格的本体");
+        assert_eq!(got.0, 200);
+        assert_eq!(
+            log.iter()
+                .filter(|line| line.contains("[auth] attempt 1/30 FAIL: 鉴权失败: HTTP 404"))
+                .count(),
+            1,
+            "失败那一发没留下主干同位（`DiagLine`）的诊断行 ⇒ 静默重试"
+        );
+
+        // 恒连不上 ⇒ **恰好** 30 发、29 觉（耗尽那一发不补觉），且冒 Err 不吞 Ok。
+        let mut calls = 0u32;
+        let mut sleeps = 0u32;
+        let mut log: Vec<String> = Vec::new();
+        let err = auth_backoff(
+            || {
+                calls += 1;
+                assert!(
+                    calls <= 40,
+                    "退避不收束：第 {calls} 发还在打 ⇒ 上限被改成了永不放弃"
+                );
+                Err("连接 127.0.0.1:1 失败: 拒绝连接".to_string())
+            },
+            |_, _| {
+                sleeps += 1;
+                AuthWait::Slept
+            },
+            &mut log,
+        )
+        .expect_err("预算耗尽必须冒 Err，不许吞成 Ok");
+        assert_eq!(
+            (calls, sleeps),
+            (30, 29),
+            "发数/觉数与主干 30 发 × 29 觉不是同一笔账"
+        );
+        assert!(
+            err.contains("鉴权请求失败: 连接 127.0.0.1:1 失败: 拒绝连接"),
+            "耗尽那条 Err 丢了最后一次的失败原文：{err}"
+        );
+        assert_eq!(
+            log.iter().filter(|line| line.contains("[auth] attempt")).count(),
+            30,
+            "每一发都该留一行诊断"
+        );
+
+        // 恒 404 到耗尽：4xx 那一路的原文同样逐字保住，且带上已经攒下的内核现场（K4）。
+        let mut log: Vec<String> = vec!["dsh web: http://127.0.0.1:1/?token=T".to_string()];
+        let err = auth_backoff(
+            || Ok((404, String::new(), String::new())),
+            |_, _| AuthWait::Slept,
+            &mut log,
+        )
+        .expect_err("恒 404 到耗尽也要冒 Err");
+        assert!(err.contains("鉴权失败: HTTP 404"), "{err}");
+        // 取尾是**末** 12 行：30 发的失败行把最初那条内核行挤出了窗口（这是取尾的设计，不是丢现场）。
+        assert!(
+            err.contains("内核现场: [line] "),
+            "耗尽那条 Err 没带上现场 ⇒ K4 丢了：{err}"
+        );
+        assert!(
+            err.contains("[line] [auth] attempt 30/30 FAIL"),
+            "现场里没有最后那一发 ⇒ {err}"
+        );
+        assert_eq!(
+            err.matches("[line] ").count(),
+            KERNEL_LOG_TAIL_LINES,
+            "现场枚数不是取尾那 12 行：{err}"
+        );
+    }
+
+    /// ④ 可中断锁：那一觉回 `KernelGone`（内核在睡拍里死了）⇒ 当场收束，不白等满 30 发。
+    #[test]
+    fn a_dead_kernel_short_circuits_the_retry_wait() {
+        let mut calls = 0u32;
+        // 已经攒下的内核 stdout：这一路只有两行，取尾窗装得下 ⇒ 现场必须整条带出去。
+        let mut log: Vec<String> = vec!["dsh web: http://127.0.0.1:1/?token=T".to_string()];
+        let err = auth_backoff(
+            || {
+                calls += 1;
+                Ok((503, String::new(), String::new()))
+            },
+            |_, _| AuthWait::KernelGone,
+            &mut log,
+        )
+        .expect_err("内核已经没了 ⇒ 认证只能以 Err 收场");
+        assert_eq!(calls, 1, "通道都断了还在打第 2 发 ⇒ 那一觉没被中断");
+        assert!(err.contains("鉴权失败: HTTP 503"), "{err}");
+        assert!(
+            err.contains("[line] dsh web: http://127.0.0.1:1/?token=T"),
+            "内核死了这一发最需要现场，却把它丢了：{err}"
+        );
+    }
+
+    /// ⑤ 可见性 + 反向锁（源形）：`Kernel::start` 的三条早退路**逐条**过现场组装器，
+    /// 老的「一发定生死」直路闸已经从函数窗里消失。
+    #[test]
+    fn every_start_failure_leaves_the_straight_shot_and_carries_the_scene() {
+        let start = band("pub fn start(launch: &Launch)", "pub fn endpoint(&self)");
+        // `start` 自己只剩两发显式 `return Err(`（握手超时 / 提前退出）：认证那一路的失败出口
+        // 搬进了 `auth_backoff`，`start` 这里是 `auth_backoff(…)?` —— 位置换了，吞不掉。
+        assert_eq!(
+            start.matches("return Err(").count(),
+            2,
+            "start 的失败出口数漂了（多了 = 多做，少了 = 有一条被吞成 Ok）"
+        );
+        assert_eq!(
+            start.matches("return Err(kernel_start_failure(").count(),
+            2,
+            "有一条失败路又不带内核现场了"
+        );
+        // 三条定性原文逐字仍在（老锁吃的是前缀，本刀不许把它们换成一句泛化话）。
+        assert!(start.contains("内核握手超时（90s 未见 dsh web: 行）"));
+        assert!(start.contains("内核提前退出:"));
+        assert!(start.contains("内核启动失败: "));
+        // 反向：那两句不许回到 start 的函数窗（= 一发失败的直路分支）。
+        assert_eq!(
+            start.matches("鉴权失败: HTTP").count(),
+            0,
+            "`鉴权失败: HTTP` 又出现在无重试的直路分支里"
+        );
+        assert_eq!(
+            start.matches("鉴权请求失败").count(),
+            0,
+            "同上：那两句原文如今只许活在被重试圈包着的驱动里"
+        );
+        // 针不许空转：正向先钉「驱动真在窗里被调用」，且两句原文确实还在本文件里。
+        assert!(start.contains("auth_backoff("), "start 里已经没有认证退避的调用点");
+        assert!(PB2_SELF.contains("鉴权失败: HTTP"), "禁串针空转：驱动里那句原文都没了");
+        assert!(PB2_SELF.contains("鉴权请求失败"), "禁串针空转：驱动里那句原文都没了");
+        // 反「乘第二遍」：认证这一族（驱动 + start）里没有 mux 的单轮/总窗，也没有裸阻塞口。
+        let wide = band("pub fn auth_backoff<", "pub fn endpoint(&self)");
+        // 这一族里**每一发**失败出口都过现场组装器：4 发（驱动 2 + start 2）。
+        // 少一发 = 有一条被吞成 Ok 或不带现场；多一发 = 有人在本族里加了主干没有的第三条失败路。
+        assert_eq!(
+            wide.matches("return Err(").count(),
+            4,
+            "认证这一族的失败出口数漂了"
+        );
+        assert_eq!(
+            wide.matches("return Err(kernel_start_failure(").count(),
+            4,
+            "这一族里有一条失败路又不带内核现场了"
+        );
+        for forbidden in [
+            concat!("from_secs(", "2)"),
+            concat!("from_secs(", "60)"),
+            concat!("HANDSHAKE_", "BUDGET"),
+            concat!("thread::", "sleep("),
+        ] {
+            assert!(
+                !wide.contains(forbidden),
+                "认证这一族里出现了不该有的第 N 颗预算/阻塞口：{forbidden}"
+            );
+        }
+    }
+
+    /// ⑥ K2 的取值出处锁：键名与目录名逐字钉在主干那一行上；`dsh_home` 缺席则整颗缺席。
+    #[test]
+    fn the_compile_cache_env_is_the_mainline_pair_and_only_when_home_is_known() {
+        let host = trunk("Dsh/DshKernelHost.cs");
+        let anchor = "psi.EnvironmentVariables[\"NODE_COMPILE_CACHE\"] = Path.Combine(dshHome, \"kernel-compile-cache\");";
+        assert_eq!(host.matches(anchor).count(), 1, "主干 `DshKernelHost.cs` 那一行漂了/不唯一");
+        assert_eq!(NODE_COMPILE_CACHE_KEY, "NODE_COMPILE_CACHE");
+        assert_eq!(NODE_COMPILE_CACHE_DIR, "kernel-compile-cache");
+        // 两颗都从主干那一行里认出来（不是抄进测试的第二份账）。
+        assert!(anchor.contains(NODE_COMPILE_CACHE_KEY));
+        assert!(anchor.contains(NODE_COMPILE_CACHE_DIR));
+
+        let home = Path::new(r"C:\Users\me\AppData\Local\Blade2");
+        let got = build_env(Some(home), None, false, None);
+        assert_eq!(
+            got.last().map(|(k, v)| (k.as_str(), v.as_str())),
+            Some((
+                "NODE_COMPILE_CACHE",
+                r"C:\Users\me\AppData\Local\Blade2\kernel-compile-cache"
+            )),
+            "缓存目录不是主干那句 `Path.Combine(dshHome, …)` 的形状"
+        );
+        // 追加在尾 ⇒ 前两颗的位序一个字不动（这是兼容既有按位锁的妥协，见 `build_env` 的 doc）。
+        assert_eq!(got[0].0, "DSH_HOME");
+        // `dsh_home` 缺席 ⇒ 整颗缺席（主干那颗恒有 `dshHome`，分叉的回退级臂没有）。
+        assert!(
+            build_env(None, Some(Path::new(r"C:\app\Kernel\bin")), true, Some("x"))
+                .iter()
+                .all(|(k, _)| k != "NODE_COMPILE_CACHE"),
+            "`dsh_home` 都不明还要注入 ⇒ 往内核塞一条无家可归的缓存路径"
+        );
+        // 针不许空转：正向先钉「`build_env` 那一段真的在引用这两颗常量」（不是引用字面串 ——
+        // 字面串只活在常量定义那一行，函数体里是标识符）。
+        // 主干那三条语义之一：目录**不需要**预先存在 ⇒ 本函数一颗 fs 都不发（node 自建、写失败静默）。
+        let body = band("pub fn build_env(", "// =============== 缺口 #84-B");
+        assert!(
+            body.contains("NODE_COMPILE_CACHE_DIR") && body.contains("NODE_COMPILE_CACHE_KEY"),
+            "针空转：`build_env` 里已经没有那两颗常量"
+        );
+        for forbidden in ["is_dir()", "is_file()", ".exists()", "fs::"] {
+            assert!(
+                !body.contains(forbidden),
+                "注入一颗 env 还要先探盘 = 主干没有的第二道判据：{forbidden}"
+            );
+        }
+    }
+
+    /// ⑦ K4 的取尾方向：留**末** N 行、连成一行、空表不缀分隔符。
+    #[test]
+    fn the_failure_tail_keeps_the_last_lines_on_one_line() {
+        assert_eq!(KERNEL_LOG_TAIL_LINES, 12, "取尾行数（分叉自持口径）漂了");
+        assert_eq!(
+            kernel_log_tail(&[]),
+            "",
+            "空表要回空串，否则失败卡上挂一条空现场"
+        );
+        let three: Vec<String> = ["a", "b", "c"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(kernel_log_tail(&three), "[line] a · [line] b · [line] c");
+        assert!(
+            !kernel_log_tail(&three).contains('\n'),
+            "现场必须连成一行：它要进失败卡 detail 与状态栏"
+        );
+        let many: Vec<String> = (0..40).map(|i| format!("line-{i}")).collect();
+        let tail = kernel_log_tail(&many);
+        assert_eq!(
+            tail.matches("[line] ").count(),
+            KERNEL_LOG_TAIL_LINES,
+            "取尾枚数与常量不是同一笔账"
+        );
+        assert!(tail.starts_with("[line] line-28"), "留的是**头** 12 行而不是**末** 12 行：{tail}");
+        assert!(tail.ends_with("[line] line-39"), "末行丢了：{tail}");
+        // 组装器：定性原文在前、逐字不动，现场缀在尾；空现场不许留悬着的分隔符。
+        assert_eq!(
+            kernel_start_failure("内核握手超时（90s 未见 dsh web: 行）", &[]),
+            "内核握手超时（90s 未见 dsh web: 行）"
+        );
+        let with = kernel_start_failure("Q", &three);
+        assert!(with.starts_with("Q ｜ 内核现场: [line] a"), "{with}");
     }
 }

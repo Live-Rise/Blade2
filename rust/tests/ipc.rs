@@ -9,12 +9,14 @@ use blade2_rs::kernel::{
     CONTROL_FRAME_TYPES, CommandReply, ControlDelta, ControlState, DetailsKey, DetailsLedger,
     DIRECTORY_PICKER_CREATE_DIRECTORY, DIRECTORY_PICKER_LIST, DIRECTORY_PICKER_PICK,
     DirectoryEntry, DirectoryListing, Kernel,
-    Launch, PermissionsProjection, PickOutcome, PlanProjection, Projections, RpcCall, SessionStats,
+    Launch, PermissionCatalog, PermissionOption, PickOutcome, PlanProjection, Projections, RpcCall,
+    SessionStats,
     SubmittedAttachment, WORKSPACE_ARCHIVE_SESSION, WORKSPACE_CREATE, WORKSPACE_DELETE,
     WORKSPACE_INSERT_BEFORE, WORKSPACE_INSERT_SESSION_BEFORE, WORKSPACE_RENAME, Workspace,
     WorkspaceCreated, WorkspaceTree, WorkspaceView, control_frame_type,
     directory_picker_create_directory, directory_picker_list, directory_picker_pick,
-    page_events, parse_archived_session_ids, parse_created_directory, parse_pick,
+    page_events, parse_archived_session_ids, parse_created_directory, parse_permission_catalog,
+    parse_pick,
     parse_workspace_created, parse_workspace_deleted, parse_workspace_ids, parse_workspace_value,
     permission_preset_zh, session_status_event, workspace_archive_session, workspace_create,
     workspace_delete, workspace_insert_before, workspace_insert_session_before, workspace_rename,
@@ -1144,21 +1146,34 @@ fn commands_execute_reports_every_reply_state() {
     assert!(reply.is_success(), "{reply:?}");
     assert_eq!(
         reply.text(),
-        Some("current preset workspace-write (available: workspace-write, danger-full-access)")
+        Some(
+            "current preset workspace-write (available: read-only, workspace-write, \
+             danger-full-access)"
+        )
     );
-    // 表外名字（旧桩那套 `default`/`accept-edits`/`read-only` 都不在真预设表里）⇒ error。
+    // 表内第一档（真 composition 表首）现在**切得动** ⇒ success + `preset <name>`。
+    // 这一发就是「旧账作废」的机器判据：桩补了第三档之后 `/permission read-only` 不再回 error。
     let reply = kernel
         .execute_command("s-1001", "/permission read-only", &[])
-        .expect("表外预设是正常回执");
-    assert_eq!(reply.kind_of(), "error");
-    assert_eq!(
-        reply.text(),
-        Some("unknown preset \"read-only\" (available: workspace-write, danger-full-access)")
-    );
+        .expect("read-only 是真表键");
+    assert!(reply.is_success(), "{reply:?}");
+    assert_eq!(reply.text(), Some("preset read-only"));
+    // 表外名字（旧桩那套 `default` / `accept-edits` 仍是假 id）⇒ error。
+    // ⚠ `read-only` 那一支**改了判据方向**（刀 P2）：它**不是**假 id，而是真 composition
+    // （`dsh-base/cordis.patch.yml` 的 `config.presets`）排在**表首**的那一档 ⇒ 桩此前对它回
+    // error 只是因为**桩自己的表缺第一档**。旧账「`/permission read-only` 回错是对的」作废。
+    // 锁不删，只把靶换成真表外的 `default`；`(available: …)` 的现值 = 三档新序。
     let reply = kernel
         .execute_command("s-1001", "/permission default", &[])
         .expect("旧桩的假 id 同样被真表拒");
     assert_eq!(reply.kind_of(), "error");
+    assert_eq!(
+        reply.text(),
+        Some(
+            "unknown preset \"default\" (available: read-only, workspace-write, \
+             danger-full-access)"
+        )
+    );
     // 真预设名切换成功 ⇒ success + `preset <name>`，并且立刻反映到投影里。
     let reply = kernel
         .execute_command("s-1001", "/permission danger-full-access", &[])
@@ -1279,44 +1294,22 @@ fn session_list_rows_carry_every_projection_key_the_trunk_reads() {
         .permissions
         .clone()
         .expect("权限投影在");
-    // F7 + F8：`options` 的形状就是真内核 `selectFor()`（`lib/index.js:230-236`）那一句
-    // 「表项按声明顺序 + `...currentValue === "custom" ? [optionOf("custom")] : []`」——
-    // **默认态（当前档命中表）只有两项**，`custom` 是派生态、只有派生出来才追加（桩此前恒发
-    // 三项，那是桩的形状不是内核的形状；完整两头见
-    // `permission_custom_option_only_arrives_when_the_knobs_leave_the_table`）。
-    // `optionOf()` 出的 `value` 与 `name` 同源且都是**英文**，`description` 两项都在
-    // （selectSchema 里 value/name 是 min(1) 必填，「没有 value 的坏选项」线上产不出
-    // ⇒ 主干 15377 那条丢弃逻辑是纯防御，桩不演它）。
-    assert_eq!(
-        permissions
-            .options
-            .iter()
-            .map(|option| option.value.as_str())
-            .collect::<Vec<_>>()
-            .join(","),
-        "workspace-write,danger-full-access",
-        "默认表两项，命中表的那一档不许追加派生态"
-    );
-    assert!(
-        permissions
-            .options
-            .iter()
-            .all(|option| option.value != "custom"),
-        "`custom` 是派生态，不许恒在选项里: {:?}",
-        permissions.options
-    );
-    assert!(
-        permissions
-            .options
-            .iter()
-            .all(|option| !option.name.is_empty()
-                && option.name.chars().all(|c| c.is_ascii())
-                && !option.description.is_empty()
-                && option.name == option.value),
-        "桩发的 name 必须是英文预设 id（中文是视图层 PermissionPresetZh 的活）: {:?}",
-        permissions.options
-    );
+    // 刀 P2：0.1.7 的投影**只剩 `currentValue` 一颗键**（`wire.view = (state) => ({ currentValue:
+    // this.derive(state) })`），表整族搬进了 `permissionPresets/catalog`。旧注释引用的
+    // `selectFor()`（「表项按声明顺序 + 派生态才追加第三项」）在 0.1.7 bundle 里整族不存在，
+    // 桩那条 `options` + `custom` 追加分支演的是**已死的旧形状** ⇒ 这里改判 `currentValue`，
+    // 「表体三档 / 序 / custom 不成行」那三把语义**迁到目录回执**上
+    // （见 `permission_catalog_arrives_fully_formed_over_a_real_socket`）。
     assert_eq!(permissions.current_value.as_deref(), Some("workspace-write"));
+    assert!(
+        permissions.options.is_empty(),
+        "0.1.7 的投影不带 options ⇒ 分叉解析器该把它落成空表，旧内核回落属 P3"
+    );
+    // ⚠ 原来跟在后面的两把 `options.iter().all(…)`（「不许恒有 custom 行」「name 必须是英文
+    // id 且 name == value」）**不能留**在投影上：投影现在压根没有 options ⇒ 那是恒真的空表遍历，
+    // 正是记忆里那类**静默假绿**。两把的语义都搬到了目录回执那一颗锁上（`custom` 不成行 =
+    // `permission_catalog_never_rows_the_derived_state`；英文 id + `name == value` =
+    // `permission_catalog_arrives_fully_formed_over_a_real_socket` 的 ASCII 那把）。
     assert_eq!(
         first.projections.value_of("todos"),
         Some(&json!({ "open": 0, "done": 3 })),
@@ -1455,8 +1448,41 @@ fn stats_raw() -> Value {
     })
 }
 
-/// F7：桩发的权限条目是**英文预设 id**，中文只属于视图层那张 `PermissionPresetZh`
-/// （主干 15957 的硬约束）。分叉要是照「wire 上就是中文」实现，上真机立刻漏英文。
+/// 桩台账里权限族的事实源（只用于**报错文案**的判据）：`PERMISSION_TABLE` 的键序。
+/// 期望值一律从 `permissionPresets/catalog` 的回执算出来 ⇒ 「表体有几档、什么序」由
+/// **过线那份字节**说了算，而不是测试自己抄一份（记忆里那类「测试自己一份、线上另一份」的假绿）。
+/// 回执**外层**恰三颗键（逐字照 `typert.host.js` 的 `z.object({options, defaultOptions, defaultPreset})`，
+/// 且 `result.mode: 'strict'` ⇒ 多一颗内核自己就拒）；条目**至多**三颗键
+/// （`description` 是 `.optional()` ⇒ 用 ⊆ 不用 ==，`auto` 那一行就没有它）。
+const CATALOG_NS_KEYS: [&str; 3] = ["defaultOptions", "defaultPreset", "options"];
+const OPTION_ROW_KEYS: [&str; 3] = ["description", "name", "value"];
+
+/// 开一颗带旋钮的桩，取 `permissionPresets/catalog` 的**回执裸 Value**。
+/// 走的是 P1 那颗 ctor 的 `method` + `args` 逐字（`args` = `{}`）⇒ 「分叉真发得出去」与
+/// 「桩真接得住」在同一条腿上证；把 ctor 的 args 改裹成 `{request:{}}`，这里当场 rejected。
+fn catalog_raw(kernel: &mut Kernel) -> Value {
+    let call = blade2_rs::kernel::permission_presets_catalog();
+    let (method, args) = (call.method, call.args);
+    kernel
+        .call(method, args)
+        .unwrap_or_else(|why| panic!("permissionPresets/catalog 应成功，实际 {why}"))
+}
+
+/// 同上，但再过一遍 P1 的 typed 解析器（回执得进得了分叉自己的模型才算这条 RPC 真能用）。
+fn catalog_typed(kernel: &mut Kernel) -> PermissionCatalog {
+    parse_permission_catalog(&catalog_raw(kernel))
+        .expect("目录回执得能被 parse_permission_catalog 收下")
+}
+
+/// 目录 `options` 那张表：测试侧**唯一**读点，凡按表体断言的都从这里算。
+fn catalog_options(kernel: &mut Kernel) -> Vec<PermissionOption> {
+    catalog_typed(kernel).options
+}
+
+/// F7（刀 P2 改口径）：可切换表现在住在 `permissionPresets/catalog` 的回执里，**不再**是投影。
+/// 判据本身不变、只是换了喂它的来源：wire 上必须是**英文预设 id**，中文只属于视图层那张
+/// `PermissionPresetZh`（主干 15957 的硬约束）。分叉要是照「wire 上就是中文」实现，
+/// 上真机立刻漏英文。
 #[test]
 fn stub_permission_options_arrive_as_english_ids_the_view_has_to_translate() {
     let mut kernel = Kernel::start(&fake_launch()).expect("假内核应完成 dsh web: 握手");
@@ -1466,33 +1492,37 @@ fn stub_permission_options_arrive_as_english_ids_the_view_has_to_translate() {
         .permissions
         .clone()
         .expect("权限投影在");
-    let catalog = Catalog::load("zh", None);
+    // 投影这一侧只剩 `currentValue`（旧内核才带 options）⇒ 表体从目录 RPC 取。
     assert!(
-        permissions
-            .options
-            .iter()
-            .all(|option| option.name.is_ascii() && option.value.is_ascii()),
-        "wire 上不许出现中文 name: {:?}",
+        permissions.options.is_empty(),
+        "投影不许再带 options（那是 0.1.5 的旧形）: {:?}",
         permissions.options
     );
+    let options = catalog_options(&mut kernel);
+    let catalog = Catalog::load("zh", None);
+    assert!(
+        options
+            .iter()
+            .all(|option| option.name.is_ascii() && option.value.is_ascii()),
+        "wire 上不许出现中文 name: {options:?}"
+    );
     // 视图侧过表才变中文；表里认不得的 id 原样回显（主干的 `_ => value`）。
-    let labels: Vec<String> = permissions
-        .options
+    let labels: Vec<String> = options
         .iter()
         .map(|option| permission_preset_zh(&catalog, &option.value))
         .collect();
-    assert_eq!(labels, vec!["工作区内修改", "完全权限"]);
+    // 三档新序 = 真 composition 的声明序（`read-only` 在表首）。
+    assert_eq!(
+        labels,
+        vec!["仅可查看", "工作区内修改", "完全权限"],
+        "目录表体的译名序 = 表序"
+    );
     assert!(
         labels
             .iter()
-            .zip(permissions.options.iter())
+            .zip(options.iter())
             .all(|(label, option)| label != &option.name),
         "直显 name 就是漏翻译：翻译后的串必须与 wire 串不同"
-    );
-    assert_eq!(
-        permission_preset_zh(&catalog, "read-only"),
-        "仅可查看",
-        "表是照主干整表抄的，含 deployment 才有的 read-only/auto-approve"
     );
     assert_eq!(
         permission_preset_zh(&catalog, "some-future-preset"),
@@ -1500,16 +1530,20 @@ fn stub_permission_options_arrive_as_english_ids_the_view_has_to_translate() {
     );
 }
 
-/// 那第三项 `custom` 到底什么时候上线：真内核 `selectFor()`
-/// （`Kernel/dsh/node_modules/@deepseek-ai/dsh-permission-presets/lib/index.js:230-236`）
-/// 是「表项按声明顺序 + `...currentValue === "custom" ? [optionOf(CUSTOM_PRESET)] : []`」，
-/// 也就是**只有 `derive()`（同文件 213-223）撞不到表项、派生出 `custom` 时才追加**。
-/// 桩此前恒发三项（分叉照桩写就会以为选项是定长三档），这里两头都钉：
-/// 默认态不许出现 `custom`；切到自定义上下文（会话自己的旋钮在表外）才出现；一切回表内立刻消失。
+/// `custom` 到底是什么：**一颗派生态的值，永远不是一行目录**。
+/// 旧桩（照 0.1.5 的 `selectFor()` 形状）在派生出 `custom` 时往投影的 `options` 末尾追加
+/// `optionOf("custom")` 那一行；0.1.7 里 `selectFor()` 整族不存在（全 bundle grep 0 命中）、
+/// 投影只剩 `currentValue`、表搬进了 `permissionPresets/catalog`，而 `catalog()` 只吃 `names`
+/// = 配置表键 ⇒ **`custom` 已无生产者**（`README.zh.md`：「绝不会成为可选目录行」）。
+/// ⇒ 用例改名并换判据：派生态照样派生得出来（`currentValue == "custom"`），但目录里
+/// **不追加** custom 行。两头都钉，缺一头就是静默假绿。
+/// 桩侧 `seed_knobs()` 那条表外覆盖也跟着换了束：补 `read-only` 第三档之后
+/// `{read-only, ask}` **成了表内第一行**，派生态会静默消失 ⇒ 种子覆盖挪到 `{read-only, never}`
+/// （两颗旋钮各自都还是合法值，凑一起仍撞不到表）。
 #[test]
-fn permission_custom_option_only_arrives_when_the_knobs_leave_the_table() {
+fn permission_custom_state_is_a_derived_value_never_a_catalog_row() {
     let mut kernel = Kernel::start(&fake_launch()).expect("假内核应完成 dsh web: 握手");
-    let permissions_of = |kernel: &mut Kernel, id: &str| -> PermissionsProjection {
+    let current_of = |kernel: &mut Kernel, id: &str| -> Option<String> {
         kernel
             .list_session_rows()
             .expect("session/list 应成功")
@@ -1520,57 +1554,41 @@ fn permission_custom_option_only_arrives_when_the_knobs_leave_the_table() {
             .permissions
             .clone()
             .expect("权限投影在")
+            .current_value
     };
-    // 嵌套 fn（而不是闭包）：只为省掉那个 `&'_ str` 的生命周期标注。
-    fn values(permissions: &PermissionsProjection) -> Vec<&str> {
-        permissions
-            .options
-            .iter()
-            .map(|option| option.value.as_str())
-            .collect()
-    }
     let catalog = Catalog::load("zh", None);
 
-    // ① 默认态：s-1001 的旋钮就是合成默认那一束，命中表 ⇒ 两项，没有派生态。
-    let on_table = permissions_of(&mut kernel, "s-1001");
-    assert_eq!(
-        values(&on_table),
-        ["workspace-write", "danger-full-access"],
-        "命中默认表时不许追加 `custom`"
-    );
-    assert_eq!(on_table.current_value.as_deref(), Some("workspace-write"));
+    // ① 默认态：s-1001 的旋钮就是合成默认那一束，命中表 ⇒ 派生出表内档名。
+    assert_eq!(current_of(&mut kernel, "s-1001").as_deref(), Some("workspace-write"));
 
-    // ② 切到自定义上下文：s-1003 的 journal 里那条 `sandbox/mode` 是 `read-only` ——
-    // `SANDBOX_MODES` 的合法值（`dsh-sandbox-policy/lib/index.js:31-35`）、
-    // `permissionStateSchema` 那个 union 的一支（`index.js:27-31`），却不在任何预设束里，
-    // 于是 `derive()` 回 `custom`（桩侧 `seed_knobs()` 演这条 seeded 覆盖：`pinInitialPermission()`
-    // 对 seeded 会话是「preserve their effective knob values」，派生是 custom 时**不**补预设，
-    // `index.js:287-311`）。第三项这才追加进来，位置在表项之后、名字是 `optionOf("custom")`
-    // 的 "Custom"（`index.js:255-267`）。
-    let custom = permissions_of(&mut kernel, "s-1003");
+    // ② 派生态：s-1003 的种子 journal 记的是**表外**那一束 ⇒ `derive()` 撞不到表项，回 `custom`。
     assert_eq!(
-        values(&custom),
-        ["workspace-write", "danger-full-access", "custom"]
+        current_of(&mut kernel, "s-1003").as_deref(),
+        Some("custom"),
+        "旋钮撞不到表的 seeded 会话派生成 custom，而同一次 list 里的 s-1001 仍在表内"
     );
-    assert_eq!(custom.current_value.as_deref(), Some("custom"));
-    assert_eq!(
-        custom.options[2].name, "Custom",
-        "唯一一处 name 与 value 不同源的项"
+    // 关键改口：`custom` **不进目录**。旧桩在这里断言「投影 options 有第三行且 name=="Custom"」，
+    // 那一行在 0.1.7 已经没有生产者 ⇒ 现在断言目录里查不到它，且投影根本不带 options。
+    let catalog_rows = catalog_options(&mut kernel);
+    assert!(
+        catalog_rows.iter().all(|option| option.value != "custom"),
+        "`custom` 是派生态，不许成为目录行: {catalog_rows:?}"
     );
-    assert_eq!(
-        permission_preset_zh(&catalog, custom.options[2].value.as_str()),
-        "自定义",
-        "视图层过表才是中文"
-    );
-    // 报现状可以报 `custom`，切过去却不行：它不是 `names`（= 表键，`index.js:167,186-188`）里的一项，
-    // 内核构造函数甚至禁止表项占用这个名字（`index.js:108`）。
+    // 视图层认得这颗**值**（报现状要报它），只是它不是切换目标。
+    assert_eq!(permission_preset_zh(&catalog, "custom"), "自定义", "视图层过表才是中文");
+
+    // 报现状可以报 `custom`，切过去却不行：它不是 `names`（= 配置表键）里的一项，
+    // 内核构造函数甚至禁止表项占用这个名字。
     let reply = kernel
         .execute_command("s-1003", "/permission", &[])
         .expect("空参数是 success");
     assert!(reply.is_success(), "{reply:?}");
     assert_eq!(
         reply.text(),
-        Some("current preset custom (available: workspace-write, danger-full-access)")
+        Some(
+            "current preset custom (available: read-only, workspace-write, \
+             danger-full-access)"
+        )
     );
     let reply = kernel
         .execute_command("s-1003", "/permission custom", &[])
@@ -1578,37 +1596,352 @@ fn permission_custom_option_only_arrives_when_the_knobs_leave_the_table() {
     assert_eq!(reply.kind_of(), "error");
     assert_eq!(
         reply.text(),
-        Some("unknown preset \"custom\" (available: workspace-write, danger-full-access)")
+        Some(
+            "unknown preset \"custom\" (available: read-only, workspace-write, \
+             danger-full-access)"
+        )
     );
     assert_eq!(
-        values(&permissions_of(&mut kernel, "s-1003")),
-        values(&custom),
+        current_of(&mut kernel, "s-1003").as_deref(),
+        Some("custom"),
         "error 分支不落账，投影不许动"
     );
 
-    // ③ 一切回表内：`apply()`（`index.js:280-286`）把选择与整束旋钮一起落账，
-    // 派生重新命中 ⇒ 第三项随派生态一起消失，`currentValue` 换成刚选的那一档。
+    // ③ 一切回表内：`apply()` 把选择与整束旋钮一起落账，派生重新命中 ⇒ `currentValue`
+    // 换成刚选的那一档；目录**一张脸不变**（它压根不看会话的派生态）。
+    let before = catalog_options(&mut kernel);
     kernel
         .execute_command("s-1003", "/permission workspace-write", &[])
         .expect("切回真预设应成功");
-    let back = permissions_of(&mut kernel, "s-1003");
-    assert_eq!(back.current_value.as_deref(), Some("workspace-write"));
     assert_eq!(
-        values(&back),
-        ["workspace-write", "danger-full-access"],
+        current_of(&mut kernel, "s-1003").as_deref(),
+        Some("workspace-write"),
         "回到表内 ⇒ 派生态消失"
+    );
+    assert_eq!(
+        catalog_options(&mut kernel),
+        before,
+        "目录是进程级的，切会话档位不许动它"
     );
     // 另一条会话没被带跑：旋钮与派生都是按会话来的。
     assert_eq!(
-        values(&permissions_of(&mut kernel, "s-1001")),
-        ["workspace-write", "danger-full-access"]
-    );
-    assert_eq!(
-        permissions_of(&mut kernel, "s-1001")
-            .current_value
-            .as_deref(),
+        current_of(&mut kernel, "s-1001").as_deref(),
         Some("workspace-write")
     );
+}
+
+/// **新锁 A（忠实性正锁，PP2 §4.1 P2 改动 tests 那格点名的那颗）**：
+/// `kernel.rs` 的 P1 ctor → 真 socket → 桩的新臂 → 回执**逐键对内核 schema**。
+/// schema 原文（`dsh-permission-presets/lib/typert.host.js`，本轮现读）：
+/// `z.object({ options: z.array(z.object({value,name,description?})), defaultOptions: 同, defaultPreset: z.string() })`
+/// 且 `result.mode: 'strict'` ⇒ 外层恰三颗键、条目至多三颗键，**多一颗内核自己就拒**，
+/// 所以这里用「⊆」而不是「==」去钉条目：真内核 `optionOf("auto")` 是**没有 `description` 键**的。
+/// 顺带钉住两张表的相互关系：`defaultOptions` 是 `options` 的子集（`auto` 只进后者）。
+#[test]
+fn permission_catalog_arrives_fully_formed_over_a_real_socket() {
+    let mut kernel = Kernel::start(&fake_launch()).expect("假内核应完成 dsh web: 握手");
+    let raw = catalog_raw(&mut kernel);
+    assert_eq!(
+        sorted_keys(&raw),
+        CATALOG_NS_KEYS,
+        "回执外层恰三颗键（mode:'strict'）: {raw}"
+    );
+    assert!(
+        raw["defaultPreset"].is_string(),
+        "defaultPreset 在 schema 里是 z.string() 必填: {raw}"
+    );
+
+    for field in ["options", "defaultOptions"] {
+        let rows = raw[field].as_array().unwrap_or_else(|| panic!("{field} 是数组: {raw}"));
+        assert!(!rows.is_empty(), "{field} 空表会让主干整颗收起权限钮");
+        for row in rows {
+            assert!(
+                sorted_keys(row)
+                    .iter()
+                    .all(|key| OPTION_ROW_KEYS.contains(key)),
+                "{field} 的行只许有 value/name/description: {row}"
+            );
+            assert!(
+                !row["value"].as_str().unwrap_or_default().is_empty()
+                    && !row["name"].as_str().unwrap_or_default().is_empty(),
+                "value/name 是 min(1) 必填: {row}"
+            );
+            if let Some(description) = row["description"].as_str() {
+                assert!(!description.is_empty(), "{field} 的说明不许空串: {row}");
+            } else {
+                assert!(
+                    row["description"].is_null(),
+                    "description 只许「键缺席」，显式 null 不是内核产得出的形状: {row}"
+                );
+            }
+            // PP2 §5.1 的口径：桩默认档下 `name` 与 `value` 同源且全 ASCII
+            // （`auto-approve` 那颗中文标签的例外**默认不演**，见 `--permission-auto=` 的注释）。
+            assert_eq!(
+                row["name"].as_str(),
+                row["value"].as_str(),
+                "{field} 的 name 与 value 同源（中文是视图层 PermissionPresetZh 的活）: {row}"
+            );
+            assert!(
+                row["value"]
+                    .as_str()
+                    .is_some_and(|text| text.is_ascii() && text == text.trim()),
+                "wire 上不许出现非 ASCII 或带空白的 id: {row}"
+            );
+        }
+    }
+
+    // 两张表的相互关系（`auto` 只进 options、永不进 defaultOptions 的机器判据）。
+    let catalog = catalog_typed(&mut kernel);
+    let option_values: Vec<&str> = catalog.options.iter().map(|o| o.value.as_str()).collect();
+    let default_values: Vec<&str> = catalog
+        .default_options
+        .iter()
+        .map(|o| o.value.as_str())
+        .collect();
+    assert!(
+        default_values
+            .iter()
+            .all(|value| option_values.contains(value)),
+        "defaultOptions 的键集 ⊆ options：{default_values:?} vs {option_values:?}"
+    );
+    assert_eq!(
+        option_values.join(","),
+        "read-only,workspace-write,danger-full-access",
+        "目录表体 = 真 composition 的三档**声明序**（`dsh-base/cordis.patch.yml` 表首是 read-only）"
+    );
+    assert_eq!(
+        default_values.join(","),
+        "read-only,workspace-write,danger-full-access",
+        "默认档没开 auto 时两张表同源同序"
+    );
+    // `defaultPreset` 与 `settings/describe` 的 permission base 同源（跨臂等式，桩内也有同款锁）。
+    // ⚠ `namespaces` 是**数组**、每格一棵 `ns`（`fake_dsh.rs::namespace_view`），不是按 ns
+    //   索引的对象 ⇒ 取那一格只能查表；写成 `["namespaces"]["permission"]` 会静默读成 `Null`，
+    //   于是等式两边同 Null = 假绿（本轮现测就是这么抓出来的）。
+    let settings = kernel
+        .call("settings/describe", json!({}))
+        .expect("settings/describe 应成功");
+    let permission_base = settings["namespaces"]
+        .as_array()
+        .expect("namespaces 是数组")
+        .iter()
+        .find(|cell| cell["ns"] == json!("permission"))
+        .expect("台账里有 permission 那一格")["base"]
+        .clone();
+    assert!(
+        permission_base["defaultPreset"].is_string(),
+        "设置格那一侧的 defaultPreset 得是串，否则下面那条等式是 Null==Null 的假绿: {permission_base}"
+    );
+    assert_eq!(
+        raw["defaultPreset"],
+        permission_base["defaultPreset"],
+        "catalog 的 defaultPreset 必须与设置格的 base 同一份，两处各抄一遍迟早漂"
+    );
+    assert_eq!(catalog.default_preset.as_deref(), Some("workspace-write"));
+
+    kernel.shutdown();
+}
+
+/// **新锁 B（反向）**：臂名是**全名相等**、不是 `starts_with` 那种松匹配。
+/// 松匹配的实现「看着对」（catalog 能通），实际会把 `permissionPresets/catalogEverything`
+/// 这类根本不存在的方法也接下来 ⇒ 分叉侧永远看不到 404，拼错的方法名静默回半张表。
+#[test]
+fn permission_catalog_arm_matches_the_exact_method_name_only() {
+    let mut kernel = Kernel::start(&fake_launch()).expect("假内核应完成 dsh web: 握手");
+    for nearby in [
+        "permissionPresets/catalogX",
+        "permissionPresets/catalog-longer",
+        "permissionPresets/Nothing",
+        "permissionPresets",
+    ] {
+        let error = kernel
+            .call(nearby, json!({}))
+            .expect_err("{nearby} 不是在册端点，必须 404");
+        assert!(
+            error.contains("not_found"),
+            "{nearby} 该落 not_found，实际: {error}"
+        );
+    }
+    // 对照：真名照样通（证明上面那四发不是因为「整族没接」而红）。
+    assert_eq!(
+        sorted_keys(&catalog_raw(&mut kernel)),
+        CATALOG_NS_KEYS,
+        "全名那一发必须在架"
+    );
+    kernel.shutdown();
+}
+
+/// **新锁 C（默认档反证 + 开档正证，PP2 反锁②那一颗）**：
+/// `auto` 的生产者是 `permissionPresets.registerAuto()`，它在 `dsh-app-boot` 里是
+/// `OPTIONAL_BUNDLES` 成员（「offered switched off by the plugin manager」）、`web` profile
+/// 模板不含它 ⇒ **本部署默认不在架** ⇒ 桩默认档（`--permission-auto=0`）下
+/// ① `catalog.options` 里**没有任何一行 `value == "auto"`**，且 `defaultOptions` 同；
+/// ② `$events` 上**一帧 `permission-presets/catalog-changed` 都不推**
+///    （用 `collect_within(…, 1, QUIET_BUDGET)` 那把短静默反证，母本 `events_at_knob`；
+///     此刻 `$events` 只有定长两帧 ready + `api-session/status`，别条流一帧都不开 ⇒
+///     不踩「`collect_within` 会吞同批别的流的帧」那颗雷）；
+/// ③ 投影的 `currentValue` 也派生不出 `auto`（`derive()` 撞不到表项只会回 `custom`）。
+/// 开档（`=1`）把 ① 反着证一遍：`options` 多出 `auto` 行、`defaultOptions` **不许多**。
+#[test]
+fn permission_auto_tier_is_off_by_default_and_only_arrives_when_switched_on() {
+    // 旋钮自身的档位判据（argv 压 env、脏值静默回 0）走真 socket 两发，逐档现测。
+    // ① 默认（不给旋钮）：无 auto 行。
+    let mut quiet = Kernel::start(&fake_launch()).expect("假内核应完成 dsh web: 握手");
+    let rows = catalog_options(&mut quiet);
+    let values: Vec<&str> = rows.iter().map(|option| option.value.as_str()).collect();
+    assert!(
+        !values.iter().any(|value| *value == "auto"),
+        "默认档不许演 auto（`registerAuto` 不在架）: {values:?}"
+    );
+    assert_eq!(
+        values,
+        vec!["read-only", "workspace-write", "danger-full-access"],
+        "默认档逐字节 = 接手态那张表（只是补了真 composition 的表首那一档）"
+    );
+    quiet.shutdown();
+
+    // ② `$events` 一帧 catalog-changed 都不推：只开这一条流，收满定长两帧后再探一次短静默。
+    let (mut kernel, mut mux, stream) = open_stream_by(&fake_launch(), "$events", json!({}));
+    let frames = item_values(&collect(&mut mux, &stream, 2), &stream);
+    assert_eq!(
+        frames.len(),
+        2,
+        "$events 仍该是 ready + api-session/status 两帧: {frames:?}"
+    );
+    let extra = collect_within(&mut mux, &stream, 1, QUIET_BUDGET);
+    assert!(
+        extra.is_empty(),
+        "默认档的权限目录改动一帧都不许推，多出 {} 帧: {extra:?}",
+        extra.len()
+    );
+    assert!(
+        !frames
+            .iter()
+            .any(|frame| frame["event"].as_str() == Some("permission-presets/catalog-changed")),
+        "前导两帧里也不许混进 catalog-changed: {frames:?}"
+    );
+    drop(mux);
+    kernel.shutdown();
+
+    // ③ 投影派生不出 auto（s-1003 撞不到表只回 custom）。
+    let mut quiet2 = Kernel::start(&fake_launch()).expect("假内核应完成 dsh web: 握手");
+    let derived: Vec<Option<String>> = quiet2
+        .list_session_rows()
+        .expect("session/list 应成功")
+        .iter()
+        .map(|row| row.projections.permissions.as_ref().and_then(|p| p.current_value.clone()))
+        .collect();
+    assert!(
+        !derived.iter().flatten().any(|value| value == "auto"),
+        "投影 currentValue 派生不出 auto: {derived:?}"
+    );
+    quiet2.shutdown();
+
+    // ④ 开档反着证：auto **只**进 options，defaultOptions 与投影都不许动。
+    let launch = launch_with(&["--pace=0", "--permission-auto=1"]);
+    let mut on = Kernel::start(&launch).expect("假内核应完成 dsh web: 握手");
+    let raw = catalog_raw(&mut on);
+    let options: Vec<&str> = raw["options"]
+        .as_array()
+        .expect("options 是数组")
+        .iter()
+        .map(|row| row["value"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        options,
+        ["read-only", "workspace-write", "danger-full-access", "auto"],
+        "开档 = **追加**到配置表之后（`get names()` 的 `[...Object.keys(presets), ...(auto?1:0)]`）"
+    );
+    let defaults: Vec<&str> = raw["defaultOptions"]
+        .as_array()
+        .expect("defaultOptions 是数组")
+        .iter()
+        .map(|row| row["value"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        defaults,
+        ["read-only", "workspace-write", "danger-full-access"],
+        "auto 不是配置表键 ⇒ 永不进 defaultOptions"
+    );
+    // `auto` 那一行：`name` 回落 id、**没有 description 键**（`AUTO_PRESET_SPEC` 只有两颗旋钮）。
+    let auto_row = raw["options"]
+        .as_array()
+        .expect("options 是数组")
+        .iter()
+        .find(|row| row["value"] == json!("auto"))
+        .expect("开档该有 auto 行");
+    assert_eq!(auto_row["name"], json!("auto"));
+    assert!(
+        auto_row.get("description").is_none(),
+        "内核不给 auto 任何文案位 ⇒ 键必须缺席，不是空串也不是 null: {auto_row}"
+    );
+    // 开档也不推 catalog-changed（桩没装那条改表路，见 fake_dsh.rs 的备案）。
+    let (mut kernel, mut mux, stream) = open_stream_by(&launch, "$events", json!({}));
+    let frames = item_values(&collect(&mut mux, &stream, 2), &stream);
+    assert!(
+        collect_within(&mut mux, &stream, 1, QUIET_BUDGET).is_empty(),
+        "开档也只该有定长两帧前导（auto 是启动期挂上的，不是运行时改表）: {frames:?}"
+    );
+    drop(mux);
+    kernel.shutdown();
+    on.shutdown();
+}
+
+/// **反向锁（PP2 反锁③的「custom 不成行」那一支，跨两档都钉）**：
+/// 派生态在**任何一档**的 `options` / `defaultOptions` 里都不许成为一行 ——
+/// 内核构造期就禁止表键占用 `custom` / `auto` 这两个名字，`catalog()` 只吃 `names`。
+/// 这一把是「桩那条追加分支删干净了没有」的机器判据：忘了删就红在这里。
+///
+/// 顺手把 PP2 §8.6 那颗「必须现测」的数并进来钉死：**默认档与接手态逐字节同形**——
+/// 「不给参数」/ `=0` / 脏值 `nope`（`knob()` 静默回 0）三种读法的回执**必须一字节不差**，
+/// 而 `=1` 那一档只许比它们多一行 `auto`。这一条不钉，旋钮默认值写错、或脏值被当成非 0，
+/// 全部会在「表体断言照样全绿」的情况下把默认档的字节改掉。
+#[test]
+fn permission_catalog_never_rows_the_derived_state_in_either_tier() {
+    let mut baseline: Option<Value> = None;
+    for knob in ["", "--permission-auto=0", "--permission-auto=nope", "--permission-auto=1"] {
+        let mut argv: Vec<&str> = vec!["--pace=0"];
+        if !knob.is_empty() {
+            argv.push(knob);
+        }
+        let launch = launch_with(&argv);
+        let mut kernel = Kernel::start(&launch).expect("假内核应完成 dsh web: 握手");
+        let catalog = catalog_typed(&mut kernel);
+        for (field, rows) in [
+            ("options", &catalog.options),
+            ("defaultOptions", &catalog.default_options),
+        ] {
+            assert!(
+                rows.iter().all(|row| row.value != "custom"),
+                "{field}（{knob}）不许出现 custom 行: {rows:?}"
+            );
+            assert!(
+                rows.iter().all(|row| row.value != "default" && row.value != "accept-edits"),
+                "{field}（{knob}）不许复活旧桩那两颗假 id: {rows:?}"
+            );
+        }
+        assert_eq!(catalog.options.len(), catalog.default_options.len() + usize::from(knob.ends_with('1')));
+        let raw = catalog_raw(&mut kernel);
+        if knob == "--permission-auto=1" {
+            let want = baseline
+                .as_ref()
+                .expect("三档默认读数跑完才有基线可比（循环序写坏了？）");
+            assert_eq!(
+                raw["options"].as_array().expect("options").len(),
+                want["options"].as_array().expect("options").len() + 1,
+                "开档只许比默认档多一行 auto，别的一处都不许多：\n默认 {want}\n开档 {raw}"
+            );
+        } else if baseline.is_none() {
+            baseline = Some(raw);
+        } else {
+            assert_eq!(
+                baseline.as_ref().expect("上面判过 is_some"),
+                &raw,
+                "默认档三读数（不给参数 / `=0` / 脏值回 0）必须逐字节相同 ⇒ 旋钮默认值或脏值分支写歪了"
+            );
+        }
+        kernel.shutdown();
+    }
 }
 
 /// 数据层缺陷（审计 §4 末）：`parse_queue_items` 过去写 `item.get("message")?.get("content")?`，
@@ -3235,11 +3568,18 @@ fn preset_rows(kernel: &mut Kernel) -> Vec<Value> {
         .clone()
 }
 
-/// 设置页·Agent 预设那一叠：花名册 / 正文 / 副本为新增 / 用于当前会话 / 设为默认 /
-/// 打开目录 / 删除，外加 `settings/canOpenAgentPresetDirectory` 那枚能力门控。
-/// 主干按 `code` 分支的四条业务拒绝（not-found / invalid / read-only / locked）都得能撞上。
+/// 设置页·Agent 预设那一叠：花名册 / 正文 / 用于当前会话 / 设为默认。
+/// 台账 #224 这一批三度动过本用例的清单：B4 摘「预设目录可否打开」那枚能力门控的桩臂与用例、
+/// B5 摘它的姊妹发「打开预设目录」、**B6 摘「副本为新增」与「删除预设」两发**（桩臂 + 生产层 +
+/// 本用例的正向格与五枚参数拒绝元组同摘）⇒ 剩下这些格都是活的，另有三枚**反向格**钉那三发不许长回。
+/// 主干按 `code` 分支的业务拒绝现在还撞得上的是两条：not-found / locked。另外两条一起没了：
+/// · `read-only` 在桩里的写手只有被摘的删除臂，且这枚码在内核 0.2.0 全树 **0 命中**（同一把尺的
+///   正对照：invalid 5 文件 5 处、not-found 5 文件 11 处、locked 5 文件 5 处）⇒ 它是分叉自造的码，
+///   随臂摘掉反而更贴真。
+/// · `invalid` 是内核真码（`dsh-agent-preset-registry/lib/invariant.js:636` 抛出去），但桩里唯一的
+///   写手是被摘的复制臂（id 撞已有预设）⇒ 不留「判据还在、生产者已没」的假格。
 #[test]
-fn agent_preset_rpc_covers_copy_use_and_delete_loop() {
+fn agent_preset_rpc_covers_read_use_and_default_loop() {
     let mut kernel = Kernel::start(&fake_launch()).expect("假内核应完成 dsh web: 握手");
 
     let listed = kernel
@@ -3273,12 +3613,16 @@ fn agent_preset_rpc_covers_copy_use_and_delete_loop() {
         listed["presets"][1]
     );
 
-    // 能力门控：值是**裸布尔**（主干比的是 ValueKind == True），包一层对象就永远灰着。
-    assert_eq!(
-        kernel
-            .call("settings/canOpenAgentPresetDirectory", json!({}))
-            .expect("门控只读，不该失败"),
-        json!(true)
+    // 台账 #224 B4：那枚「预设目录可否打开」的能力门控 —— 主干自内核 0.1.7 起撤了入口、宿主腿
+    // 已由 B3 摘净、假内核的派发臂本刀同摘 ⇒ 这一格从「正向钉回执形状」换成**反向钉派发臂不许
+    // 长回来**。RPC 名一律 `concat!` 拆串，否则本用例自己就成了那发的读者（把死臂喂活成假绿）。
+    let cut_endpoint = concat!("settings/canOpen", "AgentPresetDirectory");
+    let error = kernel
+        .call(cut_endpoint, json!({}))
+        .expect_err("B4 摘掉的死臂不该再有派发臂");
+    assert!(
+        error.contains("HTTP 404") && error.contains("假内核不支持"),
+        "{cut_endpoint} 该落桩的 `other` 兜底臂（404 + not_found）。实际：{error}"
     );
 
     let read = kernel
@@ -3294,67 +3638,81 @@ fn agent_preset_rpc_covers_copy_use_and_delete_loop() {
         "正文得是字符串 markdown：{read}"
     );
 
-    // 副本为新增：void；新条目必然是 trust:"user"，且沿用来源的 description。
-    assert_eq!(
-        kernel
-            .call(
-                "agentPresets/copy",
-                json!({ "from": "standard", "id": "review-copy", "name": "审阅副本" })
-            )
-            .expect("复制为新"),
-        Value::Null
-    );
-    let presets = preset_rows(&mut kernel);
-    assert_eq!(presets.len(), 3);
-    assert_eq!(presets[2]["id"], json!("review-copy"));
-    assert_eq!(presets[2]["trust"], json!("user"));
-    assert_eq!(presets[2]["isDefault"], json!(false));
-    assert_eq!(
-        presets[2]["description"], presets[0]["description"],
-        "没给 name 之外的字段可继承，description 是内核从来源抄过来的"
-    );
-    assert!(
-        presets[2]["description"].is_string() && presets[0]["description"].is_string(),
-        "上面那条相等判据在「两枚都缺键」时也会成立，所以这里单独钉一次真有值：\
-         内核 copyComposition（`dsh-agent-presets/lib/index.js:543`）在 `:563` 那一行\
-         「来源的 description 是 `void 0` 就不给这一枚键」，来源没有就不该凭空长出来"
-    );
+    // 台账 #224 B6（死臂第五刀）：「副本为新增」与「删除预设」两发的派发臂本刀同摘（内核 0.2.0 轴
+    // 两发的方法名各 0 命中、注册器 `typert.host.js` 的 `id:` 只有 list/read/select 三枚；主干两颗
+    // 包装整仓 `.cs`/`.xaml` 0 命中；分叉 `main.rs` 只剩两句「主干原话」注释 ⇒ 三轴齐死）
+    // ⇒ 这两格从「正向钉回执形状」换成**反向钉派发臂不许长回来**，形制同上面 B4/B5 那两格。
+    // 一次循环撞两枚被摘端点：`copy` 用它的必填形状 `{from,id}`、`deletePreset` 用 `{id}`，
+    // 且 id 挑**在册**的 `my-reviewer` —— 拿「活着的手臂本会成功」的入参去撞，才证明红的是
+    // 「没有臂」而不是「入参不对」。RPC 名一律 `concat!` 拆串，否则本用例自己就成了那两发的读者
+    // （把死臂喂活成假绿）。
+    for (label, cut_method, cut_args) in [
+        (
+            "副本为新增",
+            concat!("agentPresets/", "copy"),
+            json!({ "from": "standard", "id": "review-copy" }),
+        ),
+        (
+            "删除预设",
+            concat!("agentPresets/", "deletePreset"),
+            json!({ "id": "my-reviewer" }),
+        ),
+    ] {
+        let error = kernel
+            .call(cut_method, cut_args)
+            .expect_err("B6 摘掉的死臂不该再有派发臂");
+        assert!(
+            error.contains("HTTP 404") && error.contains("假内核不支持"),
+            "{label} 那发该落桩的 `other` 兜底臂（404 + not_found）。实际：{error}"
+        );
+    }
 
     // 设为默认：写 agent-presets 的 default，花名册的 isDefault 跟着翻（只此一枚）。
+    // 目标原先是 `review-copy`（被摘的复制臂造出来的条目），B6 之后换成桩底就活着的 `my-reviewer`。
     kernel
         .call(
             "settings/update",
-            json!({ "ns": "agent-presets", "patch": { "default": "review-copy" } }),
+            json!({ "ns": "agent-presets", "patch": { "default": "my-reviewer" } }),
         )
         .expect("设为默认");
     let presets = preset_rows(&mut kernel);
-    assert_eq!(presets[2]["isDefault"], json!(true));
+    assert_eq!(
+        presets.len(),
+        2,
+        "B6 摘掉复制臂之后桩里再没有派发臂写 `FakeState::presets` ⇒ 名单就是初值那两行：{presets:?}"
+    );
+    assert_eq!(presets[1]["id"], json!("my-reviewer"));
+    assert_eq!(presets[1]["isDefault"], json!(true));
     assert_eq!(
         presets[0]["isDefault"],
         json!(false),
         "落选的内置预设要自动摘掉标记，否则页面上会同时亮两枚"
     );
 
-    // 打开目录：走的是 settings/ 这一族，且同样吃 preset id。
-    assert_eq!(
-        kernel
-            .call(
-                "settings/openAgentPresetDirectory",
-                json!({ "agentPreset": "review-copy" })
-            )
-            .expect("打开目录"),
-        json!({ "opened": true })
+    // 台账 #224 B5：那发「打开预设目录」走的是 settings/ 这一族、同样吃 preset id，派发臂本刀整条摘
+    // （同一把内核尺下方法名 0 命中、主干只剩撤除注释、分叉零活调用点 ⇒ 死臂）⇒ 这一格从「正向钉
+    // 回执形状」换成**反向钉派发臂不许长回来**，形制同上面 B4 那一格。args 照被摘那臂的必填形状给
+    // （`{agentPreset}`）：拿合法入参去撞才证明红的是「没有臂」，不是「入参不对」。
+    // RPC 名一律 `concat!` 拆串，否则本用例自己就成了那发的读者（把死臂喂活成假绿）。
+    let cut_open_endpoint = concat!("settings/openAgent", "PresetDirectory");
+    let open_error = kernel
+        .call(cut_open_endpoint, json!({ "agentPreset": "my-reviewer" }))
+        .expect_err("B5 摘掉的死臂不该再有派发臂");
+    assert!(
+        open_error.contains("HTTP 404") && open_error.contains("假内核不支持"),
+        "{cut_open_endpoint} 该落桩的 `other` 兜底臂（404 + not_found）。实际：{open_error}"
     );
 
     // 用于当前会话：回的是**生效的预设 id 字符串**（主干 applied.GetString()），不是对象。
+    // 目标同样从 `review-copy` 换到活着的 `my-reviewer`（B6）。
     assert_eq!(
         kernel
             .call(
                 "agentPresets/select",
-                json!({ "agentId": "s-7777", "agentPreset": "review-copy" })
+                json!({ "agentId": "s-7777", "agentPreset": "my-reviewer" })
             )
             .expect("用于当前会话"),
-        json!("review-copy")
+        json!("my-reviewer")
     );
     // 会话开跑过一轮，预设就被钉死（内核的 agentId 是会话 lookup）。
     kernel
@@ -3371,33 +3729,29 @@ fn agent_preset_rpc_covers_copy_use_and_delete_loop() {
         .expect_err("跑过的会话改不动预设");
     assert!(error.contains("agent-preset/locked"), "{error}");
 
-    // 删除：内置的只读，用户自建的能删，删完花名册就短一条。
-    let error = kernel
-        .call("agentPresets/deletePreset", json!({ "id": "standard" }))
-        .expect_err("内置预设不可删");
-    assert!(error.contains("agent-preset/read-only"), "{error}");
-    assert_eq!(
-        kernel
-            .call("agentPresets/deletePreset", json!({ "id": "my-reviewer" }))
-            .expect("删自定义预设"),
-        Value::Null
-    );
+    // 「删除预设」那一格已经换成上面循环里的反向格；这里补一条**同向佐证**，专门兜住「兜底臂被写成
+    // 静默成功 + 顺手摘条目」这种假绿：撞完 404、跑完 select/prompt 之后名单仍是两行，
+    // `my-reviewer` 仍在册且仍是默认。B6 之后 `FakeState::presets` 没有任何派发臂写手（只剩初值可读），
+    // 所以这三枚判据钉的是「桩的状态机没被死臂复活」，不是「删除功能可用」。
     let presets = preset_rows(&mut kernel);
-    assert_eq!(presets.len(), 2);
+    assert_eq!(
+        presets.len(),
+        2,
+        "被摘的两发不该以任何形式改动花名册：{presets:?}"
+    );
     assert!(
         presets
             .iter()
-            .all(|preset| preset["id"].as_str() != Some("my-reviewer")),
-        "{presets:?}"
+            .any(|preset| preset["id"].as_str() == Some("my-reviewer")),
+        "被摘的「删除预设」不许以任何形式把条目摘掉：{presets:?}"
+    );
+    assert_eq!(
+        presets[1]["isDefault"],
+        json!(true),
+        "默认标记还挂在 `my-reviewer` 上：撞 404 的那发没顺手把 settings 用户层也改了：{presets:?}"
     );
 
     for (label, method, args, code) in [
-        (
-            "门控端点不吃参数",
-            "settings/canOpenAgentPresetDirectory",
-            json!({ "agentPreset": "standard" }),
-            "bad_args",
-        ),
         (
             "list 不吃参数",
             "agentPresets/list",
@@ -3423,36 +3777,6 @@ fn agent_preset_rpc_covers_copy_use_and_delete_loop() {
             "agent-preset/not-found",
         ),
         (
-            "没这个预设：打开目录",
-            "settings/openAgentPresetDirectory",
-            json!({ "agentPreset": "nope" }),
-            "agent-preset/not-found",
-        ),
-        (
-            "打开目录少了 agentPreset",
-            "settings/openAgentPresetDirectory",
-            json!({}),
-            "bad_args",
-        ),
-        (
-            "copy 少 name 也合法，但 from/id 必填",
-            "agentPresets/copy",
-            json!({ "from": "standard" }),
-            "bad_args",
-        ),
-        (
-            "copy 的 id 撞了已有预设",
-            "agentPresets/copy",
-            json!({ "from": "standard", "id": "standard" }),
-            "agent-preset/invalid",
-        ),
-        (
-            "copy 的来源不存在",
-            "agentPresets/copy",
-            json!({ "from": "nope", "id": "whatever" }),
-            "agent-preset/not-found",
-        ),
-        (
             "select 的 wire 字段叫 agentId/agentPreset",
             "agentPresets/select",
             json!({ "sessionId": "s-8888", "agentPreset": "standard" }),
@@ -3462,18 +3786,6 @@ fn agent_preset_rpc_covers_copy_use_and_delete_loop() {
             "select 不存在的预设（会话没跑过，先撞上 not-found）",
             "agentPresets/select",
             json!({ "agentId": "s-8888", "agentPreset": "nope" }),
-            "agent-preset/not-found",
-        ),
-        (
-            "deletePreset 少了 id",
-            "agentPresets/deletePreset",
-            json!({}),
-            "bad_args",
-        ),
-        (
-            "删掉的预设再点名就是不存在",
-            "agentPresets/deletePreset",
-            json!({ "id": "my-reviewer" }),
             "agent-preset/not-found",
         ),
     ] {
@@ -3601,49 +3913,49 @@ fn agent_presets_list_wire_shape_is_the_kernel_roster_and_no_items_alias_exists(
     );
 
     // ---- 形状判据得在花名册的整个生命周期上成立，不只是初值 ----
-    kernel
-        .call("agentPresets/copy", json!({ "from": "my-reviewer", "id": "pk1-shape-copy" }))
-        .expect("复制一份无 description 的自定义档");
-    let after_copy = preset_rows(&mut kernel);
-    assert_eq!(after_copy.len(), 3, "现测：copy 之后 3 条");
-    let copied = after_copy.iter().find(|row| row["id"] == json!("pk1-shape-copy")).expect("新行");
-    assert_eq!(copied["trust"], json!("user"), "复制出来必然落在 user 根");
+    // 台账 #224 B6：这一段原先靠「复制一份无 description 的自定义档 → 换默认 → 删掉派生档」三拍走
+    // 生命周期，第一、三拍用的正是本刀摘掉的两枚死臂 ⇒ 同摘。改默认档之后名单里还剩什么、会不会
+    // 长出内核键集外的东西，仍是活腿能覆盖的；而原先由那枚派生行负责的「没有 description 的行长
+    // 什么样」现在直接钉在册的 `my-reviewer` —— 它本来就是无 description 的那一行，判据一字未改。
+    let custom = rows
+        .iter()
+        .find(|row| row["id"] == json!("my-reviewer"))
+        .expect("在册的自定义档");
     assert!(
-        copied.get("description").is_none(),
-        "来源 `my-reviewer` 没有 description ⇒ 内核 `copyComposition`（`index.js:543`）在 `:563` \
-         那句展开里同样不给这一枚键：{copied}"
+        custom.get("description").is_none(),
+        "`my-reviewer` 没有 description ⇒ 内核那三行「来源的 description 是 `void 0` 就给空对象、\
+         否则才挂 description」的展开（`dsh-agent-presets/lib/index.js:1362-1364`）同样不给这一枚键：{custom}"
     );
-    assert_eq!(sorted_keys(copied), ["id", "isDefault", "name", "trust"]);
+    assert_eq!(sorted_keys(custom), ["id", "isDefault", "name", "trust"]);
 
     kernel
         .call(
             "settings/update",
-            json!({ "ns": "agent-presets", "patch": { "default": "pk1-shape-copy" } }),
+            json!({ "ns": "agent-presets", "patch": { "default": "my-reviewer" } }),
         )
         .expect("换默认档");
     let after_default = preset_rows(&mut kernel);
+    assert_eq!(
+        after_default.len(),
+        2,
+        "换默认档不改条数：B6 之后没有任何派发臂写 `FakeState::presets`：{after_default:?}"
+    );
     assert_eq!(
         after_default.iter().filter(|row| row["isDefault"] == json!(true)).count(),
         1,
         "换默认档后仍只能有一枚 true，否则形状用例与设置页的标记都会双亮"
     );
-
-    kernel
-        .call("agentPresets/deletePreset", json!({ "id": "pk1-shape-copy" }))
-        .expect("删掉派生档");
-    let after_delete = preset_rows(&mut kernel);
-    assert_eq!(after_delete.len(), 2, "现测：删完回到 2 条");
-    for row in &after_delete {
+    for row in &after_default {
         let keys = sorted_keys(row);
         for key in &keys {
-            assert!(ROW_ALLOWED.contains(key), "删完之后冒出内核键集外的 {key}：{row}");
+            assert!(ROW_ALLOWED.contains(key), "换默认档之后冒出内核键集外的 {key}：{row}");
         }
         assert!(
             keys.contains(&"id") && keys.contains(&"trust") && keys.contains(&"isDefault"),
-            "删完不该把必有键也删掉：{row}"
+            "换默认档不该把必有键也改掉：{row}"
         );
     }
-    assert!(first_null(&json!({ "presets": after_delete }), "roster").is_none());
+    assert!(first_null(&json!({ "presets": after_default }), "roster").is_none());
 
     kernel.shutdown();
 }
@@ -6074,14 +6386,13 @@ fn projections_knob_pushes_six_live_frames_over_the_socket_after_the_pinned_four
         "种子会话没进计划模式"
     );
 
-    assert_eq!(sorted_keys(values[1]), ["currentValue", "options"]);
+    // 刀 P2：`permissions` 的 wire.view 只剩 `currentValue` 一颗键（旧形是 `{currentValue, options}`）。
+    assert_eq!(sorted_keys(values[1]), ["currentValue"]);
     assert_eq!(values[1]["currentValue"], json!("workspace-write"));
-    let options = values[1]["options"].as_array().expect("options 是数组");
-    assert_eq!(options.len(), 2, "内核默认表两行；没派生成 custom 就不追加第三项");
-    for option in options {
-        assert_eq!(sorted_keys(option), ["description", "name", "value"]);
-        assert!(!option["value"].as_str().unwrap_or_default().is_empty());
-    }
+    assert!(
+        values[1]["options"].is_null(),
+        "投影不许再带 options ⇒ 表体只在 permissionPresets/catalog 那一发里"
+    );
 
     let schedule = values[2].as_array().expect("wire.view 是数组，不是那块 state 对象");
     assert_eq!(schedule.len(), 2);
@@ -6139,7 +6450,12 @@ fn projections_knob_pushes_six_live_frames_over_the_socket_after_the_pinned_four
         .as_ref()
         .expect("permissions 增量得落进 typed 表");
     assert_eq!(permissions.current_value.as_deref(), Some("workspace-write"));
-    assert_eq!(permissions.options.len(), 2);
+    // 刀 P2：这一把的语义（「表两行」）已经迁到目录回执上 ⇒ 投影侧现在钉的是「不带 options」。
+    assert_eq!(
+        permissions.options.len(),
+        0,
+        "0.1.7 的投影不带 options，分叉解析器该落成空表"
+    );
     for key in ["schedule", "goal", "modelSelection", "todos"] {
         assert!(
             projections.value_of(key).is_some(),
@@ -14366,8 +14682,11 @@ mod ip8_settings_mutate_tests {
         assert_eq!(SETTINGS_MUTATE_METHODS.len(), 1, "自开的名册基数 = 1");
         assert_eq!(SETTINGS_MUTATE_METHODS, [SETTINGS_MUTATE].as_slice());
         assert_eq!(SETTINGS_MUTATE, "settings/mutate");
-        assert_eq!(RD9_C5_C6_METHODS.len(), 10);
-        assert_eq!(RD9_C4_C9_METHODS.len(), 5);
+        assert_eq!(RD9_C5_C6_METHODS.len(), 8);
+        // 台账 #224 B6：这颗基数从 5 降到 3 —— 名册里那两枚（copy / deletePreset）是三轴齐死的
+        // 死臂，随刀出册。这是 kernel.rs 那把基数闸在**另一个文件里的孪生闸**，改一处不改这里
+        // 就会有一头红；两边都只该跟着「活的那三发」走。
+        assert_eq!(RD9_C4_C9_METHODS.len(), 3);
         assert_eq!(
             SETTINGS_MUTATE_METHODS
                 .iter()

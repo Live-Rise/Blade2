@@ -21,6 +21,23 @@ pub mod radius {
     pub const LARGE: f64 = 12.0;
     pub const XLARGE: f64 = 16.0;
     pub const PILL: f64 = 24.0;
+
+    /// 把准备写进 `Border` 的圆角按**短边一半**夹住，复刻 WinUI 原生 Border 的内置夹取：
+    /// 主干自己就靠着这一点——`MainWindow.xaml:92` 的注释写明「CornerPill(24) 在 32×32 上等于
+    /// 整圆」，32 高的搜索胶囊上 24 被夹成 16 ＝ 正好的半圆端帽。
+    /// 而 reactor 0.100 的 `Border` 实测**不夹**（同为 `Microsoft.UI.Xaml.Controls.Border`，
+    /// 端帽却渲成一端尖的透镜）：半径一旦超过短边一半，上下两段角弧自交，实心区只剩两圆的
+    /// 交集。判据是同口径量出来的（`rust/tmp/scan-pill.ps1`）：主干左端 inset 在半高处归零
+    /// ＝ 标准体育场；分叉提前 5px 贴边、顶端比半圆深插 8px。
+    /// ⇒ 所有过 `Border::corner_radius` 的圆角都必须经这里，短边给不出来的不许写 PILL。
+    pub const fn clamp(radius: f64, short_side: f64) -> f64 {
+        let half = short_side / 2.0;
+        if radius > half {
+            half
+        } else {
+            radius
+        }
+    }
 }
 
 /// [left, top, right, bottom]，对应主干 Thickness 令牌。
@@ -218,17 +235,12 @@ pub mod boot {
     /// 上屏瞬间的目标值 = 第 1 步的**下沿** 5（KC:60 `_bootTarget = Stages[0].From`）：
     /// 条子从 0 起，首个 tick 才朝 5 爬；步骤行同时写「第 1 步，共 4 步 · 0%」。
     pub const FIRST_TARGET: f64 = STAGES[0].2;
-    /// 插件台账的抽样周期 = 主线 `DshPluginBootstrap.WatchInstall` 的那个 timer（250ms，
-    /// DshPluginBootstrap.cs:181-183）。分叉问内核的间隔与壳扫盘的间隔取同一个数，
-    /// 「第 1 段按真刻度爬」的节奏才与主干一致。
-    pub const PLUGIN_POLL_MS: u64 = 250;
-    /// 第 1 段等台账的预算：内核一直报 `ready < total`（离线拉包）时也不能把加载卡钉死。
-    /// 20s —— 主线一次 pnpm 可以几分钟，但分叉不装包，20 秒问不出结果就该往下走了。
-    pub const PLUGIN_BUDGET_MS: u64 = 20_000;
-    /// 内核报插件装载台账的 RPC 名。**主线没有这一发**（那儿的 ready/total 是壳自己数
-    /// `node_modules` 得来的，MW:2466-2467 + DshPluginBootstrap.cs:186-198）⇒ 真内核回 404，
-    /// 分叉据此退回「第 1 段匀速爬满」，见 `main.rs` 的 `report_plugin_ledger`。
-    pub const PLUGIN_RPC: &str = "plugin/installProgress";
+    // #224 死臂台账 B1（现测）摘掉了本模块原第 11 枚：内核报插件装载台账的那枚 RPC 名常量
+    // —— 全仓零读者（连它自己 doc 里指的 `main.rs` 那个函数名都不存在），主干更没有这一发
+    // （那对 ready/total 是壳自己数 `node_modules` 得来的 C# 回调，`DshPluginBootstrap.cs:30`）
+    // ⇒ 真内核两版都不服务，分叉第 1 段今天就是匀速爬满。只摘**名册层**：假内核桩与
+    // `tests/ipc.rs` 的字面量载荷仍在打那发（B5 可选刀，本刀不顺手收）。不许悄悄长回：
+    // 见本文件 `tests::b1_the_cut_plugin_rpc_name_stays_cut_and_the_boot_mod_counts_itself`。
 }
 
 /// Segoe Fluent Icons 码位，取自主干 FontIcon Glyph。
@@ -241,6 +253,10 @@ pub mod glyph {
     /// 主干「展开其余 N 个会话」用 E70D、「收起」用 E70E。
     pub const EXPAND_GROUP: char = '\u{e70d}';
     pub const COLLAPSE_GROUP: char = '\u{e70e}';
+    /// 主干 `DropDownButton` 默认模板右缘那颗 chevron（generic.xaml 的 DropDownButton 模板，
+    /// FontSize 12）：`AgentModeButton` / `PermissionButton` / `ModelButton` 三颗共用。
+    /// 与 `EXPAND_GROUP` 同码位（E70D），主干按用途各记一份，这里同规。
+    pub const DROPDOWN_CHEVRON: char = '\u{e70d}';
     pub const SETTINGS: char = '\u{e713}';
     pub const BACK: char = '\u{e72b}';
     pub const SEARCH: char = '\u{e721}';
@@ -404,6 +420,9 @@ pub const SETTINGS_PLUGIN_CARDS: &[(&str, char, &str, &str)] = &[
 pub const DESC_PERSONALIZATION: &str = "指令决定它怎么回应你，材质与皮肤决定它看起来是什么样。";
 pub const DESC_ABOUT: &str =
     "Blade² 的版本信息与更新。更新通过覆盖安装新版本 MSIX 完成（安装前需先退出应用）。";
+/// 「品牌与声明」卡里那段内测声明正文的 i18n 键（`MainWindow.ModelExtras.cs:237` 原文，
+/// `\n\n` 分两段）。抽成常量只因为这串有 400 余字：写在调用点会把渲染函数顶出一屏。
+pub const ABOUT_BETA_NOTICE: &str = "DeepSeek Harness 目前的 0.1 版本仍处在面向 Harness 开发者进行测试的阶段，还有许多地方需要持续改进和打磨，希望听取广大开发者的反馈建议。预计 DeepSeek Harness 的核心插件以及基础 API 都会在接下来的一段时间内快速迭代、持续演化。\n\n我们期待与全球开发者一起，在开源、开放、可复用、可组合的基础设施之上，共同探索智能上限。欢迎全球 Harness 开发者加入 DSH 插件生态。";
 pub const DESC_MODELS: &str = "填入各提供方的 API 密钥即可使用其模型。";
 pub const DESC_SKILLS: &str = "Blade² 已安装的全部技能。技能是带说明的指令包：在输入框键入 /名称 即可调用，模型也可能在合适的时机自行调用。";
 pub const DESC_MEMORY: &str = "记忆通过内核 dsh-mcp-client 挂载 MCP 参考记忆服务器（@modelcontextprotocol/server-memory），模型可跨会话写入与召回信息。开关编辑内核 profile patch 的 disabled 标志，由内核热重载即时生效。";
@@ -723,6 +742,32 @@ mod tests {
         assert_eq!(size::GLYPH_NAV, 16.0);
     }
 
+    /// 圆角夹取的两枚实点，全仓就这两处 `PILL` 落在**短边小于 48** 的 Border 上：
+    /// 32 高的搜索胶囊（`MainWindow.xaml:126` 的 `CornerPill` 写在 `TouchTargetSize` 上，
+    /// 主干自己那句「32×32 上等于整圆」就是夹到 16）与 22 高的计划 chip。
+    /// 数字对不上＝ 端帽不再是半圆，正是用户看见「不是标准椭圆」的那一格。
+    #[test]
+    fn clamps_pill_corners_down_to_half_the_short_side() {
+        assert_eq!(radius::clamp(radius::PILL, size::TOUCH_TARGET), 16.0);
+        assert_eq!(
+            radius::clamp(radius::PILL, type_ramp::CAPTION.line + pad::CHIP_COMPACT[1] + pad::CHIP_COMPACT[3]),
+            11.0
+        );
+    }
+
+    /// 夹取是**单向**的：半径本就不超过半高时原样传（小圆角方不许被放大成胶囊），
+    /// 且永不返回负值（`clamp(0.0, 0.0)` 这种退化输入只能是 0，不能是 NaN/负）。
+    #[test]
+    fn clamp_never_raises_a_radius_and_keeps_small_corners_square() {
+        assert_eq!(radius::clamp(radius::SMALL, 28.0), radius::SMALL);
+        assert_eq!(radius::clamp(radius::MEDIUM, 32.0), radius::MEDIUM);
+        assert_eq!(radius::clamp(0.0, 0.0), 0.0);
+        for short in [1.0, 16.0, 22.0, 32.0, 420.0] {
+            assert!(radius::clamp(radius::PILL, short) <= short / 2.0 + f64::EPSILON);
+            assert!(radius::clamp(radius::PILL, short) >= 0.0);
+        }
+    }
+
     /// 逐字对照主干 `FontIcon Glyph` 的码位（2026-09-21 用 node 扫全仓 .xaml/.cs 得到的表）。
     /// 这里钉的是「同一个 UI 槽位主干写的是哪个码位」，改任何一个都要先在主干源码里找到出处。
     #[test]
@@ -842,5 +887,65 @@ mod tests {
             let _ = id;
             assert!(MAINLINE.contains(code), "分区字形 U+{:04X} 无主干出处", *code as u32);
         }
+    }
+
+    /// **B1 反向锁**（死臂台账 #224 第一刀）：`boot` 模块那枚「内核报插件装载台账」的 RPC 名
+    /// 常量已从本文件摘除 ⇒ 这里钉三件事，缺一枚就是假绿（形制照 `kernel.rs` 里 B2 那枚）：
+    /// ① 死臂的整串 RPC 名与那颗常量名在本文件里**一枚命中都不许长回来**（注释也算读者）；
+    ///    两枚 needle 一律 `concat!` 拆写 —— 本测试的源码就在本文件里，整名一旦落纸
+    ///    `matches` 就命中自己 ⇒ 判据恒假（同 `fake_dsh.rs` 里那把拆串针记着的坑）。
+    /// ② 基数**由源码自己数出来**：`boot` 开窗里 `pub const` 的颗数必须等于在册名单 `ALIVE`
+    ///    的长度（且 = 8）⇒ 长回第 11 枚（摘掉那发）或错摘活的那枚都当场红，不是恒真。
+    /// ③ 正向半边防 ② 空转：`ALIVE` 那 8 枚每枚都必须真以 `pub const <名>` 的形落在开窗里、
+    ///    开窗非空 ⇒ 锚点一旦漂了这里响，而不是拿「空窗 = 0 枚」当「摘干净了」的证据。
+    /// 射程**只有本文件**：那发 RPC 名的字面量今天仍在假内核桩（4 枚含活臂）与 `tests/ipc.rs`
+    /// （7 枚真 socket 载荷）里 ⇒ 跨层面的「臂摘净」不归本锁管，账见 `tmp/b1-report.md` §9。
+    /// #232 批1 追加：上面那两枚「为 bootstrap 节奏而登记」的时间常量零读者，已随本批摘除
+    /// （名册 10 → 8）；假内核桩与用例那两层归 #232 批2（等 tests 显式票）。
+    #[test]
+    fn b1_the_cut_plugin_rpc_name_stays_cut_and_the_boot_mod_counts_itself() {
+        const SELF_SRC: &str =
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/tokens.rs"));
+        let resurrected_rpc = concat!("plugin/", "installProgress");
+        let resurrected_const = concat!("PLUGIN_", "RPC");
+        for needle in [resurrected_rpc, resurrected_const] {
+            assert_eq!(
+                SELF_SRC.matches(needle).count(),
+                0,
+                "B1 摘掉的死臂又长回 tokens.rs 了：{needle}"
+            );
+        }
+        // ② 开窗锚：`pub mod boot {` → 其后首个行首 `}`（摘后现测 8 枚，摘前是 11 枚）。
+        let open = SELF_SRC
+            .find("pub mod boot {")
+            .expect("`boot` 的开场锚不在了 ⇒ 下面那场对表是空的");
+        let mut band = &SELF_SRC[open..];
+        band = &band[..band.find("\n}").expect("`boot` 的收尾锚不在了")];
+        let alive: [&str; 8] = [
+            "TICK_MS",
+            "RATE_FORWARD",
+            "RATE_BACK",
+            "DONE_DWELL_MS",
+            "SNAP",
+            "STEP_TOTAL",
+            "STAGES",
+            "FIRST_TARGET",
+        ];
+        let declared = band.matches("pub const ").count();
+        assert_eq!(
+            declared,
+            alive.len(),
+            "`boot` 实际登记的颗数({declared})与在册名单({})脱钩 ⇒ 有人只改了闸没改名册",
+            alive.len()
+        );
+        assert_eq!(declared, 8, "B1 之后 `boot` 这张名册只该有 8 枚（摘前那枚死的算第 11 枚）");
+        for name in alive {
+            // ③ 名单里每枚都真在开窗里以 `pub const <名>` 的形出现（双向对表的另半边）。
+            assert!(
+                band.contains(&format!("pub const {name}")),
+                "{name} 不在 `boot` 开窗里 ⇒ 上面那场计数是对着空窗数的"
+            );
+        }
+        assert!(band.len() > 1_000, "`boot` 开窗短到装不下 10 枚常量 ⇒ 锚点漂了，②③ 都是空的");
     }
 }

@@ -30,28 +30,38 @@ fn at(haystack: &str, needle: &str) -> usize {
 
 // ============ SkinClearButton（#140 第一梯队） ============
 
+/// 原名 `the_skin_clear_button_is_live_and_import_stays_the_dead_twin`：当时「导入图片」
+/// **故意**走死助手（选择器/槽位宿主未齐，报告 §5）。#240 把宿主补齐了（`nativepick` 两档
+/// profile + 槽位四步 + `skinvideo` 海报腿）⇒ 导入两颗与清除同走活姊妹助手，死助手在
+/// 个性化窗**退场**。两态叙事跟着换：旧备份（`mw2-main.rs.bak`）跑这颗在「活助手颗数 3」
+/// 上照样红，负锁半边（「死助手颗数 0」）对旧源也红（旧源是 1）——两态判据仍然成立。
 #[test]
-fn the_skin_clear_button_is_live_and_import_stays_the_dead_twin() {
+fn the_personalization_skin_buttons_are_all_live_since_240() {
     let card = window(SRC, "fn settings_personalization(", "fn settings_about(");
     assert!(
         card.contains("self.settings_action_button("),
-        "清除皮肤钮没走活姊妹助手 ⇒ 还是画出来的死控件"
+        "皮肤三钮没走活姊妹助手 ⇒ 还是画出来的死控件"
     );
     assert_eq!(
         card.matches("self.settings_action_button(").count(),
-        1,
-        "个性化页只该有一颗接了动作的钮（清除皮肤）"
+        3,
+        "个性化页该有三颗接了动作的钮（导入图片 / 导入视频 / 清除皮肤，主干 Personalization.cs:406-419 同序）"
     );
     assert_eq!(
         card.matches("self.settings_button(").count(),
-        1,
-        "导入图片钮本轮**故意**仍走死助手（选择器/槽位宿主未齐，见报告 §5）；颗数变了就是漂移"
+        0,
+        "死助手在个性化窗退场了（#240 三钮全活）；再冒头就是又画了颗没接线的死控件"
     );
     for needle in [
         "Msg::SkinClear",
+        "Msg::SkinImportPick",
+        "Msg::SkinVideoImportPick",
         "\"SkinClearButton\"",
+        "\"SkinImportButton\"",
+        "\"SkinVideoImportButton\"",
         "\"清除背景皮肤\"",
         "\"导入背景皮肤\"",
+        "\"导入视频背景皮肤\"",
     ] {
         assert!(card.contains(needle), "个性化窗缺串 {needle}");
     }
@@ -193,8 +203,64 @@ fn the_document_button_no_longer_posts_a_note_stub() {
     );
     assert_eq!(
         SRC.matches("分叉未接入 settings/replace").count(),
-        1,
-        "恢复默认钮本轮**故意**保留假桩（确认层 + SectionNamespaces 未接，报告 §5 备案）"
+        0,
+        "恢复默认钮的假桩串必须整文件归零 —— #140 刀A（B-1b）已把派发臂接上，\
+         留一枚 = 又有人往那颗上退回「装活」（原判 `== 1` 钉的是死态本身，接活当天就该翻）"
+    );
+}
+
+/// #140 刀A（= B-1b）的正锁：那颗钮**接成真链路**的四格取证 —— 开卡、写格、共享执行腿、派发与回执。
+/// 与上面那把 `== 0` 是一对：那把挡「假桩复生」，这一把挡「桩拆了但腿没接上」（只归零不接活
+/// 同样算交假货，而那时只剩上面那条 `Msg::ResetSection` 的 `contains` 会响，粒度不够）。
+/// 针一律 `concat!` 拆在两枚字面量之间（FX1 口径：整串写出来就是把本行数进产品码）。
+#[test]
+fn the_reset_button_opens_the_card_and_the_shared_accept_leg_dispatches() {
+    let card = window(SRC, "fn settings_general(", "fn font_stepper(");
+    assert!(
+        card.contains(concat!("Msg::ResetSec", "tion(")),
+        "恢复默认钮没投开卡那一发 = 又退回假桩"
+    );
+    assert!(
+        card.contains(concat!("SETTINGS_RESET_GENERAL_", "NAMESPACES")),
+        "general 那五行 ns 没进载荷 = 卡上承诺的命名空间与实际派发的不是同一份"
+    );
+    let open = window(SRC, concat!("Msg::ResetSection(s", "ection_id, namespaces)"), "Msg::DangerConfirmAccept =>");
+    assert!(
+        open.contains(concat!("self.reset_confirm = So", "me((section_id, namespaces))")),
+        "开卡那一发没写那一格 = 投了消息却没有卡"
+    );
+    let leg = window(SRC, "Msg::DangerConfirmAccept =>", "Msg::DangerConfirmDismiss =>");
+    for needle in [
+        concat!("self.", "run_settings_replace(namespaces, context)"),
+        concat!("reset_confirm_close(&mut self.reset_", "confirm);"),
+    ] {
+        assert!(leg.contains(needle), "共享执行腿缺 {needle} = 按「恢复」那颗还是什么都不做");
+    }
+    let call = window(SRC, "fn run_settings_replace(&self", "fn about_status_text(");
+    for needle in [
+        concat!("let Some(shared) = self.", "kernel.clone() else"),
+        "spawn_background",
+        concat!("settings_replace_revision(&", "snapshot, ns)"),
+        concat!("settings_replace(ns, &json!(", "{}), revision)"),
+        concat!("Msg::SectionRe", "set(outcome)"),
+    ] {
+        assert!(call.contains(needle), "派发腿缺形状 {needle}");
+    }
+    // revision 红线（预检 n40b §8-T7）**不靠文本针**：判据抽成 `settings_replace_revision`，
+    // 「find 落空也带 `Some(0.0)`」那一类改法文本层看不出来，由行为锁
+    // `mr3_oneway_rpc_tests::the_replace_revision_is_carried_only_when_the_snapshot_has_that_namespace`
+    // 钉着（本刀变异 m2 的靶子）。这里只保证派发腿**问的是那一颗**、没有就地另写一份判据。
+    assert!(
+        SRC.contains(concat!("fn settings_replace_", "revision(")),
+        "revision 判据没走那唯一一颗 ⇒ 派发腿里就地写了第二份（两份真相，行为锁就管不到它了）"
+    );
+    assert!(
+        SRC.contains(concat!("Msg::SectionReset(Ok(()))", " =>")),
+        "成功回执没有落点 = 快照永不作废"
+    );
+    assert!(
+        SRC.contains(concat!("Msg::SectionReset(Err(", "_)) =>")),
+        "失败回执没有落点 = 静默吞失败"
     );
 }
 
@@ -266,6 +332,6 @@ fn the_four_shelved_buttons_are_still_honestly_dead() {
     let reset = window(SRC, "fn settings_general(", "fn font_stepper(");
     assert!(
         reset.contains("\"ResetSettingsSectionButton\""),
-        "恢复默认钮还在（假桩按备案保留，删了画 = 母本第二罪）"
+        "恢复默认钮还在（#140 刀A 接活后 automation_id 照旧要画，删了画 = 母本第二罪）"
     );
 }

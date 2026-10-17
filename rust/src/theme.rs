@@ -619,14 +619,14 @@ pub fn code_block_brush(scheme: Scheme) -> Brush {
 // （`system_high_contrast`），不是一组自造常量。
 //
 // 词典怎么被选中：主干**从不**把 `RequestedTheme` 设成高对比度
-// （`MainWindow.xaml.cs:18919` 只在 `ElementTheme.Dark`/`ElementTheme.Light` 之间切，
-// `ElementTheme` 也没有 HighContrast 成员 —— 主干注释 `:15790` 明写这条），
+// （`MainWindow.xaml.cs:19235` 只在 `ElementTheme.Dark`/`ElementTheme.Light` 之间切，
+// `ElementTheme` 也没有 HighContrast 成员 —— 主干注释 `:15928` 明写这条），
 // 全靠框架在系统 HC 生效时优先取 `x:Key="HighContrast"` 那一档。框架自己的
 // `generic.xaml:2793` 那本 HC 词典用的就是同一个键名、同一族 `SystemColor*` 槽，是这条
-// 机制的旁证。应用侧只消费一发布尔：`MainWindow.xaml.cs:15791-15801`
-// `IsHighContrast()` = `new AccessibilitySettings().HighContrast`（读不到 catch ⇒ false），
-// 三处消费点全在「关掉会吃掉对比的装饰」而不是配色：`:15653` 跳过趋势图面积渐变、
-// `:15785-15788` 多序列改由虚线区分、`:18812-18826` 气泡清掉运行时笔刷回落词典纯色。
+// 机制的旁证。应用侧只消费一发布尔，其定义 `MainWindow.xaml.cs:15929-15939`
+// （`IsHighContrast()` = `new AccessibilitySettings().HighContrast` @`:15933`，读不到 catch ⇒ false）；
+// 三处消费点全在「关掉会吃掉对比的装饰」而不是配色：`:15790-15825`（闸 `:15791`）跳过面积渐变、
+// `:15922-15926`+消费 `:15838` 多序列改虚线、`:19123-19141` 气泡清运行时笔刷回落词典纯色。
 //
 // 分叉为什么不能「挂靠主题资源自动走」：reactor 0.100.0 公开 surface 上 HC 相关读数/旋钮
 // 全零（`element.rs` `grep -c 'Contrast'` = 0、`grep -c 'Accessibility'` = 0、
@@ -853,7 +853,7 @@ impl HcToken {
             Self::AccentPressed => HcSlot::Highlight, // :303
             Self::OnAccent => HcSlot::HighlightText, // :304
             // 气泡回落纯色窗口底：半透明在 HC 里会吃掉对比（:306，配套 `ApplyBubbleMaterial`
-            // 的 HC 分支 `MainWindow.xaml.cs:18812-18826`）
+            // 的 HC 分支 `MainWindow.xaml.cs:19123-19141`）
             Self::BubbleMica => HcSlot::Window, // :306
             // 状态色：成功/警告/信息全落窗口文本色，只有**错误**另走 Hotlight（:307-314）
             Self::Success => HcSlot::WindowText, // :307
@@ -872,7 +872,7 @@ impl HcToken {
             Self::ControlHover => HcSlot::Highlight, // :319
             Self::ControlPressed => HcSlot::Highlight, // :320
             // 数据色板六条序列**全压成同一颗**窗口文本色（:323-328）：多序列改由线型区分，
-            // 见 `hc_series_dash` 与主干 `MainWindow.xaml.cs:15785-15788`
+            // 见 `hc_series_dash` 与主干 `MainWindow.xaml.cs:15922-15926`
             Self::ChartSeries1 => HcSlot::WindowText, // :323
             Self::ChartSeries2 => HcSlot::WindowText, // :324
             Self::ChartSeries3 => HcSlot::WindowText, // :325
@@ -1028,7 +1028,7 @@ impl HcToken {
 /// `Palette::scheme` 让下游那些「按深浅兜底」的分支不至于读到 `Default`；
 /// 传调用方原本的 `self.scheme` 即可。气泡在 HC 档按主干口径落回纯色
 /// （`Tokens.xaml:306`），所以 [`Palette::bubble_with`] 在这套笔刷上**不该再被调用**
-/// —— 主干 `ApplyBubbleMaterial` 的 HC 分支（`MainWindow.xaml.cs:18812-18826`）就是
+/// —— 主干 `ApplyBubbleMaterial` 的 HC 分支（`MainWindow.xaml.cs:19123-19141`）就是
 /// 清掉运行时笔刷、回落词典纯色，接线侧必须同样跳过那次覆写。
 ///
 /// 主干**没有**独立 HC 键、只能落框架 HC 词典的那六档，注释里各挂 `generic.xaml` 的行号：
@@ -1107,7 +1107,7 @@ pub fn hc_chart_palette(colors: &HighContrastColors) -> Vec<Brush> {
     .collect()
 }
 
-/// 多序列的线型档：主干 `MainWindow.xaml.cs:15785-15788` 的 `SeriesDash`
+/// 多序列的线型档：主干 `MainWindow.xaml.cs:15922-15926` 的 `SeriesDash`
 /// （`IsHighContrast() && index % 3 > 0 ? new DoubleCollection { 3 * (index % 3), 2 } : null`）。
 /// HC 下序列色全同 ⇒ 序列 1（index 0）实线，index%3>0 的按 `{3*(i%3), 2}` 加虚线。
 /// 只在 HC 档调用：非 HC 档主干一律给 `null`，不加虚线。
@@ -1159,7 +1159,7 @@ unsafe extern "system" {
 
 /// 某一槽的当前系统色。`GetSysColor` 返回 `0x00BBGGRR`（没有 alpha 那一字节），
 /// HC 档全程实心 ⇒ alpha 一律 255，与主干 HC 词典「不做任何半透明」的约定同向
-/// （`Tokens.xaml:316-317`、`MainWindow.xaml.cs:15652` 那条注释）。
+/// （`Tokens.xaml:316-317`、`MainWindow.xaml.cs:15790` 那条注释）。
 pub fn sys_color(slot: HcSlot) -> Color {
     let bgr = unsafe { GetSysColor(slot.sys_color_index()) };
     Color {
@@ -1171,7 +1171,7 @@ pub fn sys_color(slot: HcSlot) -> Color {
 }
 
 /// 系统高对比度开关现在是不是**开着**。读不到就按「没开」处理 ——
-/// 与主干 `MainWindow.xaml.cs:15797-15799` 那个 `catch (Exception) => false` 同方向。
+/// 与主干 `MainWindow.xaml.cs:15935-15937` 那个 `catch (Exception) => false` 同方向。
 pub fn high_contrast_active() -> bool {
     let mut info = HighContrastW {
         cb_size: core::mem::size_of::<HighContrastW>() as u32,
@@ -1747,7 +1747,7 @@ mod tests {
         }
         // 实心那半边：除 `transparent`/`subtle_rest`（框架 HC 词典就是字面 Transparent，
         // generic.xaml:4774）之外，所有档 alpha 必须 255 —— HC 全程不做半透明
-        // （`Tokens.xaml:316-317` 那两行注释、`MainWindow.xaml.cs:15652` 同一条约定）。
+        // （`Tokens.xaml:316-317` 那两行注释、`MainWindow.xaml.cs:15790` 同一条约定）。
         let solid_only = [p.surface, p.card, p.text_tertiary, p.error, p.control_hover];
         assert!(
             solid_only.iter().all(|b| matches!(b, Brush::Solid(x) if x.a == 255)),
@@ -1762,7 +1762,7 @@ mod tests {
     }
 
     /// 数据色板：主干 HC 词典把六条序列**全压成同一颗**窗口文本色（`Tokens.xaml:323-328`），
-    /// 代价由线型补：`hc_series_dash` 照抄主干 `SeriesDash`（`MainWindow.xaml.cs:15785-15788`）。
+    /// 代价由线型补：`hc_series_dash` 照抄主干 `SeriesDash`（`MainWindow.xaml.cs:15922-15926`）。
     /// 反向半边两头：六颗必须**全等**（有人顺手配六色就红），线型必须**不全等**。
     #[test]
     fn hc_chart_series_flatten_to_one_color_and_separate_by_dash() {

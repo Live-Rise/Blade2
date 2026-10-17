@@ -1,13 +1,21 @@
 //! P0-7「子代理目录 + 续跑 + 打断」那三发 `subagents/*` 的**纯逻辑层**。
+//! ⚠ 枚数口径（台账 #198 现测）：**分叉侧**仍三发（`kernel.rs` 那三颗 ctor 一枚未动）；
+//! **主干侧只剩两发在册** —— `subagents/list` 的活调用点 0（只剩两处注释），内核 0.1.7 起把它
+//! 换成 `SubagentCatalogEvent` / `listChildren` + 投影 `subagentCatalog`。详见 §tests 的摘除登记。
 //!
 //! 只算不画、不发：条目模型、`subagents/list` 回执解析与标题补齐、可续跑/可打断判据、
 //! 下级折叠态机、文案**选键**（不落第二份表）、三发的实参形状。零 `use crate::kernel::…`、
 //! 零 `RpcCall` 构造、零控件、零派发 —— 宿主与派发在 `main.rs`（别人的地盘），
 //! 三发的 ctor 在 `kernel.rs`（另一颗卡）。
 //!
-//! 规格来源 = 主干 `MainWindow.Subagents.cs` 这一颗 partial（**本批现测 662 行 /
-//! md5 `d82613d4cdac468e61855bf3392cacbe`**）。下面注释里的 `:NNN` 都是**本批现测**的行号；
-//! 本仓实测行号必漂，所以 §tests 的源码锁一律用**文本锚**开窗、不用行号（先例 `filespanel.rs`）。
+//! 规格来源 = 主干 `MainWindow.Subagents.cs` 这一颗 partial（**台账 #198 现测 189 行 / md5
+//! `e1beb979f8518d2e0c04369b32f9edbb`**）。旧登记「本批现测 662 行 / md5 `d82613d4cdac468e61855bf3392cacbe`」
+//! 那一版**从未入库**（现测 `git cat-file -e 49f6107d~1:MainWindow.Subagents.cs` 失败、该文件
+//! 只有一次提交且 `new file mode` = 落盘即 189 行），它由分叉侧脚本 `rust/tmp/cut_subagents.py`
+//! 按内核 0.1.7 的下线事实削出，两把尺的现测对账见 `tmp/sb1-subagent-catalog-verdict.md` §0 与
+//! `tmp/sb2-report.md` §2。⇒ 本文档里所有 `:NNN` 行号锚**对 189 行的现值整族越界作废**，
+//! 只当「旧版形状」的文字线索读，不许拿去当验收靶；本仓实测行号必漂，所以 §tests 的源码锁
+//! 一律用**文本锚**开窗、不用行号，且**禁止钉靶文件总行数**（先例 `filespanel.rs`）。
 //!
 //! ## 三发的调用点与「回执那一层」
 //!
@@ -929,7 +937,13 @@ mod tests {
     const MAINLINE: &str = "MainWindow.Subagents.cs";
 
     /// 运行时读主干源（**不** `include_str!`）；读不到 ⇒ 打印原因并让调用方 skip（不 panic）。
-    /// 顺手把 CRLF 归一成 LF：现测这颗主干文件是纯 LF（`grep -c $'\r'` = 0），归一只是防漂。
+    /// CRLF→LF 归一的**承重面比想象中窄**（台账 #198 变异 M0 实测）：主干这颗文件现测是 **CRLF**
+    /// （`tr -cd '\r' | wc -c` = 189 = 行数；`wc -c` = 7152），旧注释那句「现测纯 LF、
+    /// `grep -c $'\r'` = 0」量的不对。但 M0 把下面这行归一摘掉后 **20 枚仍全绿** —— 因为本族的
+    /// 收口锚都是 `"\n    }"` 这种**以换行开头**的形制，`\r` 落在 `\n` 之前，`find` 照样命中，
+    /// `str::lines()` 也自己剥 `\r`。真会被 CRLF 打断的是**跨行 needle**（串中间带 `"\n"` 的
+    /// `src.contains` —— 本批摘掉的旧 #7 那枚「两枚钮相邻收起」就是其一）。
+    /// ⇒ 归一保留（跨行形制将来要用），但不许吹成「已实测承重」。
     fn mainline() -> Option<String> {
         let path = format!("{}/../{}", env!("CARGO_MANIFEST_DIR"), MAINLINE);
         match std::fs::read_to_string(&path) {
@@ -963,82 +977,36 @@ mod tests {
         assert_eq!(got, want, "{label}：{needle:?} 命中数不是现测的 {want}（实得 {got}）");
     }
 
-    #[test]
-    fn cw1_lock_entry_model_shape() {
-        let Some(src) = mainline() else { return };
-        let total = src.lines().count();
-        eprintln!("cw1 主干现测总行数 = {total}");
-        assert!(total > 600, "主干源读短了（{total} 行）");
-        let win = tight_window(&src, "private sealed class SubagentEntryVm", "\n    }").expect("条目模型窗口锚丢失");
-        report_window("SubagentEntryVm", &win);
-        for (needle, label) in [
-            (concat!("public string Id { get; init; } = \"", "\";"), "Id 默认空串"),
-            (concat!("public string Kind { get; init; } = \"child", "\";"), "Kind 默认 child"),
-            (concat!("public string Mode { get; init; } = \"", "\";"), "Mode 默认空串"),
-            (concat!("public string Activity { get; init; } = \"inactive", "\";"), "Activity 默认 inactive"),
-            ("public bool HasChildren { get; init; }", "HasChildren 是 bool"),
-            ("public string ParentSessionId { get; init; }", "ParentSessionId"),
-            ("public string Title { get; set; }", "Title 是可变补齐位"),
-            ("public string Reason { get; init; }", "Reason"),
-            ("public string Label { get; init; }", "Label"),
-        ] {
-            assert!(win.contains(needle), "{label} 不在条目模型窗口里：{needle}");
-        }
-        // 目录壳只有两枚字段（:42-46）
-        let cat = tight_window(&src, "private sealed class SubagentCatalogVm", "\n    }").expect("目录壳窗口");
-        report_window("SubagentCatalogVm", &cat);
-        assert!(cat.contains(concat!("List<SubagentEntryVm> Entries { get; } = new", "();")));
-        assert!(cat.contains("public bool ParentAvailable { get; set; }"));
-        // ParentAvailable 全仓从未被读 ⇒ 本模块不得拿它当判据
-        assert_hits(&src, "ParentAvailable", 2, "声明 + 赋值两处，无第三处");
-    }
-
-    #[test]
-    fn cw1_lock_no_sorting_no_grouping() {
-        let Some(src) = mainline() else { return };
-        // 反发明锁：主干没有排序、没有分组 ⇒ 本模块不提供；将来主干加了就得改这条
-        for (needle, label) in [
-            (concat!(".", "OrderBy"), "OrderBy"),
-            (concat!(".", "ThenBy"), "ThenBy"),
-            (concat!(".", "Group", "By"), "GroupBy"),
-            (concat!(".", "Sort", "("), "Sort"),
-            (concat!("Reverse", "("), "Reverse"),
-        ] {
-            assert_eq!(src.matches(needle).count(), 0, "主干新增了 {label} ⇒ 分叉要重估：{needle}");
-        }
-        let win = tight_window(&src, "foreach (var item in entries.EnumerateArray())", "\n            }")
-            .expect("追加序窗口锚丢失");
-        report_window("追加序", &win);
-        assert!(
-            win.contains("catalog.Entries.Add(ParseSubagentEntry(item, parentSessionId));"),
-            "条目不再是按回执顺序直接追加：{win}"
-        );
-        // 渲染面同样零重排：三处 foreach 都是直接扫 Entries（:75 补齐、:298 首屏、:340 重试）
-        assert_hits(&src, "foreach (var entry in catalog.Entries)", 3, "补齐 + 首屏 + 重试各一处");
-    }
-
-    #[test]
-    fn cw1_lock_continuable_is_the_only_mode_criterion() {
-        let Some(src) = mainline() else { return };
-        assert_hits(&src, "\"one-shot\"", 0, "主干从不把 one-shot 当字面量比较");
-        assert_hits(&src, concat!("entry.Mode == ", "\"continuable\""), 3, ":396 文案 / :453 续跑 / :476 打断");
-        assert_hits(&src, "entry.Mode ==", 3, "除这三处之外没有别的 Mode 比较");
-        assert_hits(&src, concat!("entry is { Mode: \"", "continuable\" }"), 1, ":193 会话头");
-        assert_hits(&src, "Mode = item.TryGetProperty", 1, "条目的 Mode 只从回执读一处（:103）");
-        for needle in [
-            concat!("? L(\"可继续\") : L(\"", "一次性\")"),
-            "var running = entry is { Activity: \"running\" };",
-            "continuable || running ? Visibility.Visible : Visibility.Collapsed",
-        ] {
-            assert!(src.contains(needle), "判据形态变了：{needle}");
-        }
-        let win = tight_window(&src, "if (entry.Mode == \"continuable\")", "\n").expect(":453");
-        report_window("目录行续跑钮", &win);
-        // 打断那处的主干注释（语义权威）
-        let note = tight_window(&src, "// 打断：父会话权威", "打断）。").expect(":474-475 注释");
-        report_window("打断注释", &note);
-        assert!(note.contains("continuable 常显") && note.contains("one-shot 仅 running 时显"), "{note}");
-    }
+    // ---------------- 已摘除的主干源码锁（台账 #198 · SB2）----------------
+    //
+    // 下面 7 枚 `cw1_lock_*` 已摘。**撤除方 = 内核 0.1.7**（`subagents/list` 被移除、子代理状态
+    // 改走 `session/follow` 订阅流），不是主干作者独立删的，也不是本模块行为变了：分叉侧脚本
+    // `rust/tmp/cut_subagents.py`（09-27 19:06）按该下线事实削了 `MainWindow.Subagents.cs` 工作树，
+    // 8 小时后被主干 0.8.3.6（`49f6107d`，`new file mode` = 落盘即 189 行）吸收成提交。
+    // 逐枚交稿现测（尺 = `grep -o -F`，与 `src.matches()` 同为非重叠逐串计数）它们的全部靶串
+    // **0 命中** ⇒ 留着就是空闸；按本仓法律「半截件宁摘勿留，但逐枚登记给下一刀复原」：
+    //
+    // | 旧锁名 | 它钉的行为（一句话） | 交稿实测的代表性死锚（均 0 命中） |
+    // |---|---|---|
+    // | `cw1_lock_entry_model_shape` | 目录条目 9 颗字段默认值 + 目录壳两枚字段 + `ParentAvailable` 全仓恰 2 处从不被读 | `SubagentEntryVm` `SubagentCatalogVm` `ParentAvailable` `public bool HasChildren { get; init; }` |
+    // | `cw1_lock_no_sorting_no_grouping` | 主干不排序不分组 ⇒ 分叉不提供；条目按回执**到达序**直接 `Entries.Add`；渲染面三处 foreach 零重排 | `foreach (var item in entries.EnumerateArray())` `catalog.Entries.Add(ParseSubagentEntry(…))` `foreach (var entry in catalog.Entries)`（反发明那五枚 needle 因整族没了而退化成无主体的空闸） |
+    // | `cw1_lock_continuable_is_the_only_mode_criterion` | 「可续跑」只由 `Mode == "continuable"` 一处字面量决定、主干从不比较 `"one-shot"`；打断钮 = `continuable \|\| running` | `entry.Mode ==` `entry is { Mode: "continuable" }` `Mode = item.TryGetProperty` `if (entry.Mode == "continuable")` `? L("可继续") : L("一次性")` |
+    // | `cw1_lock_parse_fallback_directions` | 解析回落方向（kind→child / activity→inactive / 其余→空串）+ `hasChildren`/`parentAvailable` 只认字面 `true` + diagnostic 早退支不读 activity/mode | `ParseSubagentEntry` `JsonValueKind.True` `if (kind == "diagnostic")` |
+    // | `cw1_lock_title_parent_and_secondary` | 行标题三级回落 + 副行三段段序/分隔符 + `parentVm.Title == "新会话"` 特判 + 下级换父地址重查 | `entry.Title.Length > 0 ? entry.Title` `var modeText = ` `var secondary = ` `SubagentsListAsync(entry.Id)` |
+    // | `cw1_lock_expand_cache_quirk` | 展开缓存怪癖（唯一重发判据 `childrenHost.Children.Count == 0`，占位也算 children）+ 收起臂早退 + 下级 `depth + 1` | `expand.Click += async` `childrenHost.Children.Count == 0` `new Thickness(depth * 16, 0, 0, 0)` |
+    // | `cw1_lock_diagnostic_reason_switch` | diagnostic reason 四臂文案 + 未知 reason **原样透传**（不许造第二层回落） | `var reason = entry.Reason switch` `"corrupt" => L("会话记录损坏")` |
+    //
+    // **复原线索**：① 逐枚原文（未改一字）在接手基线 `rust/tmp/sb2-subagents.rs.bak` 的 966/996/1020/
+    // 1080/1104/1123/1167 行起；② 这些语义在分叉侧**没有失去测面** —— 本模块 18 枚非锁行为测
+    // （`cw1_parse_catalog_keeps_arrival_order` / `cw1_continuable_is_the_only_mode_criterion` /
+    // `cw1_nested_panel_loads_once_and_never_retries` / `cw1_text_key_selection` …）一枚未摘，
+    // 它们仍钉着到达序、判据、折叠态机与四臂文案；③ 内核侧旧 RPC 零命中而**新契约在册**
+    // （`SubagentCatalogEvent` / `SubagentCatalogRow` / `listChildren` + 投影 `subagentCatalog`，
+    // 现测 `Kernel/dsh/node_modules/@deepseek-ai/dsh-subagent/**`）⇒ 真接那一侧时要**新写**锁去钉
+    // 新形状，别拿这 7 枚旧串当验收。
+    //
+    // 未动的一枚：`cw1_lock_prompt_and_interrupt_shapes`（本批接手即绿、交稿仍绿）——
+    // `subagents/prompt` + `interruptByParent` 两发主干与内核都还活，简报 §6 明令不许顺手摘。
 
     #[test]
     fn cw1_lock_prompt_and_interrupt_shapes() {
@@ -1077,105 +1045,49 @@ mod tests {
         assert_hits(&src, "mode = \"continuable\"", 2, "prompt + interrupt 各写死一次");
     }
 
+    /// 本锁是八枚红里**唯一半个身子还活着**的那枚，交稿时按主干现值重铸（台账 #198）。
+    /// 形制修两枚真落在这里（简报 §5 那张表要的 cure）：
+    /// ① 签名锚**只锚到开括号为止**（`private void RefreshSubagentHeaderActions(`）⇒ 主干把参数表
+    ///    折成多行也不会假红／假绿；旧形制钉整行签名或钉行号，换行即漂。
+    /// ② 「钉靶文件总行数」的体积闸（旧 `cw1_lock_entry_model_shape` 里那枚 `total > 600`，
+    ///    本仓法律禁止）**换成活锚身份护栏**：「读到的是不是这颗文件」由与目录半族无关、
+    ///    主干今天必发的两枚 RPC 锚来证伪 —— 它区分得了「读错文件」与「主干合法变短」。
+    /// 改名理由：旧名 `…_and_gen_discard` 里的「代次丢弃」（`return; // 会话已切换`）今天 0 命中，
+    /// 名在说谎 ⇒ 换成 `…_and_unconditional_collapse`，守主干今天的真值。
     #[test]
-    fn cw1_lock_parse_fallback_directions() {
+    fn cw1_lock_header_gate_and_unconditional_collapse() {
         let Some(src) = mainline() else { return };
-        let win = tight_window(&src, "private SubagentEntryVm ParseSubagentEntry", "\n    }").expect(":85");
-        report_window("ParseSubagentEntry", &win);
-        for (needle, label) in [
-            (concat!("TryGetProperty(\"kind\", out var k) && k.ValueKind"), "kind 先设 ValueKind 门禁"),
-            ("? k.GetString() ?? \"child\" : \"child\"", "kind 回落 child"),
-            ("?? \"inactive\" : \"inactive\"", "activity 回落 inactive"),
-            ("? \"\" : \"\"", "id/mode/label/reason 回落空串"),
-            (concat!("TryGetProperty(\"hasChildren\", out var hc) && hc."), "hasChildren"),
-        ] {
-            assert!(win.contains(needle), "{label} 不在解析窗口里：{needle}");
-        }
-        // hasChildren / parentAvailable 都只认字面 True（全仓 2 处，无第三处）
-        assert_hits(&src, "JsonValueKind.True", 2, "只认字面 true 的两处");
-        // diagnostic 早退支只带四枚字段（:89-98）
-        let diag = tight_window(&src, "if (kind == \"diagnostic\")", "\n        }").expect(":89");
-        report_window("diagnostic 支", &diag);
-        assert!(diag.contains("Kind = \"diagnostic\","), "{diag}");
-        assert!(!diag.contains("Activity ="), "diagnostic 不读 activity ⇒ 保持类型默认");
-        assert!(!diag.contains("Mode ="), "diagnostic 不读 mode ⇒ 保持类型默认");
-    }
-
-    #[test]
-    fn cw1_lock_title_parent_and_secondary() {
-        let Some(src) = mainline() else { return };
-        assert_hits(&src, "entry.Title.Length > 0 ? entry.Title", 2, ":393 行标题 + :575 打开会话");
-        let win = tight_window(&src, "var modeText = ", "\n        var secondary = ").expect(":396");
-        report_window("副行前三段", &win);
-        assert!(win.contains("var activityText = entry.Activity == \"running\""));
-        assert!(win.contains("var parentVm = _sessions.FirstOrDefault(s => s.SessionId == entry.ParentSessionId)"));
-        assert_hits(&src, "parentVm.Title == \"新会话\"", 1, "那颗特判只一处");
-        let sec = tight_window(&src, "var secondary = ", ";").expect(":402");
-        report_window("副行 join", &sec);
-        assert!(
-            sec.contains("string.Join(\" · \", new[] { modeText, activityText, L(\"父会话\") + \" \" + parentText })"),
-            "副行的段序/分隔符漂了：{sec}"
+        // 身份护栏（可证伪）：主干现测 `subagents/*` 活调用点恰两枚 ⇒ 0 就是读错了文件。
+        assert_hits(&src, "CallOkAsync(\"subagents/", 2, "prompt + interruptByParent 两枚活调用点");
+        // 活门禁：同一形态在两枚 Click 处理器里各一处（= 分叉 `self_actions_gate` 的靶）。
+        // 旧期望 3：第三处在 `LoadSubagentSelfActionsAsync`（会话头自查询）里，随内核 0.1.7
+        // 撤掉 `subagents/list` 一并没了 ⇒ 现测 2。
+        assert_hits(
+            &src,
+            "IsSubagent: true, ParentSessionId: { Length: > 0 }",
+            2,
+            "OnSubagentPromptClick + OnSubagentInterruptClick 各一处",
         );
-        assert!(src.contains("_sessions.FirstOrDefault(s => s.SessionId == entry.Id)"), "补齐锚丢失");
-        assert!(src.contains("var nested = await SubagentsListAsync(entry.Id)"), "下级换父地址的锚丢失");
-    }
-
-    #[test]
-    fn cw1_lock_expand_cache_quirk() {
-        let Some(src) = mainline() else { return };
-        let win = tight_window(&src, "expand.Click += async", "\n            };").expect(":506");
-        report_window("展开点击", &win);
-        assert_hits(&src, "childrenHost.Children.Count == 0", 1, "唯一的「要不要重发」判据");
-        for (needle, label) in [
-            ("expand.Content = L(\"展开\");", "收起臂的换字"),
-            ("expand.Content = L(\"收起\");", "展开臂的换字"),
-            ("Text = L(\"正在加载子代理…\")", "占位也算 children"),
-            ("Text = L(\"当前会话没有子代理\")", "空提示"),
-            ("BuildSubagentCatalogRow(child, entry.Id, depth + 1)", "下级 depth+1"),
-            ("childrenHost.Visibility = Visibility.Collapsed;", "收起臂"),
+        // 死锚复查：list 半族的判据不得悄悄复活（复活 = 主干换了画法 ⇒ 本锁要重推，不是自绿）。
+        for gone in [
+            "LoadSubagentSelfActionsAsync",
+            "return; // 会话已切换",
+            "continuable || running",
+            "entry is { Mode: \"continuable\" }",
         ] {
-            assert!(win.contains(needle), "{label} 不在展开点击窗口里：{needle}");
+            assert_eq!(src.matches(gone).count(), 0, "list 半族的死锚复现 ⇒ 判据要重估：{gone}");
         }
-        assert!(win.contains("return;"), "收起臂必须早退（:512）");
-        assert_hits(&src, "new Thickness(depth * 16, 0, 0, 0)", 2, "两支各一处左缩进");
-        assert_hits(&src, "Visibility = Visibility.Collapsed };", 1, "childrenHost 初值 Collapsed");
-    }
-
-    #[test]
-    fn cw1_lock_header_gate_and_gen_discard() {
-        let Some(src) = mainline() else { return };
-        assert_hits(&src, "IsSubagent: true, ParentSessionId: { Length: > 0 }", 3, ":168/:229/:246 同一形态");
-        let win =
-            tight_window(&src, "private async Task LoadSubagentSelfActionsAsync", "\n    }").expect(":177");
-        report_window("会话头自查询", &win);
+        // 新语义本体：会话头刷新体**零判据**，两枚钮无条件 `Collapsed`（主干自称「诚实死钮」）
+        // ⇒ 分叉 `HeaderActions::HIDDEN` 不再是「查不到时的默认值」，而是今天的**唯一值**。
+        let win = tight_window(&src, "private void RefreshSubagentHeaderActions(", "\n    }")
+            .expect("RefreshSubagentHeaderActions 签名锚丢失");
+        report_window("会话头刷新", &win);
         for needle in [
-            "catalog.Entries.FirstOrDefault(e => e.Kind == \"child\" && e.Id == childId)",
-            "var continuable = entry is { Mode: \"continuable\" };",
-            "SubagentPromptButton.Visibility = continuable ? Visibility.Visible : Visibility.Collapsed;",
-            "SubagentInterruptButton.Visibility = continuable || running ? Visibility.Visible : Visibility.Collapsed;",
-        ] {
-            assert!(win.contains(needle), "会话头判据变了：{needle}");
-        }
-        assert_hits(&src, "return; // 会话已切换", 1, "代次丢弃只一处（另一处在 PostUi 里）");
-        // 两枚钮在刷新开头无条件收起（:166-167）⇒ 本模块的 HIDDEN 就是这个语义
-        assert!(src.contains(concat!(
             "SubagentPromptButton.Visibility = Visibility.Collapsed;",
-            "\n        SubagentInterruptButton"
-        )));
-    }
-
-    #[test]
-    fn cw1_lock_diagnostic_reason_switch() {
-        let Some(src) = mainline() else { return };
-        let win = tight_window(&src, "var reason = entry.Reason switch", "\n            };").expect(":368");
-        report_window("reason switch", &win);
-        for (needle, label) in [
-            ("\"corrupt\" => L(\"会话记录损坏\")", "corrupt"),
-            ("\"unsupported\" => L(\"子代理记录版本不受支持\")", "unsupported"),
-            ("\"unavailable\" => L(\"会话记录暂不可用\")", "unavailable"),
-            ("_ => entry.Reason,", "未知 reason 原样透传"),
+            "SubagentInterruptButton.Visibility = Visibility.Collapsed;",
         ] {
-            assert!(win.contains(needle), "{label} 臂变了：{needle}");
+            assert!(win.contains(needle), "会话头钮不再无条件收起：{needle}");
         }
+        assert!(!win.contains("Visibility.Visible"), "主干给钮加回了判据 ⇒ 分叉 HIDDEN 语义要重估：{win}");
     }
 }

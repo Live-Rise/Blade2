@@ -111,7 +111,13 @@ fn the_ring_has_exactly_one_host_in_the_middle_composer_cell() {
     assert_eq!(composer.matches(".columns(").count(), 1, "给圈加了列");
 }
 
-/// 三态齐挂 + 主干裸真名 + 一发两贴（tooltip 与无障碍名同串）+ 弦近似有宿主。
+/// 三态齐挂 + 主干裸真名 + 弦近似有宿主。
+/// ⚠ 主干那「一发两贴」（`CM:169-170` 的 tooltip 与 Name 同串）在分叉**只剩后半**：
+/// reactor 0.100 把 `Tooltip` 与 `Flyout` 都建模成包在宿主外的 wrapper 节点，
+/// `planner/view.rs` 装载时任一支都沿逻辑父链找 `Tooltip | Flyout | ContentDialog` 祖先，
+/// 撞见就 `StructureUnsupported` ⇒ 两个嵌套方向全炸（实测「历史对话点了没反应」的根因）。
+/// 取舍：留 flyout（面板是本颗钮的唯一动作）、丢 tooltip；`automation_name` 收着**同一枚串**，
+/// 读屏那路一字不丢，丢的只是鼠标悬停那一下。故这里反向锁「圈内不许有 tooltip」。
 /// 反向半边：圈内只许一枚 `automation_id(`，且不许自造第二枚 id（台账 #101 红过）。
 #[test]
 fn the_ring_wears_the_mainline_name_and_builds_all_three_faces() {
@@ -144,10 +150,13 @@ fn the_ring_wears_the_mainline_name_and_builds_all_three_faces() {
     );
     assert!(cell.contains(r#".automation_id("ContextMeterRing")"#));
     assert!(!cell.contains("automation_id(format!"), "自造了动态 id");
-    // 一发两贴：`tooltip_and_aria` 出一枚串，同时喂 tooltip 与 Name。
+    // 主干那一枚串照旧由 `tooltip_and_aria` 出，只是**只喂 Name**（tooltip 那半被框架互斥性砍掉）。
     assert!(cell.contains("cm::tooltip_and_aria(&self.catalog, occ)"));
-    assert!(cell.contains(".automation_name(aria.clone())"));
-    assert!(cell.contains(".tooltip(aria)"));
+    assert!(cell.contains(".automation_name(aria)"));
+    assert!(
+        !cell.contains(".tooltip("),
+        "圈上又长回 tooltip ⇒ 与那颗原生 flyout 互斥，整棵树会 StructureUnsupported"
+    );
     // 面板锚点 = 这颗圈本身（原生 `Flyout`，见下一颗锁）。
     assert!(cell.contains(".flyout_with(self.mw3_context_meter_flyout(occ))"));
 }

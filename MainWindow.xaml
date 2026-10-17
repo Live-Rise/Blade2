@@ -1241,7 +1241,7 @@
                                                     </Grid.ColumnDefinitions>
                                                     <!-- 图标随当前预设切换（PermissionPresetGlyph）：
                                                          只读=查看、工作区内修改=编辑、完全权限=警告、
-                                                         自动审批=对勾、自定义=设置；未知预设回落锁 -->
+                                                         自动审查=闪光、自定义=设置；未知预设回落锁 -->
                                                     <FontIcon x:Name="PermissionGlyph" Glyph="&#xE72E;" FontSize="{ThemeResource GlyphSizeBody}" />
                                                     <TextBlock x:Name="PermissionLabel" Grid.Column="1" Text="工作区内修改"
                                                                Style="{StaticResource BodyTextStyle}"
@@ -1329,12 +1329,19 @@
 
                                         <!-- 圆形发送按钮（↑ 图标，无文字）：WinUI 标准强调按钮形态
                                              （AccentButtonStyle = 系统强调色 + 悬停/按下/禁用四态，
-                                             随用户个性化与高对比度自动适配），不重绑任何色值。 -->
+                                             随用户个性化与高对比度自动适配），不重绑任何色值。
+                                             鼠标点击不得抢焦点：Button 默认 AllowFocusOnInteraction，
+                                             点一下就持焦并把系统焦点视觉环画在圆形外沿（深色主题内环
+                                             #B3000000 是黑的，叠亮皮肤时外环白光被吃掉、只剩黑圈），
+                                             而 OnSendClick 不把焦点还给输入框，环就整轮常驻。置 False
+                                             后指针交互不再聚焦（键盘 Tab 仍可聚焦、仍画焦点环，
+                                             无障碍不受影响），且发送完焦点留在输入框、可继续打字。 -->
                                         <Button x:Name="SendButton"
                                                 Grid.Row="0" Grid.Column="7"
                                                 Width="{ThemeResource ComposerSendButtonSize}" Height="{ThemeResource ComposerSendButtonSize}" Padding="0"
                                                 CornerRadius="{ThemeResource CornerPill}"
                                                 Style="{ThemeResource AccentButtonStyle}"
+                                                AllowFocusOnInteraction="False"
                                                 Click="OnSendClick"
                                                 AutomationProperties.AutomationId="SendButton"
                                                 AutomationProperties.Name="发送消息"

@@ -1527,8 +1527,11 @@ pub const EN: &[(&str, &str)] = &[
     ("随包发行的 dsh 内核版本", "Bundled dsh kernel version"),
     // 主干 `MainWindow.xaml.cs:1837-1848`「内核加载」里程碑一族（last-wins 生效值逐字照抄）：
     // `失败` 主干在 `:1609`/`:1847` 登记过两遍、值同，本表按成规只留一枚（已在前文）。
+    // IB2 反漂移：卡标题旧变体的括号后缀（「阶段」+「累计耗时」写法）主干字典已删
+    // （主干 `grep -F -c` = 0），这里按主干现值逐字换成上条「末行为整链进度百分比」写法；
+    // 旧变体在 `src/main.rs` 零读者，属纯死文案，撤键不影响任何渲染路径。
     ("内核加载", "Kernel boot"),
-    ("本次启动内核引导里程碑（阶段 · 累计耗时）", "Boot milestones of this launch (stage · elapsed)"),
+    ("本次启动内核引导里程碑（末行为整链进度百分比）", "Boot milestones of this launch (last line = overall boot progress)"),
     ("默认插件就绪", "Default plugins ready"),
     ("默认插件安装", "Installing default plugins"),
     ("默认插件就绪（检查失败，裸启动）", "Default plugins ready (check failed, bare boot)"),
