@@ -1134,7 +1134,9 @@
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
 
-                                        <!-- + 圆形按钮：菜单收纳 附件/工作区文件/在应用中打开/会话反馈 -->
+                                        <!-- + 圆形按钮：菜单收纳 附件/工作区文件/在应用中打开/会话反馈。
+                                             本就 BorderThickness=0（CardHoverBrush 只有底色），所以没有
+                                             发送键那道暗环；若哪天换成带描边的样式，先想清楚描边色。 -->
                                         <Button x:Name="ComposerAddButton"
                                                 Grid.Column="0"
                                                 Width="{ThemeResource ComposerAddButtonSize}" Height="{ThemeResource ComposerAddButtonSize}" Padding="0"
@@ -1330,16 +1332,22 @@
                                         <!-- 圆形发送按钮（↑ 图标，无文字）：WinUI 标准强调按钮形态
                                              （AccentButtonStyle = 系统强调色 + 悬停/按下/禁用四态，
                                              随用户个性化与高对比度自动适配），不重绑任何色值。
+                                             BorderThickness 必须为 0：AccentButtonStyle 只 BasedOn
+                                             DefaultButtonStyle，描边继承 ButtonBorderThemeThickness(1)
+                                             和 ButtonBorderBrush（亮主题是半透明黑）。在 34×34 的强调粉
+                                             圆上，底弧那道 1 DIP 描边被渲染成 #775F5F（40% 黑叠强调粉）
+                                             的暗环，就是「发送键底下一圈黑」；顶/左/右同样有描边，但被
+                                             亮底色吃掉看不出来。同排 ＋ 钮一直 BorderThickness=0 所以
+                                             从没这个问题，这里对齐；换样式时别把描边带回来。
                                              鼠标点击不得抢焦点：Button 默认 AllowFocusOnInteraction，
-                                             点一下就持焦并把系统焦点视觉环画在圆形外沿（深色主题内环
-                                             #B3000000 是黑的，叠亮皮肤时外环白光被吃掉、只剩黑圈），
-                                             而 OnSendClick 不把焦点还给输入框，环就整轮常驻。置 False
-                                             后指针交互不再聚焦（键盘 Tab 仍可聚焦、仍画焦点环，
-                                             无障碍不受影响），且发送完焦点留在输入框、可继续打字。 -->
+                                             点一下就持焦，而 OnSendClick 不把焦点还给输入框，之后键盘
+                                             输入全送进按钮。置 False 后指针交互不再聚焦（键盘 Tab 仍可
+                                             聚焦、无障碍不受影响），且发送完焦点留在输入框、可继续打字。 -->
                                         <Button x:Name="SendButton"
                                                 Grid.Row="0" Grid.Column="7"
                                                 Width="{ThemeResource ComposerSendButtonSize}" Height="{ThemeResource ComposerSendButtonSize}" Padding="0"
                                                 CornerRadius="{ThemeResource CornerPill}"
+                                                BorderThickness="0"
                                                 Style="{ThemeResource AccentButtonStyle}"
                                                 AllowFocusOnInteraction="False"
                                                 Click="OnSendClick"

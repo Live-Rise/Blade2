@@ -21,7 +21,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$ExpectedVersion = '0.9.0.0'
+$ExpectedVersion = '0.9.0.1'
 $Thumbprint      = 'E2B4870249B661186E86F816E2A403261E74F6A0'
 $PackageName     = 'Blade2'
 $Signtool        = 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe'
@@ -32,7 +32,7 @@ function Write-Warn2($t) { Write-Host "  [WARN] $t" -ForegroundColor Yellow }
 
 # ---------- 0. Resolve msix path ----------
 if (-not $MsixPath) {
-  $candidate = Join-Path $PSScriptRoot "AppxPkgs0800\$PackageName`_0.9.0.0_x64_Test\$PackageName`_0.9.0.0_x64.msix"
+  $candidate = Join-Path $PSScriptRoot "AppxPkgs0800\$PackageName`_0.9.0.1_x64_Test\$PackageName`_0.9.0.1_x64.msix"
   if (Test-Path -LiteralPath $candidate) {
     $MsixPath = $candidate
   } else {
@@ -42,7 +42,7 @@ if (-not $MsixPath) {
   }
 }
 if (-not $MsixPath -or -not (Test-Path -LiteralPath $MsixPath)) {
-  throw "msix for 0.9.0.0 not found. Pass -MsixPath or run the Release build first."
+  throw "msix for 0.9.0.1 not found. Pass -MsixPath or run the Release build first."
 }
 
 Write-Head "Target msix"
