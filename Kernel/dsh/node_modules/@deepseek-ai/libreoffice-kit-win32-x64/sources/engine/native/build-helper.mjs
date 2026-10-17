@@ -12,7 +12,7 @@ export function buildHelper({ platform, core, executable, cwd, env = process.env
   const windows = platform.startsWith('win32-');
   const command = windows ? 'cl.exe' : 'c++';
   const args = windows
-    ? ['/nologo', '/std:c++17', '/EHsc', '/MD', '/DNOMINMAX', `/I${join(core, 'include')}`, join(repo, 'engine/native/worker.cxx'), `/Fe:${executable}`, 'gdi32.lib']
+    ? ['/nologo', '/std:c++17', '/EHsc', '/MD', '/DNOMINMAX', `/I${join(core, 'include')}`, join(repo, 'engine/native/worker.cxx'), `/Fe:${executable}`, 'gdi32.lib', 'user32.lib']
     : ['-std=c++17', '-O2', `-I${join(core, 'include')}`, join(repo, 'engine/native/worker.cxx'), '-o', executable,
       ...(platform.startsWith('darwin-') ? ['-arch', platform === 'darwin-x64' ? 'x86_64' : 'arm64',
         '-mmacosx-version-min=11.0', '-framework', 'CoreFoundation', '-framework', 'CoreText'] : ['-ldl'])];

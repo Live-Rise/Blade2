@@ -13,7 +13,7 @@ import { type ConfigDumpLayer, type Profile } from '@deepseek-ai/dsh-app-boot';
  * (the recovery diagnostic for a broken `cordis.patch.yml`, which is then
  * never parsed).
  * @param patches - `--patch` overlay paths, in argv order.
- * @param fromDefaultProfile - shipped template used once to initialize a missing profile.
+ * @param fromDefaultProfile - shipped template that replaces the profile before loading it.
  */
 export declare function runDumpConfig(profile: string, defaultOnly: boolean, patches: readonly string[], fromDefaultProfile?: string): void;
 /**

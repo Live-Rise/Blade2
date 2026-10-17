@@ -25,15 +25,22 @@ export declare const INSTALL_ANCHOR: string;
 /** Root config filename inside a profile directory. */
 export declare const PROFILE_ROOT_FILENAME = "cordis.yml";
 /**
- * Initialize a missing profile from one shipped template. This copies only
- * the template's bundle list; local state from the
+ * Replace the named custom profile with a fresh copy of one shipped template.
+ * This copies only the template's bundle list; local state from the
  * same-named shipped profile is not read, and no inheritance metadata is
- * persisted. Shipped profile names are reserved, and the target directory is
- * claimed exclusively so existing or concurrent state is never reused.
- * @param name - the new profile name.
+ * persisted. The new profile is assembled in a `.<name>.staging-*` directory
+ * under the profiles directory and moved into place; only then is any previous
+ * target directory, including its dependencies and user patch, deleted. A
+ * failed move restores the previous directory; when restoring also fails, it
+ * stays in the staging directory. Shipped profile names, compared without
+ * case, are reserved. Concurrent replacements leave one complete copy; each
+ * one either succeeds or reports the concurrent recreation.
+ * @param name - the profile name to create or replace.
  * @param fromDefaultProfile - shipped profile template to copy.
  * @param home - Harness home containing the profile directory.
- * @throws when the template is unknown, the target name is shipped, or the target directory exists.
+ * @throws when the template is unknown, the target name is shipped, another process recreates the target
+ *   between the two renames, or a file-system operation fails; a restore failure is an `AggregateError`
+ *   that names the staging path holding the previous profile.
  */
 export declare function initializeProfileFromDefault(name: string, fromDefaultProfile: string, home?: string): void;
 /**
@@ -47,9 +54,9 @@ export declare function initializeProfileFromDefault(name: string, fromDefaultPr
  * the identical base).
  * @param name - the profile name.
  * @param userLayer - `false` skips parsing `cordis.patch.yml` (the default dump).
- * @param fromDefaultProfile - shipped template used once to initialize a missing profile.
+ * @param fromDefaultProfile - shipped template that replaces the profile before loading it.
  * @returns the loaded profile.
- * @throws when explicit initialization names an unknown template or an existing profile.
+ * @throws when explicit initialization names an unknown template or a shipped target.
  */
 export declare function prepareProfile(name: string, userLayer?: boolean, fromDefaultProfile?: string): Profile;
 /** An application-owned profile and its independent installation fallback. */
@@ -67,7 +74,7 @@ export interface RunProfileOptions {
     profile: string;
     /** Loaded application profile; bypasses named profile initialization when supplied. */
     resolvedProfile?: ResolvedProfileRuntime | undefined;
-    /** Shipped template used once to initialize a missing profile. */
+    /** Shipped template that replaces the named profile before boot. */
     fromDefaultProfile?: string | undefined;
     /** `--patch` overlay paths, in argv order. */
     patchFiles: readonly string[];

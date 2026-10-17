@@ -98,14 +98,16 @@ export class WorkspaceRegistry extends Service {
     entities = new Map();
     headers = new Map();
     sessionPaths = new Map();
+    missingSessionPaths = new Set();
     invalidSessionPaths = new Map();
     operationTail = Promise.resolve();
     host = {
         table: () => this.requireTable(),
-        sessionPath: id => this.sessionPaths.get(id),
+        candidateMatches: (id, path) => this.sessionPaths.get(id) === path || this.missingSessionPaths.has(id),
         readSessionHeader: id => this.readSessionHeader(id),
         rememberSessionPath: (id, path) => {
             this.sessionPaths.set(id, path);
+            this.missingSessionPaths.delete(id);
             this.invalidSessionPaths.delete(id);
         },
     };
@@ -693,6 +695,7 @@ export class WorkspaceRegistry extends Service {
     async replaceHeaderIndex(headers) {
         this.headers.clear();
         this.sessionPaths.clear();
+        this.missingSessionPaths.clear();
         this.invalidSessionPaths.clear();
         await this.indexHeaders(headers);
     }
@@ -703,6 +706,7 @@ export class WorkspaceRegistry extends Service {
     async indexHeader(header) {
         this.headers.set(header.id, header);
         this.sessionPaths.delete(header.id);
+        this.missingSessionPaths.delete(header.id);
         if (header.cwd === undefined) {
             this.invalidSessionPaths.set(header.id, 'header has no cwd');
             return;
@@ -716,7 +720,11 @@ export class WorkspaceRegistry extends Service {
             this.sessionPaths.set(header.id, path);
             this.invalidSessionPaths.delete(header.id);
         }
-        catch {
+        catch (error) {
+            if (fullyQualifiedWorkspacePath(header.cwd)
+                && error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+                this.missingSessionPaths.add(header.id);
+            }
             this.invalidSessionPaths.set(header.id, `cwd '${header.cwd}' does not resolve`);
         }
     }
@@ -735,9 +743,9 @@ export class WorkspaceRegistry extends Service {
         for (const entity of this.entities.values()) {
             const record = this.requireTable().get(entity.id);
             for (const sessionId of record.sessionIds) {
-                const path = this.sessionPaths.get(sessionId);
-                if (path === record.path)
+                if (this.host.candidateMatches(sessionId, record.path))
                     continue;
+                const path = this.sessionPaths.get(sessionId);
                 const reason = this.invalidSessionPaths.get(sessionId)
                     ?? (this.headers.has(sessionId)
                         ? `canonical cwd '${path}' differs from workspace path '${record.path}'`

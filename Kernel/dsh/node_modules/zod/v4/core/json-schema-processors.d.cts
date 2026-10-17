@@ -41,7 +41,6 @@ export declare const mapProcessor: Processor<schemas.$ZodMap>;
 export declare const setProcessor: Processor<schemas.$ZodSet>;
 export declare const arrayProcessor: Processor<schemas.$ZodArray>;
 export declare const objectProcessor: Processor<schemas.$ZodObject>;
-export declare const propertiesProcessor: Processor<schemas.$ZodProperties>;
 export declare const unionProcessor: Processor<schemas.$ZodUnion>;
 export declare const intersectionProcessor: Processor<schemas.$ZodIntersection>;
 export declare const tupleProcessor: Processor<schemas.$ZodTuple>;

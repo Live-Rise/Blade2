@@ -6,6 +6,7 @@ export const requiredUiResources = Object.freeze([
   'modules/swriter/ui/annotation.ui',
   'svt/ui/scrollbars.ui',
   'svt/ui/tabbuttons.ui',
+  'svt/ui/tabbuttonsmirrored.ui',
 ]);
 
 // Evidence scope, not a source pin: engine/core remains the only source pin.

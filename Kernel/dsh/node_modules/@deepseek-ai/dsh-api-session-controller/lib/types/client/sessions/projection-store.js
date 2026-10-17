@@ -82,7 +82,7 @@ export class ProjectionValueStore {
         this.changed(key);
     }
     /**
-     * Fill keys from a session-list block the Host labeled `cached`: a zero-I/O
+     * Fill keys from a Host block labeled `cached`: a zero-I/O
      * view of the persisted checkpoint. A cached value lands only where no
      * sequenced row exists: a connected Session has already answered for such
      * a key, and the list's view of the persisted checkpoint cannot be newer

@@ -137,9 +137,6 @@ export declare function processSchema<T extends schemas.$ZodType>(schema: T, ctx
 export { processSchema as process };
 export declare function extractDefs<T extends schemas.$ZodType>(ctx: ToJSONSchemaContext, schema: T): void;
 export declare function finalize<T extends schemas.$ZodType>(ctx: ToJSONSchemaContext, schema: T): ZodStandardJSONSchemaPayload<T>;
-export declare function isTransforming(_schema: schemas.$ZodType, _ctx?: {
-    seen: Set<schemas.$ZodType>;
-}): boolean;
 export type ZodStandardSchemaWithJSON<T> = StandardSchemaWithJSONProps<core.input<T>, core.output<T>>;
 export interface ZodStandardJSONSchemaPayload<T> extends JSONSchema.BaseSchema {
     "~standard": ZodStandardSchemaWithJSON<T>;

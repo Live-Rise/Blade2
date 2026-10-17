@@ -1,0 +1,70 @@
+--- a/vcl/source/gdi/print.cxx
++++ b/vcl/source/gdi/print.cxx
+@@ -365,13 +365,8 @@
+ 
+ static void ImplInitPrnQueueList()
+ {
+-    ImplSVData* pSVData = ImplGetSVData();
+-
+-    pSVData->maGDIData.mpPrinterQueueList.reset(new ImplPrnQueueList);
+-
+-    static const char* pEnv = getenv( "SAL_DISABLE_PRINTERLIST" );
+-    if( !pEnv || !*pEnv )
+-        pSVData->mpDefInst->GetPrinterQueueInfo(*pSVData->maGDIData.mpPrinterQueueList);
++    // The kit renders through virtual devices; physical queues are not needed.
++    ImplGetSVData()->maGDIData.mpPrinterQueueList.reset(new ImplPrnQueueList);
+ }
+ 
+ void ImplDeletePrnQueueList()
+@@ -421,10 +416,6 @@
+ 
+ OUString Printer::GetDefaultPrinterName()
+ {
+-    static const char* pEnv = getenv( "SAL_DISABLE_DEFAULTPRINTER" );
+-    if( !pEnv || !*pEnv )
+-        return GetSalInstance()->GetDefaultPrinter();
+-
+     return OUString();
+ }
+ 
+@@ -1591,39 +1582,7 @@
+ 
+ void Printer::updatePrinters()
+ {
+-    ImplSVData*         pSVData = ImplGetSVData();
+-    ImplPrnQueueList*   pPrnList = pSVData->maGDIData.mpPrinterQueueList.get();
+-
+-    if ( !pPrnList )
+-        return;
+-
+-    std::unique_ptr<ImplPrnQueueList> pNewList(new ImplPrnQueueList);
+-    pSVData->mpDefInst->GetPrinterQueueInfo(*pNewList);
+-
+-    bool bChanged = pPrnList->m_aQueueInfos.size() != pNewList->m_aQueueInfos.size();
+-    for( decltype(pPrnList->m_aQueueInfos)::size_type i = 0; ! bChanged && i < pPrnList->m_aQueueInfos.size(); i++ )
+-    {
+-        ImplPrnQueueData& rInfo     = pPrnList->m_aQueueInfos[i];
+-        ImplPrnQueueData& rNewInfo  = pNewList->m_aQueueInfos[i];
+-        if( ! rInfo.mpSalQueueInfo || ! rNewInfo.mpSalQueueInfo || // sanity check
+-            rInfo.mpSalQueueInfo->maPrinterName != rNewInfo.mpSalQueueInfo->maPrinterName )
+-        {
+-            bChanged = true;
+-        }
+-    }
+-    if( !bChanged )
+-        return;
+-
+-    ImplDeletePrnQueueList();
+-    pSVData->maGDIData.mpPrinterQueueList = std::move(pNewList);
+-
+-    Application* pApp = GetpApp();
+-    if( pApp )
+-    {
+-        DataChangedEvent aDCEvt( DataChangedEventType::PRINTER );
+-        Application::ImplCallEventListenersApplicationDataChanged(&aDCEvt);
+-        Application::NotifyAllWindows( aDCEvt );
+-    }
++    // Native kit documents do not follow system printer changes.
+ }
+ 
+ bool Printer::UsePolyPolygonForComplexGradient()

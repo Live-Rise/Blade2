@@ -250,6 +250,22 @@ export interface $ZodCheckProperty<T extends object = object> extends $ZodCheck<
     _zod: $ZodCheckPropertyInternals<T>;
 }
 export declare const $ZodCheckProperty: core.$constructor<$ZodCheckProperty>;
+export interface $ZodCheckPropertiesDef<Shape extends schemas.$ZodShape = schemas.$ZodShape> extends $ZodCheckDef {
+    check: "properties";
+    shape: Shape;
+}
+export type $ZodCheckPropertiesInput<Shape extends schemas.$ZodShape = schemas.$ZodShape> = {
+    -readonly [k in keyof Shape]: util.Widen<core.input<Shape[k]>>;
+};
+export interface $ZodCheckPropertiesInternals<Shape extends schemas.$ZodShape = schemas.$ZodShape> extends $ZodCheckInternals<$ZodCheckPropertiesInput<Shape>> {
+    def: $ZodCheckPropertiesDef<Shape>;
+    issc: errors.$ZodIssue;
+}
+export interface $ZodCheckProperties<Shape extends schemas.$ZodShape = schemas.$ZodShape> extends $ZodCheck<$ZodCheckPropertiesInput<Shape>> {
+    _zod: $ZodCheckPropertiesInternals<Shape>;
+    [Symbol.iterator](): Iterator<this>;
+}
+export declare const $ZodCheckProperties: core.$constructor<$ZodCheckProperties>;
 export interface $ZodCheckMimeTypeDef extends $ZodCheckDef {
     check: "mime_type";
     mime: util.MimeTypes[];

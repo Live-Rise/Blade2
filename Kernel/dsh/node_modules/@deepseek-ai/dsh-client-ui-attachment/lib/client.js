@@ -854,38 +854,69 @@ window.__ModuleLoader__.load({
 		}
 		//#endregion
 		//#region lib/types/client/MessageImages.js
-		/** Historical message-image slot entry. */
-		function MessageImages({ images, loadImage, align, compact = false, thumbnail = false, t }) {
+		/** Official image gallery Factory and default image Slot adapter. */
+		/**
+		* Render a gallery with an authorized loader and caller-owned or default labels.
+		* @param props - image sources, authorized loader, layout hints, optional labels, and Factory locale seat.
+		* @returns the official gallery; no Session binding is needed by this component.
+		*/
+		function MessageImagesContent({ images, loadImage, align, compact = false, thumbnail = false, labels, t }) {
 			return (0, react_jsx_runtime.jsx)(ImageGallery, {
 				images,
 				load: loadImage,
 				align,
 				compact,
 				thumbnail,
-				labels: messageImageLabels(t)
+				labels: (0, react.useMemo)(() => labels ?? messageImageLabels(t), [labels, t])
+			});
+		}
+		/**
+		* Fill a message, trajectory, or tool image position through the shared Content Factory.
+		* @param props - Slot owner image data, authorized loader, and framework Factory renderer.
+		* @returns the official gallery occurrence.
+		*/
+		function MessageImages({ images, loadImage, align, compact, thumbnail, renderFactorySlot }) {
+			return renderFactorySlot("conversation.images.content", {
+				images,
+				loadImage,
+				align,
+				...compact === void 0 ? {} : { compact },
+				...thumbnail === void 0 ? {} : { thumbnail }
 			});
 		}
 		//#endregion
 		//#region lib/types/client/index.js
-		/** Slot registry required by this presentation plugin. */
+		/** Slot registry required by the attachment presentation plugin. */
 		const inject = ["slots"];
-		/** Register attachment presentation without exporting React components as package values. */
+		/**
+		* Register composer attachments and the shared gallery with its domain adapters.
+		* @param ctx - client plugin context with the Slot registry.
+		*/
 		function apply(ctx) {
+			ctx.slots.registerFactory({
+				name: "conversation.images.content",
+				scope: "root",
+				locale: "conversation"
+			}, MessageImagesContent);
 			ctx.slots.inject("conversation.input.attachments", () => ctx.slots.register({
 				name: "conversation.input.attachments",
 				locale: "conversation"
 			}, ComposerAttachments));
-			ctx.slots.inject("conversation.message.images", () => ctx.slots.register({
-				name: "conversation.message.images",
-				locale: "conversation"
+			ctx.slots.inject("conversation.chat.message.images", () => ctx.slots.register({
+				name: "conversation.chat.message.images",
+				priority: 100
+			}, MessageImages));
+			ctx.slots.inject("conversation.chat.user.images", () => ctx.slots.register({
+				name: "conversation.chat.user.images",
+				priority: 100
 			}, MessageImages));
 			ctx.slots.inject("conversation.trajectory.images", () => ctx.slots.register({
 				name: "conversation.trajectory.images",
-				locale: "conversation"
+				priority: 100
 			}, MessageImages));
 			ctx.slots.inject("tool.call.images", () => ctx.slots.register({
 				name: "tool.call.images",
-				locale: "conversation"
+				priority: 100
 			}, MessageImages));
 		}
 		//#endregion

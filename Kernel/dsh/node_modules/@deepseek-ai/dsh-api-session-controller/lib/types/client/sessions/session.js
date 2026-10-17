@@ -202,7 +202,7 @@ export class Session {
             // wire type is used; this array is not filtered or reordered.
             const routedContent = content;
             const routed = await this.remote.subagents.prompt({
-                requestId: randomUUID(),
+                requestId: requestId ?? randomUUID(),
                 parentSessionId: this.address.parentSessionId,
                 childSessionId: this.address.childSessionId,
                 mode: 'continuable',

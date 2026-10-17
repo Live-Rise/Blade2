@@ -221,6 +221,8 @@ export declare function prefixIssues(path: PropertyKey, issues: errors.$ZodRawIs
 export declare function unwrapMessage(message: string | {
     message: string;
 } | undefined | null): string | undefined;
+/** The leading size checks of `defChecks` that set an upper bound, each paired with it. */
+export declare function sizeCaps(defChecks: checks.$ZodCheck<never>[] | undefined): [number, checks.$ZodCheck<never>][];
 export declare function attachSchema(issues: errors.$ZodRawIssue[], start: number, inst: schemas.$ZodType): void;
 export declare function finalizeIssue(iss: errors.$ZodRawIssue, ctx: schemas.ParseContextInternal | undefined, config: $ZodConfig): errors.$ZodIssue;
 export declare function getSizableOrigin(input: any): "set" | "map" | "file" | "unknown";

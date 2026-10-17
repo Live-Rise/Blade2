@@ -10,7 +10,7 @@
  * During schema generation, ordinary stdout writes are redirected to stderr.
  * @param profile - the profile name.
  * @param patches - overlay paths, in argv order.
- * @param fromDefaultProfile - shipped template used once to initialize a missing profile.
+ * @param fromDefaultProfile - shipped template that replaces the profile before loading it.
  * @returns after collection and output, with diagnostics also written to stderr.
  */
 export declare function runDumpConfigSchema(profile: string, patches: readonly string[], fromDefaultProfile?: string): Promise<void>;

@@ -39,6 +39,7 @@ const error = () => {
         json_string: "JSON-String",
         e164: "E.164-Nummer",
         credit_card: "Kreditkartennummer",
+        currency_code: "Währungscode",
         iban: "IBAN",
         jwt: "JWT",
         template_literal: "Eingabe",

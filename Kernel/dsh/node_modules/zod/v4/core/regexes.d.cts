@@ -46,6 +46,7 @@ export declare const domain: RegExp;
 export declare const httpProtocol: RegExp;
 export declare const e164: RegExp;
 export declare const creditCard: RegExp;
+export declare const currencyCode: RegExp;
 export declare const iban: RegExp;
 export declare const date: RegExp;
 export declare function time(args: {

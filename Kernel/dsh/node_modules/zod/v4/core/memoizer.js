@@ -8,9 +8,9 @@ export class $ZodCyclicError extends Error {
 /** Keyed off the context object every schema in one parse call already shares. */
 const STATE = "~memo";
 const NO_ISSUES = [];
-// a value a cycle can close through; callables count, since z.properties asserts on one
+// a value a cycle can close through
 function isRef(value) {
-    return value !== null && (typeof value === "object" || typeof value === "function");
+    return value !== null && typeof value === "object";
 }
 // Receivers prefix paths in place, so the cache and every hand-out need their own copies.
 function cloneIssues(issues) {
@@ -67,9 +67,6 @@ function isRecursive(inst, stack, resolve) {
             check(def.catchall);
             break;
         }
-        case "properties":
-            merge(shape(def.shape, false));
-            break;
         case "array":
             check(def.element);
             break;

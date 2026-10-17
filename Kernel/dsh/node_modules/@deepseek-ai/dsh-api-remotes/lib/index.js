@@ -13,6 +13,10 @@ import { isJsonValue } from "@deepseek-ai/dsh-util-values";
 /**
 * Host events this application forwards without renaming. The explicit mode is
 * both the Host dispatch strategy and the legal key set of `ctx.remote.$on`.
+* An `emit` entry declares readers of the resources its payload carries, or
+* none to touch the built-in `global` resource; it reaches a non-owner Peer
+* only when access control allows it. Each notification names one resource
+* identity or none, and collection changes travel on follow streams instead.
 */
 const API_REMOTE_FORWARDED_EVENTS = [
 	{
@@ -25,23 +29,28 @@ const API_REMOTE_FORWARDED_EVENTS = [
 	},
 	{
 		event: "api-session/activity",
-		mode: "emit"
+		mode: "emit",
+		resources: { session: (sessionId) => sessionId }
 	},
 	{
 		event: "api-session/added",
-		mode: "emit"
+		mode: "emit",
+		resources: { session: (summary) => summary.sessionId }
 	},
 	{
 		event: "api-session/error",
-		mode: "emit"
+		mode: "emit",
+		resources: { session: (sessionId) => sessionId }
 	},
 	{
 		event: "api-session/removed",
-		mode: "emit"
+		mode: "emit",
+		resources: { session: (sessionId) => sessionId }
 	},
 	{
 		event: "api-session/status",
-		mode: "emit"
+		mode: "emit",
+		resources: { session: (sessionId) => sessionId }
 	},
 	{
 		event: "commands/change",
@@ -112,6 +121,10 @@ const API_REMOTE_FORWARDED_EVENTS = [
 		mode: "emit"
 	},
 	{
+		event: "plugin-market/changed",
+		mode: "emit"
+	},
+	{
 		event: "settings/document-updated",
 		mode: "emit"
 	},
@@ -137,13 +150,18 @@ function apply(ctx) {
 function remoteEventSource(ctx) {
 	return (signal) => {
 		const queue = new RemoteEventQueue();
-		const disposers = API_REMOTE_FORWARDED_EVENTS.map(({ event, mode }) => {
-			if (mode === "emit") return ctx.on(event, ((...args) => {
-				queue.push({
-					event,
-					args: assertJsonArgs(event, args)
-				});
-			}));
+		const disposers = API_REMOTE_FORWARDED_EVENTS.map((entry) => {
+			const { event, mode } = entry;
+			if (mode === "emit") {
+				const resources = "resources" in entry ? entry.resources : void 0;
+				return ctx.on(event, ((...args) => {
+					queue.push({
+						event,
+						args: assertJsonArgs(event, args),
+						...resources === void 0 ? {} : { resources }
+					});
+				}));
+			}
 			return ctx.on(event, (function(request, next) {
 				const carrierAgent = carrierKeyOf(this);
 				if (carrierAgent === void 0) return next();

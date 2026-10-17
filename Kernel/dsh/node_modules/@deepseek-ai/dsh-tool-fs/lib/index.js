@@ -158,29 +158,18 @@ function readMetaFromMeta(meta) {
 //#endregion
 //#region lib/types/session-cwd.js
 /**
-* Derive the working directory a filesystem tool resolves relative paths against: the calling
-* agent's per-session workspace (`exec.agent.session.header.cwd`), so each session's
-* `read`/`write`/`edit` act on its workspace, not the server's launch directory.
-* Non-agent calls return `undefined`, leaving the fallback in the provider rather than reading
-* `process.cwd()` at the tool boundary.
+* Resolution options for filesystem calls in the Session's current directory.
+* Non-agent calls leave directory defaults to the filesystem provider.
 * @module @deepseek-ai/dsh-tool-fs/session-cwd
 */
 /**
-* The session workspace cwd for this call, or `undefined` when none applies.
-* @param exec - the tool-execution context; only its optional `agent` is read.
-* @returns the calling agent's session cwd, or undefined for a non-agent caller (the backend then applies its own default).
+* Resolve the current directory and cancellation for a filesystem call.
+* @param ctx - context containing the working-directory service.
+* @param exec - tool execution supplying the agent and cancellation.
+* @returns filesystem resolution options for this call.
 */
-function sessionCwd(exec) {
-	return exec.agent?.session.header.cwd;
-}
-/**
-* Resolution options shared by all model-facing filesystem tools.
-* @param exec - the tool-execution context supplying session cwd and cancellation.
-* @param policyWorkspaceRoot - resolved per-call root, when a mutation carries sandbox policy.
-* @returns provider resolution options for the current tool call.
-*/
-function sessionResolveOptions(exec, policyWorkspaceRoot) {
-	const cwd = policyWorkspaceRoot ?? sessionCwd(exec);
+async function sessionResolveOptions(ctx, exec) {
+	const cwd = exec.agent === void 0 ? void 0 : await ctx.workingDirectory.ensure(exec.agent, exec.signal);
 	return {
 		...cwd !== void 0 ? { cwd } : {},
 		signal: exec.signal
@@ -195,12 +184,12 @@ function sessionResolveOptions(exec, policyWorkspaceRoot) {
 /**
 * Resolve a model-supplied path, observe absence, and require a regular file.
 * @param ctx - the plugin context providing filesystem resolution and observation events.
-* @param exec - the current tool execution, including session cwd and cancellation.
+* @param exec - the current tool execution, including the owning Agent and cancellation.
 * @param requestedPath - the raw path supplied to the tool.
 * @returns the resolved target and its single stat result.
 */
 async function resolveRegularReadTarget(ctx, exec, requestedPath) {
-	const target = await ctx.fs.resolve(requestedPath, sessionResolveOptions(exec));
+	const target = await ctx.fs.resolve(requestedPath, await sessionResolveOptions(ctx, exec));
 	const info = await ctx.fs.stat(target, exec.signal);
 	if (info === void 0) {
 		ctx.emit("fs/observed", target, { kind: "absent" }, exec);
@@ -283,7 +272,8 @@ function applyReadTool(ctx, caps) {
 				properties: {
 					path: {
 						type: "string",
-						required: true
+						required: true,
+						description: "Canonical absolute path in the filesystem execution world."
 					},
 					offset: {
 						type: "integer",
@@ -352,7 +342,7 @@ function applyReadTool(ctx, caps) {
 				maxBytes: caps.maxBytes
 			}, target.displayPath);
 			const outcome = {
-				path: target.displayPath,
+				path: ctx.fs.processPath(target),
 				offset: input.offset,
 				lines: window.lines,
 				totalLines: window.totalLines
@@ -453,6 +443,16 @@ function diffsFromMeta(meta) {
 	if (!Array.isArray(diffs) || diffs.length === 0 || !diffs.every(isFileDiff)) return void 0;
 	return diffs;
 }
+/**
+* Read the operation's file path even when the applied diff is empty.
+* @param meta - opaque persisted result metadata.
+* @returns the recorded path, or undefined for old or malformed metadata.
+*/
+function pathFromMeta(meta) {
+	if (typeof meta !== "object" || meta === null || Array.isArray(meta)) return void 0;
+	const path = meta.path;
+	return typeof path === "string" && path.length > 0 ? path : void 0;
+}
 //#endregion
 //#region lib/types/error.js
 /**
@@ -477,6 +477,28 @@ function remediateFsError(error, displayPath) {
 	if (error.code === "FS_NOT_OBSERVED") return new FsError(`cannot modify "${displayPath}": file has not been read — read the file, then retry`, error.code, { cause: error });
 	if (error.code === "FS_STALE_VERSION") return new FsError(`${error.message} — re-read the file, then retry`, error.code, { cause: error });
 	return error;
+}
+//#endregion
+//#region lib/types/mutation-result.js
+/** Shared observation and result fields for successful file mutations. */
+/**
+* Record the new file version and expose the mutation result with its canonical path.
+* @param ctx - filesystem and observation event owner.
+* @param target - resolved file that was mutated.
+* @param outcome - successful provider result; its version stays in the observation event.
+* @param exec - calling tool execution.
+* @returns the provider's result fields without the version, plus the canonical absolute path.
+*/
+function mutationResult(ctx, target, outcome, exec) {
+	const { version, ...result } = outcome;
+	ctx.emit("fs/observed", target, {
+		kind: "present",
+		version
+	}, exec);
+	return {
+		path: ctx.fs.processPath(target),
+		...result
+	};
 }
 //#endregion
 //#region lib/types/write.js
@@ -530,7 +552,7 @@ function applyWriteTool(ctx, sandbox) {
 			file_path: {
 				type: "string",
 				required: true,
-				description: "Path to write, resolved by the filesystem backend."
+				description: "Path to write, resolved by the filesystem backend. Provide `file_path` before `content` in the arguments."
 			},
 			content: {
 				type: "string",
@@ -546,7 +568,8 @@ function applyWriteTool(ctx, sandbox) {
 				properties: {
 					path: {
 						type: "string",
-						required: true
+						required: true,
+						description: "Canonical absolute path in the filesystem execution world."
 					},
 					operation: {
 						type: "string",
@@ -567,9 +590,10 @@ function applyWriteTool(ctx, sandbox) {
 				type: "text",
 				text: formatWriteOutput(value.path, value)
 			}],
-			presentationMeta: (args, value) => ({
+			presentationMeta: (_args, value) => ({
 				operation: value.operation,
-				diffs: value.before === null ? [] : computeHunkDiffs(args.file_path, value.before, value.after).map(({ path, oldText, newText }) => ({
+				path: value.path,
+				diffs: value.before === null ? [] : computeHunkDiffs(value.path, value.before, value.after).map(({ path, oldText, newText }) => ({
 					path,
 					oldText,
 					newText
@@ -579,7 +603,7 @@ function applyWriteTool(ctx, sandbox) {
 		async execute(args, exec) {
 			const input = parseWriteArgs(args);
 			const sandboxPolicy = await sandbox.resolvePolicy("write", args, exec);
-			const target = await ctx.fs.resolve(input.filePath, sessionResolveOptions(exec, sandboxPolicy?.workspaceRoot));
+			const target = await ctx.fs.resolve(input.filePath, await sessionResolveOptions(ctx, exec));
 			const intent = await ctx.waterfall("fs/write-intent", target, exec, () => void 0);
 			let outcome;
 			try {
@@ -587,16 +611,7 @@ function applyWriteTool(ctx, sandbox) {
 			} catch (error) {
 				throw remediateFsError(sandbox.mapError(error, sandboxPolicy), target.displayPath);
 			}
-			ctx.emit("fs/observed", target, {
-				kind: "present",
-				version: outcome.version
-			}, exec);
-			return {
-				path: target.displayPath,
-				operation: outcome.operation,
-				before: outcome.before,
-				after: outcome.after
-			};
+			return mutationResult(ctx, target, outcome, exec);
 		},
 		presentCall(args) {
 			return {
@@ -613,7 +628,7 @@ function applyWriteTool(ctx, sandbox) {
 		presentResult(args, result) {
 			if (result.isError) return void 0;
 			const diffs = diffsFromMeta(result.meta) ?? [{
-				path: args.file_path,
+				path: pathFromMeta(result.meta) ?? args.file_path,
 				oldText: null,
 				newText: args.content
 			}];
@@ -678,7 +693,7 @@ function applyEditTool(ctx, sandbox) {
 			file_path: {
 				type: "string",
 				required: true,
-				description: "Path to edit, resolved by the filesystem backend."
+				description: "Path to edit, resolved by the filesystem backend. Provide `file_path` before `old_string` and `new_string` in the arguments."
 			},
 			old_string: {
 				type: "string",
@@ -703,7 +718,8 @@ function applyEditTool(ctx, sandbox) {
 				properties: {
 					path: {
 						type: "string",
-						required: true
+						required: true,
+						description: "Canonical absolute path in the filesystem execution world."
 					},
 					before: {
 						type: "string",
@@ -719,16 +735,19 @@ function applyEditTool(ctx, sandbox) {
 				type: "text",
 				text: formatEditOutput(value.path, args.replace_all ?? false)
 			}],
-			presentationMeta: (args, value) => ({ diffs: computeHunkDiffs(args.file_path, value.before, value.after).map(({ path, oldText, newText }) => ({
-				path,
-				oldText,
-				newText
-			})) })
+			presentationMeta: (_args, value) => ({
+				path: value.path,
+				diffs: computeHunkDiffs(value.path, value.before, value.after).map(({ path, oldText, newText }) => ({
+					path,
+					oldText,
+					newText
+				}))
+			})
 		},
 		async execute(args, exec) {
 			const input = parseEditArgs(args);
 			const sandboxPolicy = await sandbox.resolvePolicy("edit", args, exec);
-			const target = await ctx.fs.resolve(input.filePath, sessionResolveOptions(exec, sandboxPolicy?.workspaceRoot));
+			const target = await ctx.fs.resolve(input.filePath, await sessionResolveOptions(ctx, exec));
 			let outcome;
 			try {
 				const intent = await ctx.waterfall("fs/edit-intent", target, exec, () => void 0);
@@ -740,15 +759,7 @@ function applyEditTool(ctx, sandbox) {
 			} catch (error) {
 				throw remediateFsError(sandbox.mapError(error, sandboxPolicy), target.displayPath);
 			}
-			ctx.emit("fs/observed", target, {
-				kind: "present",
-				version: outcome.version
-			}, exec);
-			return {
-				path: target.displayPath,
-				before: outcome.before,
-				after: outcome.after
-			};
+			return mutationResult(ctx, target, outcome, exec);
 		},
 		presentCall(args) {
 			return {
@@ -986,7 +997,8 @@ function applyReadImageTool(ctx) {
 				properties: {
 					path: {
 						type: "string",
-						required: true
+						required: true,
+						description: "Canonical absolute path in the filesystem execution world."
 					},
 					image: IMAGE_VALUE_SCHEMA
 				}
@@ -1033,7 +1045,7 @@ function applyReadImageTool(ctx) {
 				version: info.version
 			}, exec);
 			return {
-				path: target.displayPath,
+				path: ctx.fs.processPath(target),
 				image: {
 					attachmentId: ref.attachmentId,
 					mediaType: ref.mediaType,
@@ -1109,9 +1121,9 @@ var FsSandboxController = class {
 	/**
 	* The policy to stamp onto this mutation: an approved escalation grant (a
 	* strictly wider retry resolved through `ctx.approval` before anything
-	* executes), else the session's standing mode. Repeating the standing mode
-	* requires no approval. The calling session's cwd is
-	* always carried as the workspace root. Validates the escalation argument
+	* executes), else the Session's standing mode. Repeating the standing mode
+	* requires no approval. The workspace root is the original Session
+	* directory, or the deployment fallback when absent. Validates the escalation argument
 	* pairing first.
 	* @param toolName - the mutating tool's name, for the approval audit trail.
 	* @param args - the call's escalation arguments.
@@ -1176,9 +1188,14 @@ const name = "tool-fs";
 const inject = [
 	"tools",
 	"fs",
-	"systemPrompt"
+	"systemPrompt",
+	"workingDirectory"
 ];
 const Config = z.object({
+	read: z.boolean().default(true),
+	readImage: z.boolean().default(true),
+	write: z.boolean().default(true),
+	edit: z.boolean().default(true),
 	readLimit: z.number().default(READ_LIMIT),
 	readMaxLineLength: z.number().default(READ_MAX_LINE_LENGTH),
 	readMaxBytes: z.number().default(READ_MAX_BYTES),
@@ -1188,25 +1205,27 @@ const Config = z.object({
 function assertPositiveInteger(name, value) {
 	if (!Number.isInteger(value) || value < 1) throw new Error(`tool-fs: ${name} must be a positive integer`);
 }
-/** Register the full `read`/`write`/`edit` filesystem tool suite, plus `read_image` while `attachments` is mounted. */
+/** Register the selected filesystem tools; `read_image` additionally requires a mounted attachment store. */
 function apply(ctx, config) {
 	const resolved = config;
 	assertPositiveInteger("readLimit", resolved.readLimit);
 	assertPositiveInteger("readMaxLineLength", resolved.readMaxLineLength);
 	assertPositiveInteger("readMaxBytes", resolved.readMaxBytes);
 	assertPositiveInteger("readStreamMinSize", resolved.readStreamMinSize);
-	applyReadTool(ctx, {
+	if (resolved.read) applyReadTool(ctx, {
 		limit: resolved.readLimit,
 		maxLineLength: resolved.readMaxLineLength,
 		maxBytes: resolved.readMaxBytes,
 		streamMinSize: resolved.readStreamMinSize
 	});
-	ctx.inject(["attachments"], (imageCtx) => {
+	if (resolved.readImage) ctx.inject(["attachments"], (imageCtx) => {
 		applyReadImageTool(imageCtx);
 	});
-	const sandbox = new FsSandboxController(ctx);
-	applyWriteTool(ctx, sandbox);
-	applyEditTool(ctx, sandbox);
+	if (resolved.write || resolved.edit) {
+		const sandbox = new FsSandboxController(ctx);
+		if (resolved.write) applyWriteTool(ctx, sandbox);
+		if (resolved.edit) applyEditTool(ctx, sandbox);
+	}
 }
 //#endregion
 export { Config, apply, inject, name };

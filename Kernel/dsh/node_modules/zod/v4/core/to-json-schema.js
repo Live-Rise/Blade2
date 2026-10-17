@@ -572,7 +572,7 @@ export function finalize(ctx, schema) {
         throw new Error("Error converting schema to JSON.");
     }
 }
-export function isTransforming(_schema, _ctx) {
+function isTransforming(_schema, _ctx) {
     const ctx = _ctx ?? { seen: new Set() };
     if (ctx.seen.has(_schema))
         return false;

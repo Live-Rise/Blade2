@@ -312,6 +312,8 @@ var Entry = class Entry {
 	static key = Symbol.for("cordis.entry");
 	ctx;
 	fiber;
+	/** Raw import result before export normalization; HMR updates it after a successful reload. */
+	moduleNamespace;
 	parent;
 	options = {};
 	subgroup;
@@ -446,19 +448,20 @@ var Entry = class Entry {
 		this.fiber?.await().then(notify, notify);
 	}
 	async _init() {
-		let exports;
+		let moduleNamespace;
 		try {
-			exports = await this.parent.tree.import(this.options.name, this.getOuterStack);
+			moduleNamespace = await this.parent.tree.import(this.options.name, this.getOuterStack);
 		} catch (error) {
 			this.ctx.logger.error(error);
 			return;
 		} finally {
 			this._initTask = void 0;
 		}
-		const plugin = this.loader.unwrapExports(exports);
+		const plugin = this.loader.unwrapExports(moduleNamespace);
 		this._patchContext([]);
 		this.loader.showLog(this, "apply");
 		this.fiber = this.ctx.registry.plugin(plugin, this.options.config, this.getOuterStack).ctx.fiber;
+		this.moduleNamespace = moduleNamespace;
 	}
 };
 //#endregion

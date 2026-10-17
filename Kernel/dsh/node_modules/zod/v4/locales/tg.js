@@ -40,6 +40,7 @@ const error = () => {
         json_string: "сатри JSON",
         e164: "рақами E.164",
         credit_card: "рақами корти кредитӣ",
+        currency_code: "рамзи асъор",
         iban: "IBAN",
         jwt: "JWT",
         template_literal: "вуруд",

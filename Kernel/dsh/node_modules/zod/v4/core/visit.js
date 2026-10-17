@@ -135,18 +135,6 @@ export function visit(schema, fnOrHandlers) {
                 const { _cachedInner, ...rest } = def;
                 return clone(s, { ...rest, getter: () => run(original()) });
             }
-            case "properties": {
-                const oldShape = def.shape;
-                let changed = false;
-                const newShape = {};
-                for (const k of Reflect.ownKeys(oldShape)) {
-                    const mapped = run(oldShape[k]);
-                    if (mapped !== oldShape[k])
-                        changed = true;
-                    newShape[k] = mapped;
-                }
-                return changed ? clone(s, { ...def, shape: newShape }) : s;
-            }
             // A leaf by choice: `parts` are regex fragments, not data positions.
             case "template_literal":
             // Leaves.

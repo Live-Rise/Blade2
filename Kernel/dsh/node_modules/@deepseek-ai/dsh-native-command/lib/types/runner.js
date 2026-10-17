@@ -4,14 +4,16 @@
  */
 import { execFile } from 'node:child_process';
 /**
- * Run a host command with utf8 stdio, abort propagation, and Windows hide.
+ * Run a host command with utf8 stdio, abort propagation, and explicit GUI visibility.
  * @param command - executable path or PATH name.
  * @param args - argv (never a shell string).
  * @param signal - caller/connection lifetime; abort terminates the child.
+ * @param window - Windows startup visibility: `hidden` for background commands,
+ * `visible` for GUI launchers. Ignored on other platforms.
  * @returns captured stdout/stderr on exit 0.
  */
-export const runNativeCommand = (command, args, signal) => new Promise((resolve, reject) => {
-    execFile(command, [...args], { encoding: 'utf8', signal, windowsHide: true }, (error, stdout, stderr) => {
+export const runNativeCommand = (command, args, signal, window) => new Promise((resolve, reject) => {
+    execFile(command, [...args], { encoding: 'utf8', signal, windowsHide: window === 'hidden' }, (error, stdout, stderr) => {
         if (error !== null) {
             const failure = Object.assign(new Error(error.message, { cause: error }), {
                 code: error.code,
