@@ -48,8 +48,8 @@ if ($LASTEXITCODE -ne 0) { throw "build failed: $LASTEXITCODE" }
 
 Write-Host '=== Sign ==='
 # 包身份已从 DshWinUI 改名为 Blade2（0.8.1）；Publisher 仍为 CN=DshWinUI，证书不变。
-$msix = Get-ChildItem $pkgDir -Recurse -Filter '*_0.9.0.2_x64*.msix' | Select-Object -First 1
-if (-not $msix) { $msix = Get-ChildItem $pkgDir -Recurse -Filter '*.msix' | Where-Object { $_.FullName -like '*0.9.0.2*' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1 }
+$msix = Get-ChildItem $pkgDir -Recurse -Filter '*_0.9.0.3_x64*.msix' | Select-Object -First 1
+if (-not $msix) { $msix = Get-ChildItem $pkgDir -Recurse -Filter '*.msix' | Where-Object { $_.FullName -like '*0.9.0.3*' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1 }
 if (-not $msix) { throw 'no msix produced' }
 $signtool = 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe'
 & $signtool sign /fd SHA256 /sha1 E2B4870249B661186E86F816E2A403261E74F6A0 $msix.FullName

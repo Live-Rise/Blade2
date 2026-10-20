@@ -2580,6 +2580,10 @@ public sealed partial class MainWindow : Window
     private List<(string Value, string Name, string Description)> _permissionDefaultOptions = new();
     /// <summary>目录 RPC 拉到的「新会话默认预设」；null = 尚未拉到（回落 describe/硬编码）。</summary>
     private string? _permissionCatalogDefaultPreset;
+    /// <summary>空态选了「自动审查」的待生效意图：auto 不能落盘 defaultPreset（启动毒化，
+    /// 见 ShowDefaultPermissionAsync 的 choices 构建注释），新会话打开时由 OpenSessionAsync
+    /// 发 /permission auto 切过去，发完即清。</summary>
+    private bool _pendingNewSessionAuto;
     private string? _permissionCurrentValue;
     /// <summary>锁：projection 帧与目录回执在接收线程解析，UI 刷新在 UI 线程读。</summary>
     private readonly object _projectionLock = new();
@@ -4882,6 +4886,13 @@ public sealed partial class MainWindow : Window
             _permissionCurrentValue = null;
         }
         RefreshSessionStateBar();
+        // 空态选了「自动审查」的待生效意图：会话一开就切过去（auto 是会话级 live 预设，
+        // 只能发 /permission 命令，不能写 defaultPreset——见 _pendingNewSessionAuto 注释）。
+        if (_pendingNewSessionAuto)
+        {
+            _pendingNewSessionAuto = false;
+            _ = ExecuteCommandAsync("/permission auto");
+        }
         LoadTrace.Mark("open: 复位+附属面板（同步）");
         await RefreshSessionStateFromListAsync(vm.SessionId);
         LoadTrace.Mark("open: session/list 投影补齐");
@@ -17046,6 +17057,26 @@ public sealed partial class MainWindow : Window
                 ("danger-full-access", PermissionPresetZh("danger-full-access")),
             });
         }
+        // 空态也给出「自动审查」：内核 catalog 的 defaultOptions 只是配置表（不含
+        // registerAuto 动态注册的 auto），但用户要在主界面就能选它。auto 不能落盘成
+        // defaultPreset（下次启动 permission 构造时 autoAdmit 未注册、resolve 抛错，
+        // 整个权限服务毒死），所以选中只记意图，新会话打开时发 /permission auto 切过去。
+        if (!choices.Any(c => c.Value == "auto"))
+        {
+            List<(string Value, string Name, string Description)> liveOptions;
+            lock (_projectionLock)
+            {
+                liveOptions = _permissionOptions;
+            }
+            if (liveOptions.Any(o => o.Value == "auto"))
+            {
+                choices.Add(("auto", PermissionPresetZh("auto")));
+            }
+        }
+        if (_pendingNewSessionAuto && choices.Any(c => c.Value == "auto"))
+        {
+            current = "auto";
+        }
         if (!choices.Any(c => c.Value == current))
         {
             // describe 没跟上（目录 defaultPreset 更新）或值缺失：目录值优先，兜底 workspace-write
@@ -17080,7 +17111,22 @@ public sealed partial class MainWindow : Window
                     GroupName = "permission-preset",
                 };
                 Aut(item, $"PermissionPreset_{value}", LF("访问模式：{0}", label));
-                item.Click += async (_, _) => await SetDefaultPermissionAsync(value, label);
+                item.Click += async (_, _) =>
+                {
+                    if (value == "auto")
+                    {
+                        // auto 不落盘 defaultPreset（启动毒化，见 choices 构建处注释）：
+                        // 记意图，新会话打开时由 OpenSessionAsync 发 /permission auto。
+                        _pendingNewSessionAuto = true;
+                        PermissionLabel.Text = label;
+                        PermissionGlyph.Glyph = PermissionPresetGlyph(value);
+                        ToolTipService.SetToolTip(PermissionButton, LF("访问模式，当前：{0}", label));
+                        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(PermissionButton, LF("访问模式，当前：{0}", label));
+                        return;
+                    }
+                    _pendingNewSessionAuto = false;
+                    await SetDefaultPermissionAsync(value, label);
+                };
                 PermissionFlyout.Items.Add(item);
             }
         });
