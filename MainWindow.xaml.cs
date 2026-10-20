@@ -2071,6 +2071,119 @@ public sealed partial class MainWindow : Window
             "When enabled, agents can choose a provider, model, and reasoning effort for each subagent from the authorized models below. Applies only to new sessions.",
         ["当前没有模型提供方公布模型。"] = "No model provider currently advertises a model.",
         ["保存前请至少选择一个模型。"] = "Select at least one model before saving.",
+        // ---- 消息卡片 / 轨迹 / 详情 / 计划 / 任务面板（视觉树扫描不含 ChatList，须走 L()） ----
+        ["{0} 个成员"] = "{0} members",
+        ["来自会话 {0}"] = "From session {0}",
+        ["引用会话 · {0}"] = "Referenced session · {0}",
+        ["跨会话召回"] = "Cross-session recall",
+        ["跨会话中继"] = "Cross-session relay",
+        ["跨会话召回 · {0}"] = "Cross-session recall · {0}",
+        ["收起成员"] = "Collapse members",
+        ["没有启动成员"] = "No active members",
+        ["空成员名"] = "Empty member name",
+        ["计时总览"] = "Timing overview",
+        ["事件账本"] = "Event ledger",
+        ["轨迹"] = "Trajectory",
+        ["轨迹面板"] = "Trajectory panel",
+        ["全部"] = "All",
+        ["步骤"] = "Steps",
+        ["系统"] = "System",
+        ["类型筛选"] = "Filter by type",
+        ["共 {0} 条事件 · {1} 轮"] = "{0} events · {1} turns",
+        ["会话时间戳（运行中）"] = "Session timestamps (running)",
+        ["{0} 步"] = "{0} steps",
+        ["开始时间"] = "Start time",
+        ["总时长"] = "Total duration",
+        ["首 token 延迟"] = "Time to first token",
+        ["工具耗时"] = "Tool time",
+        ["{0:N0} 毫秒"] = "{0:N0} ms",
+        ["跳到消息"] = "Jump to message",
+        ["跳到第 {0} 轮消息"] = "Jump to message in turn {0}",
+        ["事件"] = "Event",
+        ["来源"] = "Source",
+        ["参数 JSON"] = "Parameters JSON",
+        ["结果 JSON"] = "Result JSON",
+        ["暂无轮次计时。"] = "No turn timing yet.",
+        ["暂无事件（打开会话并产生消息后，账本随 journal 回放/实时流填充）。"] = "No events yet (open a session and produce messages; the ledger fills as the journal replays and streams).",
+        ["当前筛选没有事件。"] = "No events for the current filter.",
+        ["事件账本与交互计时总览（数据来自 session journal 渲染管线）。点击轮次可跳到对应消息；展开行只读查看参数/结果/差异 JSON。"] = "Event ledger and interaction timing overview (data from the session journal rendering pipeline). Click a turn to jump to its message; expand a row to read parameters/results/diff JSON.",
+        ["事件连接已失效，请等待重新连接后再回答。"] = "The event connection has dropped. Wait for reconnection before replying.",
+        ["消息详情"] = "Message details",
+        ["元数据"] = "Metadata",
+        ["角色"] = "Role",
+        ["轮次"] = "Turn",
+        ["序号"] = "Index",
+        ["时间"] = "Time",
+        ["用时"] = "Duration",
+        ["用量"] = "Usage",
+        ["消息 ID"] = "Message ID",
+        ["助手 · {0} tok"] = "Assistant · {0} tok",
+        ["助手流式尝试"] = "Assistant streaming attempt",
+        ["工具 · {0}"] = "Tool · {0}",
+        ["工具结果 · {0}"] = "Tool result · {0}",
+        ["工具结果"] = "Tool result",
+        ["轮次开始 · 第 {0} 轮"] = "Turn start · turn {0}",
+        ["轮次结束 · 第 {0} 轮"] = "Turn end · turn {0}",
+        ["步骤开始 · 第 {0} 轮"] = "Step start · turn {0}",
+        ["步骤结束 · 第 {0} 轮"] = "Step end · turn {0}",
+        ["请求头 · {0}"] = "Request headers · {0}",
+        ["请求头"] = "Request headers",
+        ["会话标题"] = "Session title",
+        ["插件 · {0}"] = "Plugin · {0}",
+        ["未知来源"] = "Unknown source",
+        ["未捕获参数"] = "Uncaptured parameters",
+        ["未捕获结果"] = "Uncaptured result",
+        ["复制格式化 JSON"] = "Copy formatted JSON",
+        ["复制紧凑 JSON"] = "Copy compact JSON",
+        ["复制属性路径"] = "Copy property path",
+        ["计划为只读清单（数据来自会话投影 schedule）。此入口不创建、编辑或删除计划，也不调用 schedules RPC。"] = "Plans are a read-only list (data from the session schedule projection). This entry point never creates, edits, or deletes plans, and never calls the schedules RPC.",
+        ["当前会话没有计划。"] = "This session has no plans.",
+        ["任务清单来自会话 todos 投影（模型经 todo_write 更新）。此面板只读，不创建、编辑或删除任务。"] = "The task list comes from the session todos projection (updated by the model via todo_write). This panel is read-only and never creates, edits, or deletes tasks.",
+        ["当前会话没有任务清单。"] = "This session has no task list.",
+        ["上下文已压缩"] = "Context compacted",
+        ["正在压缩…"] = "Compacting…",
+        ["已压缩 {0} 条历史记录（约 {1} tokens）"] = "Compacted {0} history records (about {1} tokens)",
+        ["压缩摘要不可用"] = "Compaction summary unavailable",
+        ["点击查看压缩摘要"] = "Click to view the compaction summary",
+        ["等待重试模型请求"] = "Waiting to retry the model request",
+        ["已重试模型请求"] = "Model request retried",
+        ["模型请求重试已取消"] = "Model request retry canceled",
+        ["重试延迟：{0} ms"] = "Retry delay: {0} ms",
+        ["失败原因："] = "Failure reason:",
+        ["发送继续"] = "Send continue",
+        ["取消重试"] = "Cancel retry",
+        ["已达到输出 token 上限"] = "Output token limit reached",
+        ["回答被截断，已有输出保留在对话中。发送“继续”可让模型接着输出。"] = "The reply was truncated; output so far is kept in the conversation. Send \"continue\" to let the model resume.",
+        ["已截断"] = "Truncated",
+        ["已移除"] = "Removed",
+        ["已新增"] = "Added",
+        ["已载入"] = "Loaded",
+        ["取代先前的快照"] = "Replaces the previous snapshot",
+        ["未记录"] = "Not recorded",
+        ["保留 {0} 条 · 省略 {1} 条"] = "Keeping {0} · omitting {1}",
+        ["…还有 {0} 条"] = "…and {0} more",
+        ["Cordis 插件"] = "Cordis plugin",
+        ["助手"] = "Assistant",
+        ["工具"] = "Tool",
+        ["第 {0} 轮"] = "Turn {0}",
+        ["目标 · Round {0}"] = "Goal · Round {0}",
+        ["记忆"] = "Memory",
+        ["找不到会话 {0}"] = "Session {0} not found",
+        ["预设即一个会话的 Agent 所运行的插件组装——它的工具、提示词与能力。可用「创造模式」让 Agent 帮你创建，或直接在预设目录放置文件。"] = "A preset is the plugin assembly a session's agent runs — its tools, prompts, and capabilities. Let the agent create one in Creation mode, or drop files directly into the preset directory.",
+        ["关闭：该预设从选择器消失；正在使用它的会话回落到完全权限，审批恢复人工确认。\n"] = "Off: the preset disappears from the picker; sessions using it fall back to full access, and approvals return to manual confirmation.\n",
+        ["重新开启后继续生效。"] = "Takes effect again when re-enabled.",
+        // ---- XAML 静态 UIA 标签（AutomationProperties.Name/HelpText） ----
+        ["当前会话标题"] = "Current session title",
+        ["少女祈祷中"] = "Praying",
+        ["历史快速定位"] = "Quick jump in history",
+        ["轮次刻度列表"] = "Turn tick list",
+        ["内核启动状态"] = "Kernel boot status",
+        ["管理"] = "Manage",
+        ["管理目标"] = "Manage targets",
+        ["设置二级页"] = "Settings subpage",
+        ["关闭图片预览"] = "Close image preview",
+        ["已更新"] = "Updated",
+        ["附加内容块"] = "Attached content block",
     };
     private string L(string key)
     {
@@ -3583,7 +3696,7 @@ public sealed partial class MainWindow : Window
             {
                 Content = L("未分组"),
                 MinWidth = 0,
-                Tag = new WorkspaceVm { WorkspaceId = "", Title = "未分组" },
+                Tag = new WorkspaceVm { WorkspaceId = "", Title = L("未分组") },
                 Icon = new FontIcon { Glyph = "\uE8A5" },
                 IsExpanded = true,
             };
@@ -4916,7 +5029,7 @@ public sealed partial class MainWindow : Window
                      ?? new SessionVm
                      {
                          SessionId = sid,
-                         Title = "新会话",
+                         Title = L("新会话"),
                          Blank = true,
                          UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                      };
@@ -10479,7 +10592,7 @@ public sealed partial class MainWindow : Window
         try
         {
             box.Password = "";
-            box.PlaceholderText = "已保存，输入新值可替换";
+            box.PlaceholderText = L("已保存，输入新值可替换");
         }
         finally { _updatingCredentialBox = false; }
     }
@@ -10909,7 +11022,7 @@ public sealed partial class MainWindow : Window
         }
         var card = NewCard("设置文件");
 
-        var open = new Button { Content = "打开设置文档", Style = AppStyle("CompactButtonStyle") };
+        var open = new Button { Content = L("打开设置文档"), Style = AppStyle("CompactButtonStyle") };
         ToolTipService.SetToolTip(open, "在内核主机上用默认文本编辑器打开 settings 文档（settings/openSettingsDocument）");
         Aut(open, "OpenSettingsDocumentButton", "打开设置文档");
         open.Click += (_, _) => _ = OpenSettingsDocumentAsync();
@@ -10919,7 +11032,7 @@ public sealed partial class MainWindow : Window
             open));
 
         AddDivider(card);
-        var reset = new Button { Content = "恢复本页默认", Style = AppStyle("CompactButtonStyle") };
+        var reset = new Button { Content = L("恢复本页默认"), Style = AppStyle("CompactButtonStyle") };
         ToolTipService.SetToolTip(reset, "清空本页命名空间的用户设置段（settings/replace），回到内核默认值");
         Aut(reset, "ResetSettingsSectionButton", "恢复本页默认");
         reset.Click += (_, _) => _ = ResetSectionAsync(sectionId, namespaces);
@@ -12847,14 +12960,14 @@ public sealed partial class MainWindow : Window
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(tabs, L("插件视图"));
         var configTab = new SelectorBarItem
         {
-            Text = "插件配置",
+            Text = L("插件配置"),
             Tag = "config",
             IsSelected = _pluginsTab == "config",
         };
         Aut(configTab, "PluginsTabConfig", "插件配置");
         var listTab = new SelectorBarItem
         {
-            Text = "插件列表",
+            Text = L("插件列表"),
             Tag = "inventory",
             IsSelected = _pluginsTab == "inventory",
         };
@@ -13154,7 +13267,7 @@ public sealed partial class MainWindow : Window
         var listHost = new StackPanel { Spacing = 0 };
         var filterBox = new TextBox
         {
-            PlaceholderText = "搜索插件",
+            PlaceholderText = L("搜索插件"),
             Margin = new Thickness(0, Sp4, 0, Sp8),
         };
         Aut(filterBox, "PluginInventoryFilterBox", "搜索插件");
@@ -13407,7 +13520,7 @@ public sealed partial class MainWindow : Window
 
                 var useForSession = new Button
                 {
-                    Content = "当前会话使用",
+                    Content = L("当前会话使用"),
                     Style = AppStyle("CompactButtonStyle"),
                     IsEnabled = activeSession is not null,
                 };
@@ -13422,7 +13535,7 @@ public sealed partial class MainWindow : Window
 
                 if (!isDefault && broken is null)
                 {
-                    var btn = Aut(new Button { Content = "设为默认", Style = AppStyle("CompactButtonStyle") }, $"SetDefaultPreset_{id}", LF("设为默认预设 {0}", shownName));
+                    var btn = Aut(new Button { Content = L("设为默认"), Style = AppStyle("CompactButtonStyle") }, $"SetDefaultPreset_{id}", LF("设为默认预设 {0}", shownName));
                     // 新会话的默认预设：settings/update agent-presets.default
                     btn.Click += async (_, _) =>
                     {
@@ -13972,7 +14085,7 @@ public sealed partial class MainWindow : Window
             {
                 Title = "Blade²",
                 Content = message,
-                CloseButtonText = "确定",
+                CloseButtonText = L("确定"),
                 XamlRoot = Content.XamlRoot,
             };
             _ = await dialog.ShowAsync();
@@ -16137,9 +16250,15 @@ public sealed partial class MainWindow : Window
                 }
             }
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            // 旧内核没有 catalog RPC（404/错误码）：静默回落投影 options，不影响引导
+            // 旧内核没有 catalog RPC（404/错误码）：静默回落投影 options，不影响引导。
+            // 但 0.2.1 内核上这条 RPC 失败意味着 permissionPresets 服务没起来（典型：
+            // profile patch 里 defaultPreset 是未知值，PermissionPresetService 构造即抛），
+            // 此时权限选择器整块消失、auto-review 永远 pending——必须留痕，否则开关显示
+            // 「已启用」而预设根本不存在（2026-10-20 自动审批未接入事故的盲区）。
+            System.Diagnostics.Debug.WriteLine($"[permission/catalog] 拉取失败: {ex.Message}");
+            LoadTrace.Mark($"[permission/catalog] 拉取失败: {ex.Message}");
         }
         finally
         {
@@ -16900,7 +17019,11 @@ public sealed partial class MainWindow : Window
         var choices = new List<(string Value, string Label)>();
         if (defaultOptions.Count > 0)
         {
-            // 选项表住在权限目录里（defaultOptions = 配置表 + registerAuto 动态注册的 auto）
+            // 选项表住在权限目录里。defaultOptions 只是配置表（presets 三键）——
+            // registerAuto 动态注册的 auto 只在 options 里（内核 catalog():
+            // defaultOptions = Object.keys(this.presets)，不含 live auto）。这是内核的
+            // 有意设计：auto 是 per-session live 预设，构造期 autoAdmit 未注册时
+            // resolve("auto") 会抛，所以 auto 不能作新会话默认（会话内浮层可切）。
             foreach (var option in defaultOptions)
             {
                 choices.Add((option.Value, PermissionPresetZh(option.Value)));

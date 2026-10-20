@@ -843,9 +843,11 @@ internal static class DshPluginBootstrap
     }
 
     /// <summary>
-    /// 一次性迁移：清掉写进 profile patch 的 auto-approve 预设块。0.2.1 内核的自动审查
+    /// 一次性迁移：清掉写进 profile patch 的 auto-approve 残留。0.2.1 内核的自动审查
     /// 只认 registerAuto 动态注册的 "auto" 预设，配置表里的 "auto-approve" 是死档——
     /// 留着会在权限选择器里多出一项什么都不做的「自动审批」。幂等：没有该块即无事。
+    /// 另清 permission 覆盖块的 defaultPreset: auto-approve 毒值（见
+    /// <see cref="RemoveDefaultPresetTrap"/>：那是服务级启动失败，不是死档）。
     /// </summary>
     private static void RetireAutoApprovePreset(string profileDir, string dshHome, StringBuilder diag)
     {
@@ -857,12 +859,13 @@ internal static class DshPluginBootstrap
                 return;
             }
             var text = File.ReadAllText(path);
-            if (!text.Contains("auto-approve:", StringComparison.Ordinal))
+            if (!text.Contains("auto-approve", StringComparison.Ordinal))
             {
                 return;
             }
-            var next = RemovePreset(text);
-            if (next is null || next == text)
+            var next = RemovePreset(text) ?? text;
+            next = RemoveDefaultPresetTrap(next) ?? next;
+            if (next == text)
             {
                 return;
             }
@@ -1302,6 +1305,58 @@ internal static class DshPluginBootstrap
         outLines.AddRange(lines[..start]);
         outLines.AddRange(lines[end..]);
         return string.Join("\n", outLines);
+    }
+
+    /// <summary>
+    /// 删掉 permission 覆盖块里的 defaultPreset: auto-approve 毒值。这不是「死档」而是
+    /// 服务级毒化：0.2.1 内核构造 PermissionPresetService 时 resolve(defaultPreset) 遇
+    /// 未知预设直接抛错，整个 permissionPresets 服务起不来，registerAuto 从未被调用，
+    /// 「auto」预设从未注册，auto-review bundle 永远停在 pending——权限选择器整块消失。
+    /// 旧社区包 dsh-approval-gate 的 ensureAutoApprovePreset 会把这行写进用户 patch，
+    /// 且每次启动被设置服务当作 permission.defaultPreset 的当前值自延续，只能靠删行根治。
+    /// presets 三键与 base 完全重复、无害，保留（用户可能改过其中的值）。
+    /// </summary>
+    private static string? RemoveDefaultPresetTrap(string text)
+    {
+        var lines = text.Replace("\r\n", "\n").Split('\n');
+        // 只在 - id: permission 块内动手，避免误伤其它条目的同名配置键
+        int start = -1;
+        for (var i = 0; i < lines.Length; i++)
+        {
+            if (lines[i].TrimEnd('\r').Trim() == "- id: permission")
+            {
+                start = i;
+                break;
+            }
+        }
+        if (start < 0)
+        {
+            return null;
+        }
+        int end = lines.Length;
+        for (var i = start + 1; i < lines.Length; i++)
+        {
+            if (lines[i].TrimEnd('\r').StartsWith("- "))
+            {
+                end = i;
+                break;
+            }
+        }
+        var trap = new System.Text.RegularExpressions.Regex(
+            @"^\s*defaultPreset:\s*""?auto-approve""?\s*$", System.Text.RegularExpressions.RegexOptions.Compiled);
+        var outLines = new List<string>(lines.Length);
+        var removed = false;
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i].TrimEnd('\r');
+            if (i > start && i < end && trap.IsMatch(line))
+            {
+                removed = true;
+                continue;
+            }
+            outLines.Add(line);
+        }
+        return removed ? string.Join("\n", outLines) : null;
     }
 
     // ---------------- 状态摘要（设置页展示） ----------------

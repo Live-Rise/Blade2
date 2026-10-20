@@ -694,7 +694,7 @@ public sealed partial class MainWindow
             targets.Add(projectRoot);
         }
 
-        var nameBox = new TextBox { Header = L("名称"), PlaceholderText = "kebab-case，例如 pdf-report" };
+        var nameBox = new TextBox { Header = L("名称"), PlaceholderText = L("kebab-case，例如 pdf-report") };
         Aut(nameBox, "SkillNameBox", L("技能名称"));
         var descBox = new TextBox { Header = L("说明（必填）"), PlaceholderText = L("一句话说明这个技能做什么；调用时会显示它") };
         Aut(descBox, "SkillDescBox", L("技能说明"));
