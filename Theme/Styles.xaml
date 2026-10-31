@@ -167,7 +167,10 @@
         </Setter>
     </Style>
 
-    <!-- ============ 状态徽标（phase / activation / activity 等枚举值） ============ -->
+    <!-- ============ 状态徽标（phase / activation / activity 等枚举值） ============
+         当前无使用点。注意：CornerPill(24) 只在高度 ≥48 时才是真胶囊；自适应高的
+         Border 端头会被 WinUI 钳成半椭圆，使用点必须挂 HookPillRadius（MainWindow
+         构造器同款）按实际高度折算半径，或像 MakeSkillReferenceChip 一样钉高=半径×2。 -->
     <Style x:Key="StatusChipStyle" TargetType="Border">
         <Setter Property="CornerRadius" Value="{ThemeResource CornerPill}" />
         <Setter Property="Padding" Value="10,3,10,3" />

@@ -1264,7 +1264,8 @@
                                                 CornerRadius="{ThemeResource CornerPill}"
                                                 Padding="{ThemeResource ChipPaddingCompact}"
                                                 AutomationProperties.AutomationId="PlanChip">
-                                            <StackPanel Orientation="Horizontal" Spacing="{ThemeResource Space6}">
+                                            <StackPanel Orientation="Horizontal" Spacing="{ThemeResource Space6}"
+                                                        VerticalAlignment="Center">
                                                 <FontIcon Glyph="&#xE9D5;" FontSize="{ThemeResource GlyphSizeCaption}" />
                                                 <TextBlock x:Name="PlanChipText" Text="计划模式" Style="{StaticResource ChipTextStyle}" />
                                                 <Button x:Name="PlanChipExit" Content="退出" Click="OnPlanToggleClick"

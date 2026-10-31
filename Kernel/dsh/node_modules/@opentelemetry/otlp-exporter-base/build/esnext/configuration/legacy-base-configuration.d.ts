@@ -1,0 +1,52 @@
+import type { MeterProvider } from '@opentelemetry/api';
+import type { HeadersFactory } from './otlp-http-configuration';
+export interface OTLPExporterConfigBase {
+    /**
+     * Custom headers that will be attached to the HTTP request that's sent to the endpoint.
+     *
+     * @remarks
+     * Prefer using a plain object over a factory function wherever possible.
+     * A factory function may be async and MUST NOT throw errors.
+     * It should return a string map containing the headers to add to the request.
+     *
+     * @example <caption> Using headers options directly: </caption>
+     * headers: {
+     *  Authorization: "Api-Token my-secret-token",
+     * }
+     *
+     * @example <caption> Using a custom factory function </caption>
+     * headers: async () => {
+     *   return {
+     *     Authorization: `Bearer ${token}`,
+     *   };
+     * };
+     */
+    headers?: Record<string, string> | HeadersFactory;
+    /**
+     * Collector endpoint URL for the exporter.
+     *
+     * @remarks
+     * Defaults to the signal-specific endpoint, such as
+     * `http://localhost:4318/v1/traces`, `http://localhost:4318/v1/metrics`,
+     * or `http://localhost:4318/v1/logs`.
+     */
+    url?: string;
+    /**
+     * Maximum number of in-flight export requests.
+     *
+     * @defaultValue 30
+     */
+    concurrencyLimit?: number;
+    /**
+     * Maximum time, in milliseconds, the OTLP exporter will wait for each batch export.
+     *
+     * @defaultValue 10000
+     */
+    timeoutMillis?: number;
+    /**
+     * MeterProvider to record metrics for the exporter itself.
+     * @experimental This option is experimental and is subject to breaking changes in minor releases.
+     */
+    selfObsMeterProvider?: MeterProvider;
+}
+//# sourceMappingURL=legacy-base-configuration.d.ts.map

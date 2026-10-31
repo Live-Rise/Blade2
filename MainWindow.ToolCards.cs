@@ -996,6 +996,8 @@ public sealed partial class MainWindow
 
     private Border MakeChip(string text, Brush brush, bool mono, string id)
     {
+        // 垂直居中：横向 StackPanel 会把矮 chip 拉伸到与同行最高项等高，TextBlock
+        // 默认 Stretch、文本从盒顶开始渲染，不居中的话 mono 短 chip 的文字全贴顶。
         var tb = new TextBlock
         {
             Text = text,
@@ -1003,6 +1005,7 @@ public sealed partial class MainWindow
             Foreground = brush,
             TextTrimming = TextTrimming.CharacterEllipsis,
             MaxWidth = 280,
+            VerticalAlignment = VerticalAlignment.Center,
         };
         if (mono)
         {
@@ -1012,14 +1015,24 @@ public sealed partial class MainWindow
         AutomationProperties.SetAutomationId(tb, id);
         // 全圆角（胶囊）：卡内状态/用时/差异统计 chip 一律椭圆端头。此前写死 4，与同行
         // 技能引用 chip 的胶囊端头并排时一方一圆，形状语言不统一。
-        return new Border
+        var chip = new Border
         {
             Child = tb,
             Background = SoftBrushFrom(brush, 0.1),
             CornerRadius = new CornerRadius(TokenDouble("RadiusPill", 24)),
             Padding = new Thickness(Sp4, 1, Sp4, 1),
         };
+        HookPillRadius(chip);
+        return chip;
     }
+
+    /// <summary>正椭圆端头：半径必须恰好是高的一半。WinUI 对超出尺寸的圆角按角分别
+    /// 钳制（rx 钳到宽/2、ry 钳到高/2，不做 CSS 式等比缩放），RadiusPill(24) 配上
+    /// 十几 dip 高的 chip 时端头半圆被拉成半椭圆，glob pattern 这类短文本 chip 整体
+    /// 就呈椭圆。高度随内容/同行拉伸走的元素只能按实测高度折算；圆角不参与布局，
+    /// SizeChanged 不会因改半径而重入。</summary>
+    private static void HookPillRadius(Border pill)
+        => pill.SizeChanged += (_, _) => pill.CornerRadius = new CornerRadius(pill.ActualHeight / 2);
 
     /// <summary>通用输入/输出块：标签 + 等宽正文（错误态用 Error 色）。</summary>
     private void AppendIoBlock(StackPanel body, string label, string text, bool isError)

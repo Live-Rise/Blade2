@@ -244,7 +244,8 @@ public sealed partial class MainWindow
 
     /// <summary>
     /// 重试：取消上一轮 → 收掉半成品（旧内核进程 / 旧 RPC 连接 / 旧长驻流标记）→ 重新引导。
-    /// 旧宿主必须换新：上一轮的内核进程可能还在，复用它第二次 StartAsync 会互相抢占。
+    /// 旧内核必须杀：这一轮引导失败说明它可能半坏（attach 探活只证 HTTP 面），复用会原地转圈；
+    /// 正常退出的保活内核不走这里（Shutdown 的 Dispose 只放句柄不杀进程）。
     /// </summary>
     private async Task RestartKernelBootAsync()
     {
@@ -263,6 +264,7 @@ public sealed partial class MainWindow
                 // 旧连接已断的情况下 Dispose 也会抛；收不掉就算了，新连接照样能建
             }
         }
+        _kernel.KillAndClear();
         _kernel.Dispose();
         _kernel = new DshKernelHost();
         // 长驻流标记按旧连接作废：否则新一轮 RefreshWorkspaces/OpenSessionControl 会误判"已开"

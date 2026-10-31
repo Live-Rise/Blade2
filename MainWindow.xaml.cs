@@ -2779,6 +2779,10 @@ public sealed partial class MainWindow : Window
 
         ChatList.ItemsSource = _visibleMessages;
         InitTurnRail(); // 右侧历史快速定位（turn rail）：事件与数据源一次性挂接
+        // 正椭圆端头挂钩：这两枚胶囊的高度由同行布局/字体缩放决定，CornerPill(24)
+        // 不是任何实际高度的一半，端头会被拉成半椭圆（见 HookPillRadius 注释）。
+        HookPillRadius(SearchPillSurface);
+        HookPillRadius(PlanChip);
         ChatList.ContainerContentChanging += (_, args) =>
         {
             if (args.ItemContainer is not { } container)
@@ -3001,8 +3005,9 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// 内核异步引导本体：全程静默（无进度上报、无加载显示），任一步失败都收敛到主页失败卡
-    /// （原因 + 重试钮）+ 系统通知。ct 是硬取消（重试/关窗）：中途 await 被取消即刻返回，
-    /// 内核进程由 <see cref="_kernel"/> 的处置权收回（重试时新建宿主，关窗时 Dispose）。
+    /// （原因 + 重试钮）+ 系统通知。ct 是硬取消（重试/关窗）：中途 await 被取消即刻返回。
+    /// 内核优先探活复用常驻实例（TryAttachResidentAsync），冷启产物本身也登记常驻——
+    /// 退出保活、重试才杀（KillAndClear）。
     /// </summary>
     private async Task RunKernelBootCoreAsync(CancellationToken ct)
     {
@@ -3016,44 +3021,72 @@ public sealed partial class MainWindow : Window
             // 建家目录失败（权限/磁盘满）不在这里报：内核启动阶段的失败信息会把后果带出来
         }
 
-        // 默认插件引导（幂等）：缺失的包走内核 CLI 安装、挂载条目写入 profile patch 层。
-        // 必须先于内核启动——patch 引用的包不就绪会让内核加载失败；失败只记诊断不阻塞裸启动。
-        // 首次启动要拉十几个包（pnpm 直跑，可能几分钟）：这段时间界面全可用且无任何加载显示，
-        // 用户此时发送的消息会静默排队（见 SendAsync），引导完成后自动补发。
-        // 安装进度上「关于」页内核加载行（首启拉包是最长的一步，给个刻度方便检查）。
-        try
+        // 常驻内核优先：上次退出留活的内核（DSH_HOME 状态文件记 pid/url/版本/exe 路径）
+        // 探活复用——冷启 ~6.6s 的模块装载风暴整段跳过，重连亚秒级。版本不符/pid 已死/
+        // 探活失败都在 Attach 内部回收（按记录路径杀树，防 pid 复用误杀）后返回 null 走冷启。
+        var url = await _kernel.TryAttachResidentAsync(dshHome, ct);
+        if (url is not null)
         {
-            var node = DshKernelHost.BundledNode;
-            if (node is not null)
+            // 复用路径插件引导挪后台：常驻内核早已装载完插件，EnsureAsync（幂等）此刻只可能
+            // 是修补（缺包重装/挂载条目），不阻塞首屏——boot 计时里省掉这段串行 ~100ms。
+            _ = Task.Run(async () =>
             {
-                var pluginProgress = new Progress<DshPluginBootstrap.PluginInstallProgress>(p => BootPluginProgress(p.Ready, p.Total));
-                var bootDiag = await DshPluginBootstrap.EnsureAsync(dshHome, node, DshKernelHost.BundledBinDir, pluginProgress, ct);
-                if (bootDiag.Length > 0)
+                try
                 {
-                    System.Diagnostics.Debug.WriteLine($"[plugin-bootstrap] {bootDiag.TrimEnd()}");
+                    var node = DshKernelHost.BundledNode;
+                    if (node is not null)
+                    {
+                        await DshPluginBootstrap.EnsureAsync(dshHome, node, DshKernelHost.BundledBinDir, null, CancellationToken.None);
+                    }
                 }
+                catch (Exception)
+                {
+                    // 修补失败不影响本轮（内核照常能用）；诊断落 DSH_HOME\logs\plugin-bootstrap.log
+                }
+            });
+        }
+        else
+        {
+            // 默认插件引导（幂等）：缺失的包走内核 CLI 安装、挂载条目写入 profile patch 层。
+            // 必须先于内核启动——patch 引用的包不就绪会让内核加载失败；失败只记诊断不阻塞裸启动。
+            // 首次启动要拉十几个包（pnpm 直跑，可能几分钟）：这段时间界面全可用且无任何加载显示，
+            // 用户此时发送的消息会静默排队（见 SendAsync），引导完成后自动补发。
+            // 安装进度上「关于」页内核加载行（首启拉包是最长的一步，给个刻度方便检查）。
+            try
+            {
+                var node = DshKernelHost.BundledNode;
+                if (node is not null)
+                {
+                    var pluginProgress = new Progress<DshPluginBootstrap.PluginInstallProgress>(p => BootPluginProgress(p.Ready, p.Total));
+                    var bootDiag = await DshPluginBootstrap.EnsureAsync(dshHome, node, DshKernelHost.BundledBinDir, pluginProgress, ct);
+                    if (bootDiag.Length > 0)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[plugin-bootstrap] {bootDiag.TrimEnd()}");
+                    }
+                }
+                BootMilestone(L("默认插件就绪"));
             }
-            BootMilestone(L("默认插件就绪"));
-        }
-        catch (Exception)
-        {
-            // 引导失败不阻塞内核裸启动；诊断已落 DSH_HOME\logs\plugin-bootstrap.log
-            BootMilestone(L("默认插件就绪（检查失败，裸启动）"));
-        }
+            catch (Exception)
+            {
+                // 引导失败不阻塞内核裸启动；诊断已落 DSH_HOME\logs\plugin-bootstrap.log
+                BootMilestone(L("默认插件就绪（检查失败，裸启动）"));
+            }
 
-        // 先收上次异常退出残留的内核：它还占着会话目录的写租约，新一轮 resume 同一条会话
-        // 会撞 SessionAlreadyOwnedError——闪退后重进会话"发送失败"的根因就在这里。
-        // 只杀父进程链上没有活 Blade² 的本安装内核（见 SweepOrphanKernels），不动别的 node。
-        // 必须串行在内核 spawn 之前完成：清扫的进程快照是时点数据，spawn 后才出现的进程
-        // 不在快照里——0.8.3.2 曾把清扫与内核拉起重叠，慢机器上清扫拖到 URL 打印之后才
-        // 枚举到新内核，凭"祖先链未知"误杀（首发日"Unable to connect"失败卡的根因）；
-        // HasLiveAppAncestor 的"祖先未知不判死"是第二道保险，这道时序是第一道。
-        var sweptKernels = DshKernelHost.SweepOrphanKernels();
-        if (sweptKernels > 0)
-        {
-            System.Diagnostics.Debug.WriteLine($"[kernel] 收掉异常退出残留的内核进程 {sweptKernels} 个");
+            // 冷启前先收异常退出残留的内核：它还占着会话目录的写租约，新一轮 resume 同一条
+            // 会话会撞 SessionAlreadyOwnedError——闪退后重进会话"发送失败"的根因之一。
+            // 只杀父进程链上没有活 Blade² 的本安装内核（见 SweepOrphanKernels），不动别的 node；
+            // attach 成功时跳过整段（常驻内核在清扫眼里就是"孤儿"，不能扫）。
+            // 必须串行在内核 spawn 之前完成：清扫的进程快照是时点数据，spawn 后才出现的进程
+            // 不在快照里——0.8.3.2 曾把清扫与内核拉起重叠，慢机器上清扫拖到 URL 打印之后才
+            // 枚举到新内核，凭"祖先链未知"误杀（首发日"Unable to connect"失败卡的根因）；
+            // HasLiveAppAncestor 的"祖先未知不判死"是第二道保险，这道时序是第一道。
+            var sweptKernels = DshKernelHost.SweepOrphanKernels();
+            if (sweptKernels > 0)
+            {
+                System.Diagnostics.Debug.WriteLine($"[kernel] 收掉异常退出残留的内核进程 {sweptKernels} 个");
+            }
+            url = await _kernel.StartAsync(dshHome, ct);
         }
-        var url = await _kernel.StartAsync(dshHome, ct);
         if (url is null)
         {
             FailKernelBoot(_kernel.IsBundled
@@ -8079,12 +8112,13 @@ public sealed partial class MainWindow : Window
                     PostUi(() => AppendSystemMessage(LF("有 {0} 张图片无法按图片识别，已改为文件发送：{1}", names.Count, string.Join("、", names))));
                 }
             }
-            catch (DshRpcException ex) when (DshKernelHost.IsSessionLeaseBusy(ex) && DshKernelHost.SweepOrphanKernels() > 0)
+            catch (DshRpcException ex) when (DshKernelHost.IsSessionLeaseBusy(ex) && DshKernelHost.SweepOrphanKernels(_kernel.KernelPid) > 0)
             {
                 // 上一次异常退出残留的内核还占着这条会话的写租约（resume failed:
                 // SessionAlreadyOwnedError）。把它当"发送失败"报给用户解决不了问题——清掉残留
                 // 进程、租约随进程死亡释放，再发一次才对。此刻本轮什么都还没落（回显在下面、
                 // 认领登记也走不到），重发零副作用；扫不到残留则放过，照旧走下面的失败分支。
+                // 豁免当前内核 pid：常驻复用的内核父进程是上一次的壳（已死），不豁免会把自己杀掉。
                 await Task.Delay(300); // 等进程连同它的 semaphore 一起消失
                 content = await BuildContentAsync();
                 await SendPromptAsync();
@@ -19485,6 +19519,8 @@ public sealed partial class MainWindow : Window
             StopSkinVideo();            // 视频皮肤播放器占着媒体管线，退出前释放
             StopPetRuntime();           // 关独立宠物窗口，否则壳进程赖在后台
             _rpc?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(3));
+            // 保活常驻：只放本端句柄不杀进程，下次启动探活复用（亚秒级就绪）；
+            // 真要收内核走重试路径（KillAndClear）
             _kernel.Dispose();
         }
         catch (Exception) { }

@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,14 +16,25 @@ namespace Blade2.Dsh;
 /// 启动 web 服务进程、从 stdout 捕获带 token 的 URL、管理生命周期。
 /// 内核与壳的进程契约只有两个：node bin.js web --no-open --port 0 与
 /// stdout 的 "dsh web: &lt;url&gt;" 行；升级 dsh 版本只影响 RPC 契约（DshRpcClient）。
+/// 内核常驻（0.9.0.4 起）：壳退出不再杀内核——冷启 ~6.6s 的大头是 ~200 插件的
+/// 模块装载风暴，进程级复用是唯一能到亚秒的路径。连接信息（pid/url/版本/exe 路径）
+/// 原子落 DSH_HOME 状态文件，下次启动 <see cref="TryAttachResidentAsync"/> 探活复用；
+/// 失效常驻（版本不符/pid 已死/探活失败）按记录路径杀树回收（防 pid 复用误杀），
+/// 无状态文件的崩溃残留仍由 <see cref="SweepOrphanKernels"/> 兜底。
 /// </summary>
 public sealed partial class DshKernelHost : IDisposable
 {
     private Process? _process;
 
-    /// <summary>作业对象句柄（JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE）：壳进程消失即带走内核整棵树。
-    /// 本实例存活期间必须保持开启（最后一个句柄关闭才是触发点），故只在 <see cref="Dispose"/> 里收。</summary>
-    private IntPtr _job = IntPtr.Zero;
+    /// <summary>当前内核主进程 pid（spawn 或 attach 得到）；0 = 尚无内核。
+    /// attached 内核的父进程是上一次的壳（已死），在清扫眼里就是孤儿——
+    /// 会话中途的清扫调用必须拿它豁免，否则常驻内核会被误杀。</summary>
+    internal int KernelPid => _kernelPid;
+
+    private int _kernelPid;
+
+    /// <summary>本次的数据家（状态文件落点），spawn/attach 时记下，重试清理用。</summary>
+    private string? _dshHome;
 
     /// <summary>打包内置内核的 node.exe（&lt;install&gt;\Kernel\node.exe）。</summary>
     internal static string? BundledNode =>
@@ -104,7 +117,8 @@ public sealed partial class DshKernelHost : IDisposable
             return null;
         }
         DiagLine($"spawn pid={_process.Id} node={launcher.Value.fileName}");
-        AttachToKillJob();
+        _kernelPid = _process.Id;
+        _dshHome = dshHome;
         var tcs = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var regex = UrlPattern();
 
@@ -140,14 +154,245 @@ public sealed partial class DshKernelHost : IDisposable
         {
             DiagLine("[timeout] no url in 90s, killing");
             try { _process.Kill(entireProcessTree: true); } catch (Exception) { }
+            DeleteResidentState(dshHome);
             return null;
         }
         var url = tcs.Task.Result;
         if (url is null)
         {
-            return null; // 进程已退出；日志由 _process.ExitCode/诊断覆盖
+            // 进程已退出；日志由 _process.ExitCode/诊断覆盖。上一轮的状态文件随之作废
+            DeleteResidentState(dshHome);
+            return null;
         }
+        // URL 到手即登记常驻：壳退出后内核继续活，下次启动直接复用
+        WriteResidentState(dshHome, new ResidentState
+        {
+            pid = _process.Id,
+            url = url,
+            exe = TryGetProcessPath(_process),
+            ver = BundledDshVersion() ?? "",
+        });
+        DiagLine($"[resident] state written pid={_process.Id}");
         return url;
+    }
+
+    /// <summary>
+    /// 常驻内核复用：读状态文件 → 版本守卫（升级/降级后旧内核代码不同，不复用）→
+    /// pid 活性 + exe 路径核对（防 pid 被无关进程复用）→ HTTP 探活（带 token GET，
+    /// 200 = 服务在位）。任一环失败：能确定身份的按记录路径杀树回收，然后返回 null
+    /// 走冷启；探活只证 HTTP 面，RPC/mux 面由引导链既有的重试兜（真坏了重试钮兜底）。
+    /// </summary>
+    public async Task<string?> TryAttachResidentAsync(string dshHome, CancellationToken ct = default)
+    {
+        var st = ReadResidentState(dshHome);
+        if (st is null || st.pid <= 0 || string.IsNullOrEmpty(st.url))
+        {
+            return null;
+        }
+        _dshHome = dshHome;
+        var current = BundledDshVersion();
+        if (current is null || !string.Equals(current, st.ver, StringComparison.Ordinal))
+        {
+            DiagLine($"[resident] version skew state={st.ver} current={current} -> recycle");
+            RecycleResident(st);
+            return null;
+        }
+        Process? proc;
+        try
+        {
+            proc = Process.GetProcessById(st.pid);
+        }
+        catch (ArgumentException)
+        {
+            DiagLine("[resident] pid gone -> cold");
+            DeleteResidentState(dshHome);
+            return null;
+        }
+        var path = TryGetProcessPath(proc);
+        if (path is null || !PathsEqual(path, st.exe))
+        {
+            // pid 活着但不是那个内核（复用给了别的进程）：身份对不上不杀，只清状态
+            DiagLine($"[resident] pid {st.pid} reused by other process -> cold");
+            proc.Dispose();
+            DeleteResidentState(dshHome);
+            return null;
+        }
+        var ok = false;
+        try
+        {
+            using var http = new HttpClient(new HttpClientHandler { UseProxy = false })
+            {
+                Timeout = TimeSpan.FromSeconds(2),
+            };
+            using var resp = await http.GetAsync(st.url, ct).ConfigureAwait(false);
+            ok = resp.IsSuccessStatusCode;
+        }
+        catch (Exception)
+        {
+            // 连接拒绝/超时/取消都算探活失败
+        }
+        if (!ok)
+        {
+            DiagLine("[resident] probe failed -> recycle");
+            proc.Dispose();
+            RecycleResident(st);
+            return null;
+        }
+        _process = proc;
+        _kernelPid = proc.Id;
+        DiagLine($"[resident] attached pid={proc.Id}");
+        return st.url;
+    }
+
+    /// <summary>重试用：这轮内核可能半坏（探活只证 HTTP 面），收掉整棵树并清状态，
+    /// 下一次引导冷启。正常退出不走这里——<see cref="Dispose"/> 保活。</summary>
+    public void KillAndClear()
+    {
+        try
+        {
+            if (_process is { HasExited: false })
+            {
+                _process.Kill(entireProcessTree: true);
+            }
+        }
+        catch (Exception) { }
+        if (_dshHome is not null)
+        {
+            DeleteResidentState(_dshHome);
+        }
+    }
+
+    /// <summary>按状态文件的记录杀常驻内核：exe 路径逐字核对，pid 复用到无关进程时绝不误杀。</summary>
+    private static void RecycleResident(ResidentState st)
+    {
+        if (!string.IsNullOrEmpty(st.exe))
+        {
+            try
+            {
+                using var proc = Process.GetProcessById(st.pid);
+                var path = TryGetProcessPath(proc);
+                if (path is not null && PathsEqual(path, st.exe))
+                {
+                    proc.Kill(entireProcessTree: true);
+                }
+            }
+            catch (Exception)
+            {
+                // 已退出/权限不足：无可回收
+            }
+        }
+        if (st.Home is not null)
+        {
+            DeleteResidentState(st.Home);
+        }
+    }
+
+    private static string? TryGetProcessPath(Process proc)
+    {
+        try
+        {
+            return proc.MainModule?.FileName;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private static bool PathsEqual(string a, string b)
+    {
+        try
+        {
+            return string.Equals(
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(a)),
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(b)),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>打包内置内核的版本（Kernel\dsh\package.json 的 version）——
+    /// 常驻复用的版本守卫用它对状态文件；读不到返回 null（守卫按不匹配处理，走冷启）。</summary>
+    internal static string? BundledDshVersion()
+    {
+        try
+        {
+            var p = Path.Combine(AppContext.BaseDirectory, "Kernel", "dsh", "package.json");
+            if (!File.Exists(p))
+            {
+                return null;
+            }
+            using var doc = JsonDocument.Parse(File.ReadAllText(p));
+            return doc.RootElement.TryGetProperty("version", out var v) ? v.GetString() : null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private sealed class ResidentState
+    {
+        /// <summary>写状态时的数据家，回收时清文件用（读旧状态缺该字段则为 null）。</summary>
+        public string? Home { get; set; }
+        public int pid { get; set; }
+        public string url { get; set; } = "";
+        public string exe { get; set; } = "";
+        public string ver { get; set; } = "";
+    }
+
+    private static string ResidentStatePath(string dshHome) =>
+        Path.Combine(dshHome, "blade2-resident-kernel.json");
+
+    private static ResidentState? ReadResidentState(string dshHome)
+    {
+        try
+        {
+            var p = ResidentStatePath(dshHome);
+            if (!File.Exists(p))
+            {
+                return null;
+            }
+            var st = JsonSerializer.Deserialize<ResidentState>(File.ReadAllText(p));
+            if (st is not null)
+            {
+                st.Home = dshHome;
+            }
+            return st;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private static void WriteResidentState(string dshHome, ResidentState st)
+    {
+        try
+        {
+            Directory.CreateDirectory(dshHome);
+            var p = ResidentStatePath(dshHome);
+            var tmp = p + ".tmp";
+            st.Home = dshHome;
+            File.WriteAllText(tmp, JsonSerializer.Serialize(st));
+            File.Move(tmp, p, overwrite: true);
+        }
+        catch (Exception)
+        {
+            // 写不进（权限/磁盘）：本轮照常用，下次冷启，不影响功能
+        }
+    }
+
+    private static void DeleteResidentState(string dshHome)
+    {
+        try
+        {
+            File.Delete(ResidentStatePath(dshHome));
+        }
+        catch (Exception) { }
     }
 
     /// <summary>内核启动观测仪：0.8.3.3 起的"Unable to connect"失败卡需要内核侧 stdout/
@@ -166,101 +411,18 @@ public sealed partial class DshKernelHost : IDisposable
         }
     }
 
+    /// <summary>正常退出（关窗/系统关机/Shutdown）：内核保活常驻，只释放本端的进程句柄——
+    /// 下次启动 <see cref="TryAttachResidentAsync"/> 探活复用，模块装载风暴整段跳过。
+    /// 需要真正收内核（引导失败重试）走 <see cref="KillAndClear"/>。</summary>
     public void Dispose()
     {
         try
         {
-            if (_process is { HasExited: false })
-            {
-                _process.Kill(entireProcessTree: true);
-            }
             _process?.Dispose();
         }
-        catch (Exception)
-        {
-            // 内核可能已自行退出；无需处理。
-        }
-        finally
-        {
-            // 作业对象句柄关闭即触发 KILL_ON_JOB_CLOSE：正常退出也确保内核整棵树彻底消失
-            if (_job != IntPtr.Zero)
-            {
-                NativeMethods.CloseHandle(_job);
-                _job = IntPtr.Zero;
-            }
-        }
-    }
-
-    /// <summary>
-    /// 把内核进程挂进"壳亡即杀"的作业对象。内核持有每条会话目录的写租约（内核进程死亡才释放），
-    /// 壳 hard crash 时子进程不会跟着退：不套这层，崩溃一次就留一个占着租约的孤儿内核，
-    /// 之后重进同一条会话必撞 SessionAlreadyOwnedError（resume failed），写操作全废。
-    /// 句柄保留到 <see cref="Dispose"/>——KILL_ON_JOB_CLOSE 的触发点正是"最后一个句柄关闭"。
-    /// 任一步失败都只静默退出：内核照常能用，只是少了这层保底（仍有 <see cref="SweepOrphanKernels"/> 兜底）。
-    /// </summary>
-    private void AttachToKillJob()
-    {
-        try
-        {
-            var job = NativeMethods.CreateJobObjectW(IntPtr.Zero, null);
-            if (job == IntPtr.Zero)
-            {
-                return;
-            }
-            var info = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION
-            {
-                BasicLimitInformation = new JOBOBJECT_BASIC_LIMIT_INFORMATION
-                {
-                    LimitFlags = NativeMethods.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-                },
-            };
-            var length = Marshal.SizeOf<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>();
-            var ptr = Marshal.AllocHGlobal(length);
-            try
-            {
-                Marshal.StructureToPtr(info, ptr, false);
-                if (!NativeMethods.SetInformationJobObject(
-                        job, NativeMethods.JobObjectExtendedLimitInformation, ptr, (uint)length))
-                {
-                    NativeMethods.CloseHandle(job);
-                    return;
-                }
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(ptr);
-            }
-            try
-            {
-                if (!NativeMethods.AssignProcessToJobObject(job, _process!.Handle))
-                {
-                    // 已在别的作业里（宿主/沙箱场景）：别人的作业不改，只收掉自己这个空作业
-                    System.Diagnostics.Debug.WriteLine(
-                        $"[kernel] 挂作业失败（可能已在别的作业里）Win32Error={Marshal.GetLastWin32Error()}");
-                    NativeMethods.CloseHandle(job);
-                    return;
-                }
-                // 套没套上必须回头看：这类静默失败不抛异常，只有实机杀掉壳进程才暴露得出来
-                if (!NativeMethods.IsProcessInJob(_process.Handle, job, out var armed) || !armed)
-                {
-                    System.Diagnostics.Debug.WriteLine(
-                        $"[kernel] 作业未生效 Win32Error={Marshal.GetLastWin32Error()}，内核崩溃残留将依赖启动清扫兜底");
-                    NativeMethods.CloseHandle(job);
-                    return;
-                }
-            }
-            catch (Exception)
-            {
-                // 取不到进程句柄（已退出/权限）：作业留着也没人可杀，关掉
-                NativeMethods.CloseHandle(job);
-                throw;
-            }
-            _job = job;
-        }
-        catch (Exception)
-        {
-            // 保底层缺失不影响内核本体
-        }
+        catch (Exception) { }
+        _process = null;
+        _kernelPid = 0;
     }
 
     /// <summary>
@@ -274,18 +436,20 @@ public sealed partial class DshKernelHost : IDisposable
             || ex.Message.Contains("already owned by an active write handle", StringComparison.Ordinal));
 
     /// <summary>
-    /// 清理上次异常退出残留的内核进程。套了作业对象（<see cref="AttachToKillJob"/>）后不该再有新的孤儿，
-    /// 但升级过来的机器上还留着老版本崩溃时留下的：它占着会话写租约，新内核 resume 同一条会话就撞
-    /// SessionAlreadyOwnedError。判定只认两条硬条件，缺一不杀——
-    /// 可执行路径正是本安装的 Kernel\node.exe，且父进程链上没有任何活着的 Blade²
-    /// （并发第二个实例的内核父进程还活着，绝不动；别的 node 进程路径对不上，也绝不动）。
+    /// 清理残留内核进程（本安装 Kernel\node.exe 且父进程链上没有活着的 Blade²）。
+    /// 常驻设计（0.9.0.4）下壳正常退出也留内核：它占着会话写租约正是复用的前提，
+    /// 会话中途的清扫调用必须传 <paramref name="sparePid"/>（当前内核 pid）豁免；
+    /// 引导期清扫发生在 attach 之后，要么已复用（跳过清扫）要么已回收（无需豁免）。
+    /// 判定只认两条硬条件，缺一不杀——可执行路径正是本安装的 Kernel\node.exe，
+    /// 且父进程链上没有任何活着的 Blade²（并发第二个实例的内核父进程还活着，绝不动；
+    /// 别的 node 进程路径对不上，也绝不动）。
     /// </summary>
     /// <returns>杀掉的内核主进程数。</returns>
-    public static int SweepOrphanKernels()
+    public static int SweepOrphanKernels(int sparePid = 0)
     {
         try
         {
-            return SweepOrphanKernelsCore();
+            return SweepOrphanKernelsCore(sparePid);
         }
         catch (Exception)
         {
@@ -294,7 +458,7 @@ public sealed partial class DshKernelHost : IDisposable
         }
     }
 
-    private static int SweepOrphanKernelsCore()
+    private static int SweepOrphanKernelsCore(int sparePid)
     {
         var bundled = BundledNode;
         if (bundled is null)
@@ -307,6 +471,10 @@ public sealed partial class DshKernelHost : IDisposable
         {
             try
             {
+                if (proc.Id == sparePid)
+                {
+                    continue; // 本轮在用/常驻内核：调用方点名豁免
+                }
                 string? path;
                 try
                 {
@@ -436,67 +604,10 @@ public sealed partial class DshKernelHost : IDisposable
         public string szExeFile;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct JOBOBJECT_BASIC_LIMIT_INFORMATION
-    {
-        public long PerProcessUserTimeLimit;
-        public long PerJobUserTimeLimit;
-        public uint LimitFlags;
-        public UIntPtr MinimumWorkingSetSize;
-        public UIntPtr MaximumWorkingSetSize;
-        public uint ActiveProcessLimit;
-        public UIntPtr Affinity;
-        public uint PriorityClass;
-        public uint SchedulingClass;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct IO_COUNTERS
-    {
-        public ulong ReadOperationCount;
-        public ulong WriteOperationCount;
-        public ulong OtherOperationCount;
-        public ulong ReadTransferCount;
-        public ulong WriteTransferCount;
-        public ulong OtherTransferCount;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION
-    {
-        public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
-        public IO_COUNTERS IoInfo;
-        public UIntPtr ProcessMemoryLimit;
-        public UIntPtr JobMemoryLimit;
-        public UIntPtr PeakProcessMemoryUsed;
-        public UIntPtr PeakJobMemoryUsed;
-    }
-
     private static partial class NativeMethods
     {
         internal static readonly IntPtr INVALID_HANDLE_VALUE = new(-1);
-        internal const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
         internal const uint TH32CS_SNAPPROCESS = 0x00000002;
-        // JOBOBJECTINFOCLASS::JobObjectExtendedLimitInformation。传错类（如 2 与 144 字节的
-        // 扩展结构长度不匹配）SetInformationJobObject 会以 ERROR_BAD_LENGTH 静默失败，
-        // 结果就是作业没套上、内核照样留孤儿——这类失败不抛异常，只能靠实机验证兜。
-        internal const int JobObjectExtendedLimitInformation = 9;
-
-        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-        internal static extern IntPtr CreateJobObjectW(IntPtr jobAttributes, string? name);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        internal static extern bool SetInformationJobObject(
-            IntPtr job, int infoClass, IntPtr info, uint length);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        internal static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        internal static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool result);
 
         [DllImport("kernel32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
