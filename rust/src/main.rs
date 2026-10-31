@@ -47,8 +47,10 @@ use blade2_rs::kernel::{
     History, InteractionLedger, Kernel, Launch, MessageDetails, ModelRetryState, PermissionOption,
     PickOutcome, PlanProjection, Projections, RpcCall, RunStatsLedger, ScheduleRecord,
     TrajectoryLedger,
-    PLAN_REVIEW_ID, QUESTION_EVENT, QuestionDraft, SessionInfo, SettingsNamespace, UsageAggregate,
-    UsageError,
+    PLAN_REVIEW_ID, QUESTION_EVENT, QuestionDraft, SessionInfo, SettingsNamespace,
+    UsageAggregate, UsageError,
+    // 宠物插件（@linxin666/dsh-pet）只读路由的解析器（主干 `DshPetClient.cs` 那两发的回执读法）。
+    PetListEntry, parse_pet_active_id, parse_pet_list,
     // #136 A 档（MR3）剩下的两发（R1 `settings/describe` + R2 `credentials/describe`）：构造器与
     // 解析器**一律**取 `kernel.rs` 那几颗 —— 参数形状只有一处定义，端点名字面量因此不进本文件
     // （本文件的计数型源码锁按这条口径写，见 §3 的锁台账）。第三发 R3 的那两颗（构造器与
@@ -64,11 +66,16 @@ use blade2_rs::kernel::{
     // 同样**只**从 `kernel.rs` 的构造器取（`{agentId, agentPreset}` 平铺两颗），本文件不写
     // 那根方法名 wire 字面量、不手搓第二份 `json!`（口径逐字同上三发 #136 A 档）。
     agent_presets_select,
+    // 本刀（设置页预设卡）：`agentPresets/read`（查看组装）与 `settings/update`
+    // （设为默认）两发构造器同口径从 `kernel.rs` 取，wire 字面量不进本文件。
+    agent_presets_read, settings_update,
+    // 本刀（模型页提供方行卡）：目录构造器/解析器与凭据状态读法同样取 `kernel.rs`。
+    llm_list_configurable_providers, parse_configurable_providers,
     // #140 B-2a（设置页自动保存流水线）：两发写腿的构造器同样**只**从 `kernel.rs` 取 ⇒
     // `settings/mutate` 与 `credentials/set` 那两根端点字面量、`{ns, ops}` 与 `{ref, value}`
     // 两套参数形状都不进本文件（口径逐字同上；ops 那棵树由 `settings_op_set` 造，本文件
     // 只递 `path` 与 `value`，不手搓 `json!({"op":"set", …})` 第二通道）。
-    credentials_set, settings_mutate, settings_op_set,
+    credentials_set, credentials_unset, settings_mutate, settings_op_set, settings_op_unset,
     // #190 P3（刀 P3 · 壳层）：权限目录那一发的**构造器 / 回执结构体 / 解析器**同样一律取
     // `kernel.rs`（P1 已落）⇒ 本文件不手写第二份 `json!`、方法名那根 wire 字面量不进本文件。
     // `EVENTS_SUBSCRIPTIONS` 是事件登记表的**唯一事实源**：本文件只从它里面**选取**目录变化
@@ -252,12 +259,6 @@ enum Msg {
     /// 拷视频槽 → 删图片槽（单槽对称）；主干「立即开播」那一步分叉没有播放器，
     /// 改为后台抽海报帧（`skinvideo`，备案偏差），抽好走 [`Msg::SkinPoster`] 上屏。
     SkinVideoImportPick,
-    /// 自动审批二级页「判定模型」那颗下拉的选中（主干 `AddAutoApprovalModelCardAsync` 的
-    /// `box.SelectionChanged`，`MW:14669-14686`）。载荷是目录行**下标**而不是模型 id：
-    /// 选项整表由 `session/modelCatalog` 现铺，下标口径与 [`Msg::Pick`] 一致（显示串过
-    /// `catalog.l`，换语言不会把选择弹回去）。落点 = 默认模型两格**成对**写，见
-    /// [`APPROVAL_MODEL_PROVIDER_KEY`] 头顶那段。
-    ApprovalModel(usize),
     /// 海报帧的回执：`Ok(Some)` = 海报路径入皮肤槽（**只在 `skin_path` 还空着时**——
     /// 启动那发迟到时用户可能已导入图片，图片优先是主干 `LoadSavedSkin` 的单槽语义）；
     /// `Ok(None)` = 条件不满足（无视频槽 / 图片优先），静默；`Err` = 导入那一腿的抽帧失败，
@@ -363,25 +364,35 @@ enum Msg {
     Number(String, f64),
     FontStep(f64),
     Pick(String, usize),
+    /// 下拉的**程序化回声**：reactor 的 `SelectionChanged` 对 `selected_index` 的
+    /// 编程赋值同样会触发（WinUI 原生行为，主干 `MakeChoiceField:10697-10705` 的注释
+    /// 「初始赋值会触发 SelectionChanged」+ `ready` 闸就是为它装的）。回调侧认出
+    /// 「这一发 = 本帧自己刚渲染进去的那个下标」后改投这一枚，reducer 臂**整发吞掉**
+    /// —— 不吞的话，快照落地前的首帧把 fallback 下标永久写进 [`Shell::picks`]，
+    /// 之后 [`Shell::choice_index`] 的 pending 档永远压住内核快照（第一轮门控：
+    /// 内核存的是 `normal`/`steer`，分叉下拉却停在 fallback「紧凑」/「排队发送」）。
+    PickEcho,
     Toggle(String, bool),
-    /// 设置页「外观」三选方块：`(被点那颗的下标, 原生回报的 IsChecked)`。
-    /// 主干是 `Click`（`MainWindow.xaml.cs:10450-10459`）：点谁选谁，遍历同行 `ToggleButton`
-    /// 把 `IsChecked` 按目标态压回去 ⇒ **重按已选中的那颗不会变 Off**。reactor 的
-    /// `ToggleButton`（`generated.rs:2297`）只有 `on_is_checked_changed(Bool)`、没有 `Click`
-    /// ⇒ 「谁被点了」只能由视图把 `SETTINGS_THEME_CUBES` 的下标编进消息，互斥与幂等都在
-    /// reducer 里做（守卫口径同 `set_feedback_rating`）。
-    ThemePick(usize, bool),
-    /// #131：统计「时间范围」那两颗分段钮：`(被点那颗的下标, 原生回报的 IsChecked)`。
-    /// 形状与守卫口径同 [`Msg::ThemePick`]（那颗的注释就是这里的理由）：reactor 的
-    /// `ToggleButton` 只有 `on_is_checked_changed(Bool)` 没有 `Click` ⇒ 互斥与幂等都在
-    /// reducer 里做。与那颗的**唯一**差别：这里不触发任何副作用（主干
-    /// `OnStatsRangeChanged` 手动重渲染那两张图，分叉是声明式整页现算 ⇒ 空转即可）。
-    StatsRange(usize, bool),
-    /// #143：热力图「Token 活动」口径那三颗分段钮：`(被点那颗的下标, 原生回报的 IsChecked)`。
-    /// 形状与守卫口径同 [`Msg::StatsRange`]（那颗的注释就是这里的理由）。与那颗一样
-    /// 不触发任何副作用：主干 `OnStatsHeatMetricChanged`（`:15139`）手动调
-    /// `RenderStatsHeatmap()`，分叉是声明式整页现算 ⇒ 写完格就够。
-    StatsHeatMetric(usize, bool),
+    /// #131：统计「时间范围」那颗 `SelectorBar` 的选中回报：载荷 = 选中 item 的**文本**，
+    /// reducer 拿档位表反查回下标（口径同插件区 `Msg::PluginsTabByText`）。主干
+    /// `OnStatsRangeChanged`（`MW:15152`）那发 `Tag` 反查不到就整个不动 ⇒ 分叉同一守卫。
+    /// 写完不触发任何副作用：主干那发手动重渲染趋势/模型两张图，分叉是声明式整页现算
+    /// ⇒ 空转即可。（原 `StatsRange(usize, bool)` 那颗：两颗 `ToggleButton` 拼分段的时代
+    /// 要 `bool` 分辨「点我」与「IsChecked 回弹」；本刀换真 `SelectorBar` —— 文字 tab、
+    /// 选中项带下划线，与主干同件 —— 回弹那回事随旧形态一起退役。）
+    StatsRangeByText(Option<String>),
+    /// #143：热力图「Token 活动」口径那颗 `SelectorBar` 的选中回报（主干
+    /// `OnStatsHeatMetricChanged`，`MW:15139`）。形状与守卫口径同 [`Msg::StatsRangeByText`]：
+    /// 文本反查不到 = 不动；写完格就够。
+    StatsHeatMetricByText(Option<String>),
+    // 插件区 Tab 与清单过滤的消息见下面的 `PluginsTabByText` / `InventoryFilter`：
+    // reactor 的 `SelectorBar` 选中回报是 item 文本、过滤框是现值字符串 —— 本刀起统计页
+    // 这两颗也走同一对形状（见上），不再各设一套。
+    /// `pluginInventory/list {}` 的回执（主干 `RenderPluginInventoryContentAsync` 那发
+    /// `CallOkAsync`，`MW:13271`）：`Ok` = 概览计数 + 条目行 + 预设组装行的全部原料，
+    /// 形状见 [`PluginInventory`]；`Err` = 主干那三个 catch 折成的
+    /// `LF("插件清单不可用：{0}", …)` 那一行（`MW:13273-13277`）。
+    PluginInventoryLoaded(Result<PluginInventory, String>),
     /// 「返回父会话」（主干 `SubagentParentButton.Click` = `OnSubagentParentClick`，
     /// `MW:16590`）：**纯本地导航，不发任何 RPC**。落点由 [`Shell::subagent_parent`]
     /// 现算（父会话不在本地台账 ⇒ 那颗钮不入树，这一发也就不会有人发）。
@@ -414,6 +425,9 @@ enum Msg {
     CompactionToggle(String),
     /// #139 件四：成员编排卡那颗 `WorkflowMembersToggle`（`:1191-1197` 翻 `list.Visibility`）。
     WorkflowToggle(String),
+    /// 上下文注入过程卡那颗 `ContextExpand` 头（主干 `BuildContextCard:1297` 的 `ToggleButton`，
+    /// Checked/Unchecked 翻 `body.Visibility`）。键 = 气泡寻址键，形态同 [`Msg::CompactionToggle`]。
+    ContextToggle(String),
     /// 交付物卡上的「打开 / 显示」：(交付事件的 seq, files 下标, open|reveal)。
     /// 主干走宿主路由 `POST /api/present.open`，不是 RPC，坐标三元组缺一不可。
     Present(i64, usize, String),
@@ -506,6 +520,29 @@ enum Msg {
     FileMenuClose,
     /// 点 ⋯ 菜单第 slot 项（下标口径 = [`FILE_MENU_ITEMS`]，与主干 `Add(...)` 那五发同序）。
     FileMenuPick(usize),
+    // ---- 工具卡行尾 ⋯ 的复制菜单（主干 `BuildToolCopyMenu` 那张 MenuFlyout）----------------
+    /// 点那颗 `ToolCopyJson` 触发钮 = 开（再点 = 收，口径同 [`Msg::FileMenuToggle`]）。
+    /// 载荷 = 气泡寻址键（菜单的五发载荷都按它现查气泡表与结果旁路表）。
+    ToolMenuToggle(String),
+    /// light-dismiss 遮罩那一发（同 [`Msg::FileMenuClose`] 的形制）。
+    ToolMenuClose,
+    /// 点菜单里的一项：`(气泡键, 槽位)`。槽位 = [`TOOL_MENU_ITEMS`] 的下标。
+    ToolMenuPick(String, usize),
+    // ---- 设置·宠物页的插件路由两发（主干 `RenderPetSection` → `ReloadPetLibraryAsync`）----
+    /// `GET api/pet/pets` + `GET api/pet/state` 的合气回执（主干那两次 await 的分叉版，
+    /// 一发后台跑完一起回）。`Err` = 路由 404（插件没挂）/ 传输失败 —— 主干同一档画空态句。
+    PetsLoaded(Result<(Vec<PetListEntry>, Option<String>), String>),
+    /// 宠物库行那颗「使用」（主干 `SelectPetAsync` → `POST api/pet/set-pet`）。
+    PetUse(String),
+    /// 宠物库行那颗「删除」（主干 `DeletePetAsync` → 确认卡 → `_petStore.Delete`）。
+    /// 第一击 = 记入待确认格（行内按钮换「确认删除」）；第二击同一只 = 真删。
+    /// ⚠ 确认形制与主干不同（主干是应用级 `ContentDialog`）：分叉的确认卡家族都是
+    /// 逐流程专设的（danger / reset / workspace 三族），这里沿用行内两击的既有轻量形制，
+    /// 语义（删前必确认）等价——记录进报告。
+    PetRemove(String),
+    /// 「使用」那发的**失败**口（主干失败那支只 `Debug.WriteLine`，UI 原样不动）。
+    /// 成功不经过这一格 —— 成功腿直接带 [`Msg::PetsLoaded`] 回来重载整卡。
+    PetUsed(Result<(), String>),
     // ---- #240 输入区「+」的 `ComposerAddFlyout` ------------------------------------------
     // 主干它是一张系统 `MenuFlyout`（`MX:1167-1180`），与 ⋯ 菜单同族：light-dismiss、
     // Esc 关、切页/切会话关。分叉自绘层的开关与出口逐路同 [`Msg::FileMenuClose`] 那四条。
@@ -531,6 +568,16 @@ enum Msg {
     /// 重算触发器），它唯一的消费口是新建会话时把 `agentPreset` 带进 `session/create` ——
     /// 那一发在分叉还没接上，见报告 §8 未做 N-1。
     AgentModePick(String, String),
+    /// #56 工作区选择器：点 `WorkspacePickDefault` / `WorkspacePick_{id}` 那一行
+    /// （主干 `RadioMenuFlyoutItem.Click → PickWorkspace(ws)`，`MW:5128/5139/5161`）。
+    /// 载荷 `None` = 「文档目录（默认）」那一行。与 [`Msg::AgentModePick`] 同一纪律：
+    /// **当场一根 RPC 都不发**，只写 [`Shell::pending_workspace`]；选中即生效于下一个
+    /// 新会话（`session/create` 的 `workspaceId` 顶掉 `cwd`）。
+    WorkspacePick(Option<(String, String)>),
+    /// 点选择器菜单里那行「新建工作区…」（主干 `CreateWorkspaceFromPickerAsync`，
+    /// `MW:4774-4784`）：弹的仍是侧栏加号那张「新建工作区」卡，差别只有**建完即选**
+    /// —— 成功回执落地时把它设成待用工作区（[`Shell::workspace_picker_create`] 那格旗）。
+    WorkspacePickerCreate,
     /// 台账 PC2 件②（账本 #233）：「预设目录」卡那颗 `PresetCreatorDraftButton` 的点击腿 =
     /// 主干 `MainWindow.SettingsExtras.cs:109-146` 的 `StartCreatorDraftAsync()`。
     /// 两态分岔（逐条同主干 `StartCreatorDraftAsync`）：这一发先只做那两句壳侧动作（写待用格 +
@@ -551,6 +598,54 @@ enum Msg {
     /// `Err` 那一支什么都不做 = 主干 `catch (Exception) { }`（`MW:4874-4877`）「取不到就只留
     /// 内置四档，不阻塞选择」；开层那一刻已经把自定义表清空（= 主干 `Items.Clear()`，`MW:4822`）。
     AgentPresetsLoaded(Result<Vec<(String, String)>, String>),
+    // ---- 设置页预设卡（主干 `RenderPresetsSectionAsync` 的五发腿）----
+    /// `agentPresets/list` 的设置页回执（主干 `MW:13491` 那次 await，**每次进节都重拉**）。
+    /// `Err` = 主干失败臂：只铺一行 `无法加载 Agent 预设：{0}`、预设卡与「预设目录」卡都不画。
+    PresetCardsLoaded(Result<Vec<PresetCardView>, String>),
+    /// 点 `ViewPresetComposition_{id}`（主干 `MakePresetViewButton` → `agentPresets/read`）。
+    /// 载荷 = (id, 显示名)——回执标题用。
+    PresetView(String, String),
+    /// 上一发的回执：`Ok` = (回执名, yml 正文)（主干 `ShowPresetCompositionAsync` 的只读框）；
+    /// `Err` = 主干那发 `无法读取预设组装：{0}`。
+    PresetViewLoaded(Result<(String, String), String>),
+    /// 点 `UsePresetForSession_{id}`（主干 `SelectPresetAsync` → `agentPresets/select`）。
+    PresetUseForSession(String, String),
+    /// 上一发的回执：`Ok` = (显示名, 内核回执的生效 id) ⇒ 主干成功句；`Err` = 切换失败句。
+    PresetUseForSessionDone(String, Result<String, String>),
+    /// 点 `SetDefaultPreset_{id}`（主干 → `settings/update { ns: agent-presets, patch.default }`）。
+    PresetSetDefault(String),
+    /// 上一发的回执：`Ok` ⇒ 重拉预设卡（主干 `RenderSectionAsync("agent-presets")` 刷默认标记）；
+    /// `Err` = 主干那句 `设为默认失败：{0}`。
+    PresetSetDefaultDone(Result<(), String>),
+    // ---- 插件页 Tab 与清单（主干 `RenderPluginsSectionAsync` / `RenderPluginInventoryContentAsync`）----
+    /// Tab 条选中变化（主干 `SelectionChanged` → `_pluginsTab = Tag`）。载荷 = item 文本，
+    /// 反查不出（i18n 改文案/清空）就整发吞掉 —— 主干那发 `next != _pluginsTab` 才动。
+    PluginsTabByText(Option<String>),
+    /// 清单过滤框输入（主干 `filterBox.TextChanged` → `Rebuild(query)`）。
+    InventoryFilter(String),
+    // ---- 模型页提供方行卡（主干 `RenderModelsSectionAsync` 一族）----
+    /// `llm/listConfigurableProviders` + `credentials/describe` 两发的合帧
+    /// （主干 `LoadProviderRowsAsync` 里那两次 await）。拼装在回执臂做——要吃
+    /// `settings_snapshot`。`Err` = 主干「读取可配置提供方失败：{0}」那行的载荷。
+    ProviderRowsFetched(Result<(Value, Value), String>),
+    /// 编辑/添加面板的开合（主干 `OpenModelsEditor`/`CloseModelsEditor` + 重渲染）。
+    /// 载荷 = (provider, ns, display, adding)。
+    ModelsEditorToggle(String, String, String, bool),
+    /// 面板收起（主干 `CloseModelsEditor`）。
+    ModelsEditorClose,
+    /// 面板保存腿（最小面板 = 仅 API 密钥一行：主干 `MakeProviderEditorPanel` 的密钥框 +
+    /// `credentials/set`；其余字段与 `settings/mutate` 那一半没铺，欠账在报告）。
+    /// 载荷 = (key_ref, display)。成功 ⇒ 清该格草稿 + 关面板 + 重拉行。
+    ProviderSaveKey(String, String),
+    ProviderSaveKeyDone(String, Result<(), String>),
+    /// 删除腿（主干 `RemoveProviderAsync` 的 RPC 半段；⚠ 主干先弹 ContentDialog 确认，
+    /// 分叉的确认卡机制吃不下动态 primary 文案 ⇒ 直接执行，欠账在报告）。
+    /// 载荷 = (managed_ref, ns, path, removes_credential)。
+    ProviderRemove(String, String, Vec<String>, bool),
+    ProviderRemoveDone(Result<(), String>),
+    /// 恢复默认模型（主干 `RestoreDefaultModelAsync`：三发 `settings/mutate` unset）。
+    RestoreDefaultModel,
+    RestoreDefaultModelDone(Result<(), String>),
     /// 点 `PermissionPreset_{value}` 那一行（**会话态**，主干 `MW:16642` 挂的
     /// `OnPermissionPresetClick`）。它不是「一条命令」而是一发 RPC：主干
     /// `:17012` 就是 `ExecuteCommandAsync($"/permission {preset}")` ⇒ 分叉也走
@@ -839,6 +934,14 @@ enum Msg {
     /// `Ok` 里是 journal 事件（已按 seq 升序 = 时间序）+ durable title；`Err` 是 `Kernel::call`
     /// 的错误串（主干那边整段 catch、什么都不画，分叉也只写一行日志）。
     HistoryLoaded(String, Result<History, String>),
+    /// 开会话时的**投影补齐**一发结果（主干 `RefreshSessionStateFromListAsync`
+    /// `MW:4948-4993` 的会话态臂）。`Ok` 里是 `session/list` 那一行解析出的整块
+    /// `projections`——主干走的是 `_sessionProjections` 缓存命中直用、未命中才拉全表，
+    /// 分叉的台账行（`SessionInfo`）不带投影 ⇒ 每次都走它那发「未命中」的
+    /// `session/list`（同一端点、同一判据，行为等价多一次本地 RPC）。
+    /// 消费端 = [`ControlState::absorb_projections`]（kernel.rs 里专为这条链造的落表口，
+    /// 此前零调用）。会话 id 同样必带：迟到的回执不许灌进已经切走的会话。
+    SessionProjectionsLoaded(String, Result<Projections, String>),
     /// `Mux` 连上并把三条长驻流开完的结果：`Ok((实例, 那两路常驻流的 streamId))`。
     /// 两句必须在同一条消息里落地 ⇒ 不存在「control 帧先到、streamId 还没记下」的窗口
     /// （那条窗口就是 spec6 R1 的「帧被 `WorkspaceTree::apply` 吃掉且不报错」）。
@@ -1404,6 +1507,14 @@ struct Bubble {
     duration_ms: i64,
     /// `tool/call` 的图标（`TOOL_TABLE` 查出来的字形），其余角色为 None。
     icon: Option<char>,
+    /// 主干 `ToolCallCardState.CallId`（`ToolCards.cs:38`，`NoteToolResult` 侧配对键）。
+    /// `tool/call` 行才带：`tool/result` 按 callId 回查这行卡的结果时刻/结果 JSON。
+    /// 其余角色恒空串（主干也是只有 tool-call 那一族有）。
+    call_id: String,
+    /// 主干 `ChatBubble.ToolArgs`（`MainWindow.xaml.cs:6284` 附近同源）：`tool/call` 的
+    /// `data.arguments` 原样 JSON 串（内核发串就存串，发对象就存其原文）。
+    /// 服务工具卡行尾那颗 ⋯ 菜单的「复制参数 JSON / 格式化 / 紧凑 / 属性路径」四发载荷。
+    args: String,
     /// 主干 `ChatBubble.ToolName`（`MainWindow.xaml.cs:6284` 由 `tool/call` 的
     /// `data.name` 原样写进气泡自己那颗字段；消费侧 `MessageDetails.cs:1480`）。
     /// 分叉等价物就是这一枚：内核原始工具名（`read_file` 那种），**不是** `text` 那枚
@@ -1432,6 +1543,8 @@ impl Bubble {
             tokens: 0,
             duration_ms: 0,
             icon: None,
+            call_id: String::new(),
+            args: String::new(),
             tool_name: String::new(),
             summary: String::new(),
             files: Vec::new(),
@@ -1718,6 +1831,22 @@ const COMPACTION_SUMMARY_MAX_HEIGHT: f64 = 160.0;
 /// `ToolName` 的原值，也是渲染分派 [`Shell::workflow_run_card`] 的键（主干 `:917-919`）。
 const WORKFLOW_RUN_TOOL: &str = "workflow-run";
 
+/// 主干 `MessageDomainTools`（`MessageDetails.cs:890-893`）里的 `context-injection`：
+/// `HandleUserMessage:313` 给注入行写的 `ToolName` 原值，也是渲染分派
+/// [`Shell::context_injection_card`] 的键（主干 `:923-927` 落 `BuildContextCard` 那一档）。
+/// 此前分叉把注入行画成无图标的灰文本行（`tool_line` 那档），2026-10-31 R2 对齐改走过程卡。
+const CONTEXT_INJECTION_TOOL: &str = "context-injection";
+
+/// 主干 `BuildContextCard:1310` 那枚 `FontIcon{Glyph="\uE943", FontSize=12, Opacity=0.85}`。
+/// 与压缩卡那枚同码位（主干按用途各记一份，口径同 [`COMPACTION_GLYPH`]）。
+const CONTEXT_INJECTION_GLYPH: char = '\u{e943}';
+
+/// 主干 `BuildContextCard` 的卡头/正文几何（`MessageDetails.cs:1297-1351`）：
+/// chevron 同 [`COMPACTION_CHEVRON`] 族（折叠 E76B / 展开 E76C，`:1308`）；
+/// 摘要截 48 字（`:1290`）；正文条目文本截 2000 字（`:1346`）。
+const CONTEXT_SUMMARY_MAX_CHARS: usize = 48;
+const CONTEXT_BODY_MAX_CHARS: usize = 2000;
+
 /// 主干 `BuildWorkflowRunCard:1123` 那枚 `FontIcon{Glyph="\uE945", FontSize=12, Opacity=0.85}`。
 const WORKFLOW_RUN_GLYPH: char = '\u{e945}';
 
@@ -1864,6 +1993,47 @@ fn compaction_expandable(st: Option<&CompactionRow>) -> bool {
         .is_some_and(|text| !text.is_empty())
 }
 
+/// [`Shell::context_injection_card`] 的卡头摘要（主干 `BuildContextCard:1285-1295`）：
+/// 有条目时取**首条**的标题（空则正文），截 [`CONTEXT_SUMMARY_MAX_CHARS`] 字加省略号；
+/// 没有条目才回落气泡文本里「·」之后那段（注入行的可见文本就是
+/// `上下文注入 · {标签}`，`:1292-1295` 的 `IndexOf('·')` 口径）。
+#[must_use]
+fn context_injection_summary(bubble_text: &str, entries: &[(String, String)]) -> String {
+    let clipped = |text: &str| clip_chars(text, CONTEXT_SUMMARY_MAX_CHARS);
+    if let Some((title, text)) = entries.first() {
+        let source = if title.is_empty() { text.as_str() } else { title.as_str() };
+        return clipped(source);
+    }
+    match bubble_text.split_once('·') {
+        Some((_, tail)) => tail.trim().to_string(),
+        None => String::new(),
+    }
+}
+
+/// `.NET` 那族 `text.Length > n ? text[..n] + "…" : text` 的分叉等价：
+/// 按**字符**截（.NET 的 `String.Length` 是 UTF-16 单元，BMP 内与字符数一致），
+/// 门是 `>` —— 正好 n 个字符**不**裁，与主干同一档。
+#[must_use]
+fn clip_chars(text: &str, max: usize) -> String {
+    if text.chars().count() > max {
+        let mut out: String = text.chars().take(max).collect();
+        out.push('…');
+        out
+    } else {
+        text.to_string()
+    }
+}
+
+/// [`bubble_key`] 的逆变换：`role-turn-seq` → `(role, turn, seq)`。role 本身不含 `-`
+/// （五个角色字面量都不含），所以从**右**往左切两刀就是无损的；切不开（合成键 /
+/// `msg-*` / `frame-*` 那些非气泡键）⇒ `None`，调用方按「台账里没有这一格」处理。
+#[must_use]
+fn bubble_from_key(key: &str) -> Option<(&str, i64, i64)> {
+    let (role, rest) = key.split_once('-')?;
+    let (turn, seq) = rest.rsplit_once('-')?;
+    Some((role, turn.parse().ok()?, seq.parse().ok()?))
+}
+
 /// 主干 `WorkflowMemberVm`（`:82-89`）。主干那格 `ChildId` 分叉**不存**：它在卡上没有任何读者
 /// （`BuildWorkflowRunCard:1095-1200` 只读 Seq / Label / Phase / Outcome），存了就是只写字段
 /// ⇒ 本仓 0-warning 门禁红。登记进报告 §4。
@@ -1886,6 +2056,124 @@ struct WorkflowRunRow {
     stop_reason: Option<String>,
     row_key: String,
 }
+
+/// 主干 `ToolCallCardState`（`ToolCards.cs:24-39`）里「工具卡头」要吃的三格的分叉等价物：
+/// `ResultTime`（结果信封 time）/ `IsError`（content[0].isError）/ `ResultJson`（结果原文）。
+/// 主干把它们挂 `ChatBubble` 旁路表（key = Bubble 引用），分叉按 **callId** 记 ——
+/// `tool/call` 行的 [`Bubble::call_id`] 是唯一配对键（主干 `NoteToolResult` 也是 callId 配对）。
+/// `CallId`/`ResultStamp`/`Expanded` 等格不在其列：分叉的卡头不重建也不展开（见
+/// [`Shell::tool_line`] 文档），展开态欠账登记在报告。
+struct ToolResultRow {
+    call_id: String,
+    time: i64,
+    is_error: bool,
+    /// 主干 `st.ResultJson = data.GetRawText()`（`:66-68`）：结果信封原文，喂
+    /// ⋯ 菜单的「复制结果 JSON」。
+    result_json: String,
+}
+
+/// 那张表的**容量上限**：`tool/result` 每发一条，长会话（几百步）不限长会把它撑成
+/// 纯累积表。主干那张 `Dictionary<ChatBubble,…>` 随气泡表一样只服务当前屏，分叉按
+/// 「最新 512 条」截断 —— 超出的旧行卡头顶多少了时长/结果载荷（滚动很远的旧行）。
+const TOOL_RESULTS_CAP: usize = 512;
+
+/// 主干 `HandleUserMessage` 之外的 `RenderEventCore` `tool/result` 分支那发
+/// `NoteToolResult(bubble, data, resultTime)` 的采集落格（纯函数：调用方只管喂）。
+/// 同 callId 再到一发 = 覆盖（主干按气泡写同一格，同口径）。
+fn note_tool_result(rows: &mut Vec<ToolResultRow>, call_id: &str, time: i64, data: &Value) {
+    if call_id.is_empty() {
+        return;
+    }
+    let is_error = data["message"]["content"]
+        .as_array()
+        .and_then(|blocks| blocks.first())
+        .is_some_and(|block| block["isError"].as_bool().unwrap_or(false));
+    let result_json = data.to_string();
+    match rows.iter_mut().find(|row| row.call_id == call_id) {
+        Some(row) => {
+            row.time = time;
+            row.is_error = is_error;
+            row.result_json = result_json;
+        }
+        None => {
+            rows.push(ToolResultRow {
+                call_id: call_id.to_string(),
+                time,
+                is_error,
+                result_json,
+            });
+            if rows.len() > TOOL_RESULTS_CAP {
+                rows.remove(0);
+            }
+        }
+    }
+}
+
+/// 工具卡头的时长 chip（主干 `ToolCards.cs:181-185`）：
+/// `!running && ResultTime > 0 && bubble.Time > 0 && ResultTime >= bubble.Time` 才发，
+/// 文案 = `FormatTurnDuration(ms)`。分叉没有「在跑」态的卡头重建闸
+/// （在跑的那行 `running=true` 时不画，与主干同档），其余四条判据逐字对齐。
+#[must_use]
+fn tool_duration_text(results: &[ToolResultRow], call_id: &str, call_time: i64) -> Option<String> {
+    if call_id.is_empty() || call_time <= 0 {
+        return None;
+    }
+    let row = results.iter().find(|row| row.call_id == call_id)?;
+    if row.time <= 0 || row.time < call_time {
+        return None;
+    }
+    Some(format_turn_duration((row.time - call_time) as f64))
+}
+
+/// 主干 `FormatTurnDuration`（`MessageActions.cs:768-778`）：不足 1 分钟给
+/// 「{0.#}秒」（0.1s 精度，0 → 「0秒」），之后「{m}分{ss}秒」（秒补零）。
+#[must_use]
+fn format_turn_duration(ms: f64) -> String {
+    let s = (ms.max(0.0)) / 1000.0;
+    if s < 60.0 {
+        let rounded = (s * 10.0).round() / 10.0;
+        format!("{rounded}秒")
+    } else {
+        let whole = s.round() as i64;
+        format!("{}分{:02}秒", whole / 60, whole % 60)
+    }
+}
+
+/// 主干 `ToolPropertyPath`（`ToolCards.cs:963-982`）：⋯ 菜单「复制属性路径」那发的载荷。
+/// ⚠ 主干那个 switch 的**前段**（variant 分派）先赢：`web_fetch` 落 `read` 档、
+/// `web_search`/`grep`/`glob` 落 `search` 档 ⇒ 后段那几枚同名臂在主干也是死行，
+/// 分叉不抄死行（照抄会拿 unreachable-pattern 警告）。
+/// `argsRaw` 形参在主干也只进签名不进表体 ⇒ 这里同样不读。
+#[must_use]
+fn tool_property_path(tool_name: &str, args: &str) -> String {
+    let _ = args;
+    match tool_name {
+        "bash" | "pwsh" | "terminal_send" => "arguments.command",
+        "read" | "read_image" | "web_fetch" | "write" | "edit" | "str_replace_editor" => {
+            "arguments.file_path"
+        }
+        "web_search" | "grep" | "glob" => "arguments.pattern",
+        "run_code" => "arguments",
+        "skill" => "arguments.name",
+        "todo_write" | "todo" => "arguments.todos",
+        "subagent" => "arguments.prompt",
+        "workflow" => "arguments.meta.name",
+        _ => "arguments",
+    }
+    .to_string()
+}
+
+/// 工具卡行尾 ⋯ 菜单的五项（主干 `BuildToolCopyMenu`，`ToolCards.cs:912-938` 逐字同序同名）。
+/// 第二列 = UIA `AutomationId`（主干 `Aut(item, id, label)` 那发）；第三列 =
+/// 「结果 JSON」那格的启用门——主干 `enabled: !bubble.IsToolRunning && ResultJson 非空`
+/// （`:931-933`），分叉的等价判据见 [`Shell::tool_menu_row_enabled`]。
+const TOOL_MENU_ITEMS: [(&str, &str); 5] = [
+    ("复制参数 JSON", "ToolCopyArgsJson"),
+    ("复制格式化 JSON", "ToolCopyArgsPrettyJson"),
+    ("复制紧凑 JSON", "ToolCopyArgsCompactJson"),
+    ("复制结果 JSON", "ToolCopyResultJson"),
+    ("复制属性路径", "ToolCopyPropertyPath"),
+];
 
 /// 主干 `HandleWorkflowRunStart:745` 的回落：`runId` 空 ⇒ `"run-" + envTime`。
 #[must_use]
@@ -3119,7 +3407,7 @@ fn usage_source_note(catalog: &Catalog, kpis: &UsageKpis) -> String {
 /// `(Text, Tag)` 一一配对（`近 7 天`/`7` 带 `IsSelected=True`、`近 30 天`/`30`）。
 /// 此前分叉装不下 `SelectorBar` 只能钉在默认档 7 天（`_statsRangeDays = 7`，
 /// `MainWindow.xaml.cs:14212`）⇒ 趋势图与模型用量永远只有 7 天，主干那颗
-/// `OnStatsRangeChanged`（:15152）等于没有。现在用两颗 `ToggleButton` 拼同一面分段
+/// `OnStatsRangeChanged`（:15152）等于没有。现在渲染侧走真 `SelectorBar`
 /// （[`Shell::usage_range_row`]，选中态从 `picks` 派生），文案与天数从同一张表取
 /// ⇒ 不会出现「标签换了、天数没换」那类第二真相。主干 `_statsRangeDays` 也只是内存字段
 /// （不落 `shell.json`、不进 settings/describe）⇒ 分叉同样只落通用 `picks` 表。
@@ -3137,11 +3425,6 @@ const STATS_HEAT_METRIC_CHOICES: [&str; 3] = ["每日", "每周", "累计"];
 /// `picks` 表里「Token 活动统计口径」这一格的键（口径同 [`STATS_RANGE_PICK_KEY`]：
 /// 主干 `_statsHeatMetric`（`MW:14336`）也只是内存字段，不落 `shell.json`）。
 const STATS_HEAT_METRIC_PICK_KEY: &str = "stats-heat-metric";
-
-/// 两颗分段钮的最小宽：主干 `SelectorBarItem` 没写 `MinWidth`（按内容自适应）⇒ 分叉给一个
-/// **只兜下沿**的值，`近 30 天`（含一个空格）自然宽过它 ⇒ 两颗等宽、切换不抖。
-/// 与 `theme_cubes` 那颗 `THEME_CUBE_MIN_WIDTH`(108) 不同：那三颗是满宽三连，这两颗是行内小件。
-const STATS_RANGE_MIN_WIDTH: f64 = 72.0;
 
 /// `picks` 表里「分组方式」那一格的键。落 0 = `workspace`、落 1 = `flat`
 /// （下标 = [`NAV_VIEW_ITEMS] 里该组内的次序）。主干那两个字段是 `string`
@@ -3201,6 +3484,11 @@ const NAV_FLAT_GROUP_KEY: &str = "flat";
 const STATS_HEAT_CELL: f64 = 14.0;
 const STATS_HEAT_GAP: f64 = 4.0;
 const STATS_HEAT_RADIUS: f64 = 3.0;
+
+/// 趋势图绘图区高度：主干 `MainWindow.xaml:1716` 的
+/// `Height="{ThemeResource StatsChartHeight}"`，token 值在 `Theme/Tokens.xaml:90`（= 220）。
+/// 同一类「xaml 静态件尺寸」的 const 就地落（`tokens.rs` 不收新值，同上一条）。
+const STATS_CHART_HEIGHT: f64 = 220.0;
 
 /// 图例那五颗的尺寸：主干 `xaml:1654-1658` 写死 `Width/Height=12`、`RadiusX/Y=3`
 /// （格子才是 14，两者共用同一颗圆角），行距 `Space6`、整行右对齐。
@@ -3758,9 +4046,8 @@ const SETTINGS_AUTOSAVE_FIELDS: &[(&str, &str)] = &[
     ("agent-loop", "maxParallelToolCalls"),
     ("subagent-model-selection", "enabled"),
     ("auto-approval", "enabled"),
-    // 自动审批二级页「判定模型」那一行：默认模型两格一起落（主干同一张卡里两发 `Edit`）。
-    ("agent-default-model", "provider"),
-    ("agent-default-model", "model"),
+    // 「判定模型」那两格（`agent-default-model` provider/model）已随 0.9.0.3 拆卡撤出
+    // 白名单：auto-review 用会话自己的模型判定，这两格不再有写点。
     ("memory", "enabled"),
     ("computer-control", "enabled"),
     ("computer-use-cua-driver", "enabled"),
@@ -3992,6 +4279,34 @@ fn button_ghost(foreground: Option<Color>) -> ResourceOverrides {
     }
 }
 
+/// 顶栏搜索胶囊里那颗输入框的**六键透明**（主干 `MainWindow.xaml:145-151`）：
+/// `AutoSuggestBox.Resources` 把 `TextControlBackground / …PointerOver / …Focused` 与
+/// `TextControlBorderBrush / …PointerOver / …Focused` 六个主题资源覆成 Transparent。
+/// 为什么要覆资源而不是在 TextBox 上写本地 `background(transparent)` +
+/// `border_thickness(0)`：TextBox 默认模板的 Focused/PointerOver 态是 **Storyboard 动画**
+/// （`BorderElement.Background/BorderBrush/BorderThickness` 指到 `TextControlBackgroundFocused`
+/// 那族资源），动画优先级高于本地值 ⇒ R5 截图里聚焦态照旧渲出不透明的内框 +
+/// 浅描边，把胶囊割成「放大镜圆底 + 描边输入域」两块。主干盖资源正是冲着动画去的
+/// （动画的 DiscreteObjectKeyFrame 引用资源，资源透明则画出来也是透明）。
+///
+/// 资源从**祖先**的 `FrameworkElement.Resources` 往下查 ⇒ 得有个带
+/// `resource_overrides` 的祖先包住 TextBox；reactor 0.100.0 只给 `Button` 开了这扇门
+/// （`generated.rs:494`，SwapChainPanel 之外唯一），所以这组覆盖挂在一颗包住输入框的
+/// 透明 ghost 钮上（`button_ghost` 同款四态钉透明，模板方块不可见；**不挂 `.style()`**
+/// —— 那两条同挂是 0xC000027B 的已知成因，见 [`Shell::settings_boot_panel`] 的注释）。
+/// `ButtonPadding` 归零免得默认 11,5,11,6 把输入框从胶囊里顶出来。
+fn search_input_resources() -> ResourceOverrides {
+    let transparent = Color::transparent();
+    button_ghost(None)
+        .set("ButtonPadding", th([0.0, 0.0, 0.0, 0.0]))
+        .set("TextControlBackground", transparent)
+        .set("TextControlBackgroundPointerOver", transparent)
+        .set("TextControlBackgroundFocused", transparent)
+        .set("TextControlBorderBrush", transparent)
+        .set("TextControlBorderBrushPointerOver", transparent)
+        .set("TextControlBorderBrushFocused", transparent)
+}
+
 /// 圆底/方底的一档外观：底色画刷 + 1px 描边画刷 + 整颗钮的不透明度。
 /// 描边取 `Brush::Solid(a=0)`（`NO_STROKE`）= 主干写了 `BorderThickness="0"` 的那几族。
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -4151,7 +4466,10 @@ impl Pill {
     /// 主干 `SendButton`（`AccentButtonStyle`）四态：同一支强调色画刷，悬停降到 0.9、
     /// 按下降到 0.8（generic.xaml:7631-7633 Light 词典，Dark 在 2080-2082 数值一致），
     /// 禁用换 `AccentFillColorDisabled`。
-    /// 强调色本体走主题画刷 `AccentFillColorDefaultBrush`，跟着用户个性化色变，不写死。
+    /// 强调色本体 = 主干 `AccentFillColorDefaultBrush` 的等值物：经 [`theme::palette`]
+    /// 实色化为**系统强调色**（浅色档 Dark1 / 深色档 Light2，注册表 `AccentPalette` 读回），
+    /// 跟着用户个性化色变，不写死——reactor 对元素属性上的 `Brush::Theme` 一律静默丢弃
+    /// （theme.rs accent 段的取证），主题画刷形态在分叉渲染不出来。
     /// 描边给 0：主干那一圈是 `AccentControlElevationBorderBrush`（强调色加深渐变），
     /// reactor 拿不到运行时的强调色分量，画不出同色描边 ⇒ 宁缺不凑。
     const fn accent(p: Palette, side: f64) -> Self {
@@ -4234,16 +4552,16 @@ const TRAY_CLOSE_KEY: &str = "tray_closeToTray";
 const TRAY_NOTIFICATIONS_KEY: &str = "tray_notifications";
 const SKIN_OPACITY_KEY: &str = "skin_opacity";
 const INSTRUCTIONS_KEY: &str = "personalization_instructions";
+/// 「失焦暂停视频背景」开关的 state 键（主干 `_skinVideoPauseOnBlur`，`xaml.cs:9038`；
+/// 落盘 = `shellfiles::save_skin_video_pause` 那格 `shell-skin.videopause`，`xaml.cs:9084-9092`）。
+const SKIN_VIDEO_PAUSE_KEY: &str = "skin_video_pause_on_blur";
+/// 添加提供方面板的目录下拉选中项（主干 `_modelsEditor` 的 `Adding` 态里那颗下拉；
+/// 分叉走 `picks` 表，键自造——主干那格没有 AutomationId，只有草稿格）。
+const ADD_PROVIDER_PICK_KEY: &str = "models_add_provider";
 
-/// 自动审批「判定模型」那一行写的两格（主干 `AddAutoApprovalModelCardAsync` 尾部那两发
-/// `Edit("agent-default-model", …)`，`MW:14683-14684`）。内核 dsh-approval-gate 自己没有
-/// 模型配置项——判定时读 `agentDefaultModel.currentSelection()`，所以这里切的就是**默认模型**
-/// 本身，与输入区模型选择器经 `session/selectModel` 落的是同一个设置。
-/// ⚠ 两格**必须成对写**：门控两个字段都读，只写一个会落到「新 model + 旧 provider」的错配组合。
-/// 键名走本仓 `ns_field` 口径（[`settings_autosave_cell`] 按**第一发** `_` 切）⇒ ns 自己带
-/// 连字符、不带来下划线，切开才正好是 `agent-default-model` 这个 ns。
-const APPROVAL_MODEL_PROVIDER_KEY: &str = "agent-default-model_provider";
-const APPROVAL_MODEL_MODEL_KEY: &str = "agent-default-model_model";
+/// 「记忆内容」编辑框那格草稿的键。主干 `_memoryDraft`（`MainWindow.xaml.cs:14518`）
+/// 的分叉对位 = `fields` 里这一格；初值回落 [`Shell::memory_loaded`]（启动读盘那份）。
+const MEMORY_CONTENT_KEY: &str = "memory_content";
 
 /// #142 刀4/刀5 的两枚防抖窗口，逐字照主干那两颗 `DispatcherQueueTimer`：
 /// `MainWindow.Personalization.cs:369` 的 `Interval = TimeSpan.FromMilliseconds(1000)`（指令卡），
@@ -4279,13 +4597,13 @@ const BUBBLE_SLIDER_WIDTH: f64 = 220.0;
 const ABOUT_UPDATE_REPO: &str = "Live-Rise/Blade2";
 /// 主干 `ShellVersionText()`（`About.cs:43-59`）把 `Package.Id.Version` 四段拼成
 /// `{Major}.{Minor}.{Build}.{Revision}`，权威就是仓库根 `Package.appxmanifest:10` 那枚
-/// `Identity` 元素的 `Version`（今天现测 `0.8.3.9`）—— 第四段是**修订号**，不是恒零占位。
+/// `Identity` 元素的 `Version`（今天现测 `0.9.0.4`）—— 第四段是**修订号**，不是恒零占位。
 /// 这里直接承载那四段字面值，**不**从 `CARGO_PKG_VERSION` 派生：cargo 只收三段 semver，
 /// 第四段在 `Cargo.toml` 里无处安放，于是任何 `concat!(env!("CARGO_PKG_VERSION"), ".N")`
 /// 的补段把戏都等于把第四段钉成常数 —— 主干一抬修订号，分叉就永远对不上（旧 `.0` 那版
 /// 正是这么错的，不是「数值落后」而是结构上不可能对齐）。这一串与主干清单是否仍一致由
 /// `about_copy_tests` 实读清单比对兜住：抬主干版本时同步这一行，忘了同步就红。
-const SHELL_VERSION: &str = "0.8.3.9";
+const SHELL_VERSION: &str = "0.9.0.4";
 
 /// D1 取证：`BLADE2_PILLDBG=1` 时把每次重绘选到的档位与收到的状态消息打到 stderr。
 /// ⚠ 走 `writeln!` + `let _ =` 而不是 `eprintln!`：GUI 子系统下 stderr 不连控制台，
@@ -5783,6 +6101,12 @@ enum SelectorKind {
     /// 与上面两颗**相反**的一条：这颗在主干**永远在场**（`ModelButton.Visibility` 全仓零赋值），
     /// 所以它的表体可以在目录没到的时候只有一张区头 + 静态四档，而触发器只回落文案。
     Model,
+    /// 主干 `WorkspacePickerButton` + `WorkspacePickerFlyout`（`MX:1181/1201`，由输入卡上方的
+    /// 选择器行迁入动作行的**第一颗**）：与 [`SelectorKind::AgentMode`] 同一道
+    /// `IsHeroState` 可见性闸（`MW:5112`），主干列序在它**前面**（+ 号 → 工作区 → Agent 模式 →
+    /// 权限，`MX:1123-1126`）。表体 = 「文档目录（默认）」+ 侧栏工作区表 + 「新建工作区…」
+    /// （`MW:5119-5152`），点行只写 [`Shell::pending_workspace`]，一根 RPC 都不发。
+    Workspace,
 }
 
 /// 主干 `LoadAgentModeMenuAsync` 那四档内置（`MW:4823-4829`，逐字同序同名）。
@@ -5909,10 +6233,648 @@ fn parse_agent_presets(reply: &Value) -> Vec<(String, String)> {
         if id.is_empty() {
             continue;
         }
-        let name = text(&item["name"]);
-        roster.push((id.clone(), if name.is_empty() { id } else { name }));
+    let name = text(&item["name"]);
+    roster.push((id.clone(), if name.is_empty() { id } else { name }));
     }
     roster
+}
+
+// ---- 设置页预设卡（主干 `RenderPresetsSectionAsync` 的读法，`MW:13509-13531`）--------------
+
+/// 设置页一张预设卡的读侧六格（主干逐条 `TryGetProperty` 的那几格）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PresetCardView {
+    id: String,
+    /// 显示名：内置四档认壳表（[`AGENT_MODE_BUILTINS`]），其余走 i18n 字典、再否则原样。
+    name: String,
+    desc: Option<String>,
+    is_default: bool,
+    /// `trust == "user"` ⇒ 「自定义」，否则「内置」（主干 `:13520-13521`）。
+    trust_user: bool,
+    /// broken 非空 = 加载失败档：标题尾缀「（加载失败）」+ InfoBrush 那行原因。
+    broken: Option<String>,
+}
+
+/// 主干设置页那发读 `presets` 键（`MW:13509`；与选择器的 items/数组读法**分叉**，
+/// 见 [`parse_agent_presets`] 头顶注释）。每条：id（缺 = 空串，照渲染不跳）、
+/// name/description/isDefault/trust/broken 全宽容取。内置四档的显示名认表在**渲染侧**
+/// （要吃 `catalog`，见 [`Shell::settings_agent_presets]）。
+fn parse_preset_cards(reply: &Value) -> Vec<PresetCardView> {
+    let Some(rows) = reply.get("presets").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let text = |value: &Value| -> String { value.as_str().unwrap_or_default().to_string() };
+    rows.iter()
+        .map(|item| {
+            let id = text(&item["id"]);
+            let name = match item.get("name") {
+                Some(n) if n.is_string() && !text(n).is_empty() => text(n),
+                _ => id.clone(),
+            };
+            PresetCardView {
+                id,
+                name,
+                desc: item.get("description").and_then(Value::as_str).map(String::from),
+                is_default: item.get("isDefault").and_then(Value::as_bool).unwrap_or(false),
+                trust_user: item.get("trust").and_then(Value::as_str) == Some("user"),
+                broken: item
+                    .get("broken")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .map(String::from),
+            }
+        })
+        .collect()
+}
+
+// ---- 技能根扫描（主干 `MainWindow.Skills.cs:427` ScanSkillRoots 的分叉对位）--------------
+
+/// 一个技能条目的读侧三格（主干 `SkillEntry` 的 `Name/Description/Shadowed`；
+/// whenToUse/开关位/文件路径本刀不落地——行内只铺名称与说明）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SkillEntryView {
+    name: String,
+    description: String,
+    shadowed: bool,
+}
+
+/// 一个技能根的渲染五格（主干 `SkillRoot`：Label/Path/Available/UnavailableReason/Entries）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SkillRootView {
+    label: String,
+    /// 卡副文（主干 `root.Path`：单路径，或预设根的多路径 `\n` 连接，或「（本部署没有预设自带技能）」）。
+    path_text: String,
+    available: bool,
+    unavailable_reason: String,
+    priority: u32,
+    entries: Vec<SkillEntryView>,
+}
+
+/// 主干 `FindProjectRoot`（`MainWindow.Skills.cs:459` 对位）：最近含 `.git` 的祖先，
+/// 找不到就用 cwd 本身（与内核 findProjectRoot 同规则）。
+fn skill_project_root(cwd: &str) -> std::path::PathBuf {
+    let mut dir = std::path::PathBuf::from(cwd);
+    loop {
+        if dir.join(".git").exists() {
+            return dir;
+        }
+        if !dir.pop() {
+            return std::path::PathBuf::from(cwd);
+        }
+    }
+}
+
+/// 主干 `TryReadSkill`（`Skills.cs:591-625`）的最小子集：frontmatter 只认
+/// 「--- / 键: 值 / ---」，name/description 都非空且 name 合 kebab-case 才收。
+fn skill_from_md(text: &str) -> Option<SkillEntryView> {
+    let lines: Vec<&str> = text.split('\n').collect();
+    if lines.first()?.trim_end_matches('\r') != "---" {
+        return None;
+    }
+    let closing = lines[1..]
+        .iter()
+        .position(|line| line.trim_end_matches('\r') == "---")?
+        + 1;
+    let mut name = String::new();
+    let mut description = String::new();
+    for line in &lines[1..closing] {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() || line.trim_start().starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        match key.trim() {
+            "name" => name = value.trim().to_string(),
+            "description" => description = value.trim().to_string(),
+            _ => {}
+        }
+    }
+    let kebab = |s: &str| {
+        !s.is_empty()
+            && s.bytes().all(|b| {
+                b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'
+            })
+    };
+    if name.is_empty() || description.is_empty() || !kebab(&name) {
+        return None;
+    }
+    Some(SkillEntryView {
+        name,
+        description,
+        shadowed: false,
+    })
+}
+
+/// 主干 `ReadSkillDir`（`Skills.cs:550-572`）：目录包 `<name>/SKILL.md` + 扁平 `*.md`，
+/// `.system` 目录跳过，名称 Ordinal 排序。`known` = 更高优先级根已收的名字（遮蔽判定：
+/// 主干同名只生效优先级最高的一个，低优先根里的同名条目标注 shadowed）。
+fn skill_dir_entries(root: &std::path::Path, known: &mut Vec<String>) -> Vec<SkillEntryView> {
+    let mut entries = Vec::new();
+    let Ok(dirs) = std::fs::read_dir(root) else {
+        return entries;
+    };
+    let mut bundles: Vec<std::path::PathBuf> = dirs
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    bundles.sort();
+    for dir in bundles {
+        if dir.file_name().and_then(|n| n.to_str()) == Some(".system") {
+            continue;
+        }
+        let file = dir.join("SKILL.md");
+        if let Ok(text) = std::fs::read_to_string(&file) {
+            if let Some(mut skill) = skill_from_md(&text) {
+                skill.shadowed = known.iter().any(|n| *n == skill.name);
+                known.push(skill.name.clone());
+                entries.push(skill);
+            }
+        }
+    }
+    let mut flats: Vec<std::path::PathBuf> = std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| {
+            p.is_file()
+                && p.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("md")).unwrap_or(false)
+        })
+        .collect();
+    flats.sort();
+    for file in flats {
+        if let Ok(text) = std::fs::read_to_string(&file) {
+            if let Some(mut skill) = skill_from_md(&text) {
+                skill.shadowed = known.iter().any(|n| *n == skill.name);
+                known.push(skill.name.clone());
+                entries.push(skill);
+            }
+        }
+    }
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
+    entries
+}
+
+/// 五根扫描（主干 `ScanSkillRoots` 的优先级序）：注入三态（cwd / dshHome / agentsHome /
+/// user profile）为的是这五条判定能离线断言。
+fn skill_roots(
+    cwd: Option<&str>,
+    dsh_home: &std::path::Path,
+    agents_home_env: Option<String>,
+    user_profile: Option<&std::ffi::OsStr>,
+) -> Vec<SkillRootView> {
+    let mut known: Vec<String> = Vec::new();
+    let mut roots: Vec<SkillRootView> = Vec::new();
+    match cwd {
+        Some(cwd) => {
+            let project_root = skill_project_root(cwd);
+            let project = project_root.join(".dsh").join("skills");
+            roots.push(SkillRootView {
+                label: "项目".into(),
+                path_text: project.display().to_string(),
+                available: true,
+                unavailable_reason: String::new(),
+                priority: 100,
+                entries: skill_dir_entries(&project, &mut known),
+            });
+            let compat = project_root.join(".agents").join("skills");
+            roots.push(SkillRootView {
+                label: "项目（兼容）".into(),
+                path_text: compat.display().to_string(),
+                available: true,
+                unavailable_reason: String::new(),
+                priority: 200,
+                entries: skill_dir_entries(&compat, &mut known),
+            });
+        }
+        None => {
+            roots.push(SkillRootView {
+                label: "项目".into(),
+                path_text: String::new(),
+                available: false,
+                unavailable_reason: "项目技能需要先选中一个会话：它们按会话所在的项目目录解析。".into(),
+                priority: 100,
+                entries: Vec::new(),
+            });
+            roots.push(SkillRootView {
+                label: "项目（兼容）".into(),
+                path_text: String::new(),
+                available: false,
+                unavailable_reason: String::new(),
+                priority: 200,
+                entries: Vec::new(),
+            });
+        }
+    }
+    // 预设根（300）：本地 `.agent-presets/*/skills` + 随包
+    // `profiles/node_modules/@deepseek-ai/dsh-agent-presets/presets/*/skills`。
+    let mut preset_dirs: Vec<std::path::PathBuf> = Vec::new();
+    let local_presets = dsh_home.join(".agent-presets");
+    if let Ok(dirs) = std::fs::read_dir(&local_presets) {
+        let mut found: Vec<std::path::PathBuf> = dirs
+            .filter_map(Result::ok)
+            .map(|e| e.path().join("skills"))
+            .collect();
+        found.sort();
+        preset_dirs.extend(found);
+    }
+    let shipped = dsh_home
+        .join("profiles")
+        .join("node_modules")
+        .join("@deepseek-ai")
+        .join("dsh-agent-presets")
+        .join("presets");
+    if let Ok(dirs) = std::fs::read_dir(&shipped) {
+        let mut found: Vec<std::path::PathBuf> = dirs
+            .filter_map(Result::ok)
+            .map(|e| e.path().join("skills"))
+            .collect();
+        found.sort();
+        preset_dirs.extend(found);
+    }
+    let preset_entries: Vec<SkillEntryView> = preset_dirs
+        .iter()
+        .flat_map(|dir| skill_dir_entries(dir, &mut known))
+        .collect();
+    roots.push(SkillRootView {
+        label: "预设".into(),
+        path_text: if preset_dirs.is_empty() {
+            "（本部署没有预设自带技能）".into()
+        } else {
+            preset_dirs
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+        },
+        available: true,
+        unavailable_reason: String::new(),
+        priority: 300,
+        entries: preset_entries,
+    });
+    // 用户根（400）与用户兼容根（500，~/.agents/skills 与内核默认 agentsHome 一致）。
+    let user_root = dsh_home.join("skills");
+    roots.push(SkillRootView {
+        label: "用户".into(),
+        path_text: user_root.display().to_string(),
+        available: true,
+        unavailable_reason: String::new(),
+        priority: 400,
+        entries: skill_dir_entries(&user_root, &mut known),
+    });
+    let agents_home = agents_home_env
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(user_profile.unwrap_or_default()).join(".agents"));
+    let agents_skills = agents_home.join("skills");
+    roots.push(SkillRootView {
+        label: "用户（兼容）".into(),
+        path_text: agents_skills.display().to_string(),
+        available: true,
+        unavailable_reason: String::new(),
+        priority: 500,
+        entries: skill_dir_entries(&agents_skills, &mut known),
+    });
+    roots
+}
+
+// ---- 模型页：提供方行卡（主干 `LoadProviderRowsAsync`/`MakeProviderCard` 一族）--------------
+
+/// 一张提供方行卡的读侧九格（主干 `ProviderRow` 拼装后渲染要吃的那几格）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ProviderRowView {
+    provider: String,
+    display: String,
+    settings_ns: String,
+    settings_path: Vec<String>,
+    /// 用户声明的自定义路由（主干 `Declared == true` ⇒ 「自定义」徽标 + 可整行删除）。
+    declared: bool,
+    error: Option<String>,
+    /// 主干 `Configured`：path 为空（官方根）或 value 命中。
+    configured: bool,
+    /// 主干 `Removable`：user 层命中且 base 层没有。
+    removable: bool,
+    /// 主干 `ApiKeyEnv`（profile 点名的具名凭据）；`None` = 环境认证（不显示状态点）。
+    api_key_env: Option<String>,
+    /// 合成凭据引用（主干 `KeyRef`：ApiKeyEnv 优先，否则 DeriveKeyRef）。
+    key_ref: String,
+    /// 凭据状态（主干 `HasCredential`+`Credential`：`None` = 回帧没点名这一格 ⇒ 不显示点）。
+    credential: Option<blade2_rs::kernel::CredentialState>,
+}
+
+/// 主干 `SettingsValueAt`（`MW:11440-11455` 附近那发沿 path 走对象）：空 path = 根本身。
+fn settings_value_at<'a>(value: &'a Value, path: &[String]) -> Option<&'a Value> {
+    let mut node = value;
+    for segment in path {
+        node = node.get(segment)?;
+    }
+    Some(node)
+}
+
+/// 主干 `DeriveKeyRef`（`MW:12981-12982`）：`<ROUTE>_API_KEY`，非字母数字段折叠成下划线。
+fn derive_key_ref(provider: &str) -> String {
+    let mut out = String::new();
+    let mut last_us = false;
+    for ch in provider.to_uppercase().chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+            last_us = false;
+        } else if !last_us {
+            out.push('_');
+            last_us = true;
+        }
+    }
+    format!("{out}_API_KEY")
+}
+
+/// 主干 `LoadProviderRowsAsync` 的第二段（`MW:11359-11413`）：目录条目 × settings 快照 ×
+/// 凭据回帧，拼成渲染行。`snapshot` = [`Shell::settings_snapshot`] 的薄切片。
+fn build_provider_rows(
+    providers: &Value,
+    described: &Value,
+    snapshot: Option<&[SettingsNamespace]>,
+) -> Vec<ProviderRowView> {
+    let mut rows: Vec<ProviderRowView> = Vec::new();
+    let entries = providers.as_array().cloned().unwrap_or_default();
+    for p in &entries {
+        let provider = p.get("provider").and_then(Value::as_str).unwrap_or_default();
+        if provider.is_empty() {
+            continue;
+        }
+        let display = p
+            .get("displayName")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .unwrap_or_else(|| provider.to_string());
+        let settings_ns = p.get("settingsNs").and_then(Value::as_str).unwrap_or_default();
+        let settings_path: Vec<String> = p
+            .get("settingsPath")
+            .and_then(Value::as_array)
+            .map(|segments| {
+                segments
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let declared = p.get("declared").and_then(Value::as_bool).unwrap_or(false);
+        let error = p
+            .get("error")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(String::from);
+        let api_key_env = p
+            .get("apiKeyEnv")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(String::from);
+        let key_ref = api_key_env.clone().unwrap_or_else(|| derive_key_ref(provider));
+        let mut row = ProviderRowView {
+            provider: provider.to_string(),
+            display,
+            settings_ns: settings_ns.to_string(),
+            settings_path,
+            declared,
+            error,
+            configured: false,
+            removable: false,
+            api_key_env,
+            key_ref,
+            credential: None,
+        };
+        if !row.settings_ns.is_empty() {
+            if let Some(view) = snapshot.and_then(|snap| snap.iter().find(|v| v.ns == row.settings_ns)) {
+                let value_at = |layer: &str| {
+                    view.field(layer).and_then(|layer| settings_value_at(layer, &row.settings_path))
+                };
+                row.configured = row.settings_path.is_empty() || value_at("value").is_some();
+                let user_hit = value_at("user").is_some();
+                let base_hit = value_at("base").is_some();
+                row.removable = !row.settings_path.is_empty() && user_hit && !base_hit;
+                // 主干 `row.ApiKeyEnv = StringAt(row.Value, "apiKeyEnv")`（`MW:11384`）：
+                // 从**该 ns 的 value 层**点名（不是目录回帧）⇒ 这里覆盖目录那格。
+                row.api_key_env = value_at("value")
+                    .and_then(|v| v.get("apiKeyEnv"))
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .map(String::from)
+                    .or(row.api_key_env.take());
+                row.key_ref = row
+                    .api_key_env
+                    .clone()
+                    .unwrap_or_else(|| derive_key_ref(&row.provider));
+            }
+        }
+        // 凭据回帧（主干 `MW:11445-11412`）：`TryGetProperty(row.KeyRef)` 命中才有状态格。
+        if !row.key_ref.is_empty() {
+            row.credential = blade2_rs::kernel::credential_state(described, &row.key_ref);
+        }
+        rows.push(row);
+    }
+    rows
+}
+
+// ---- 插件区：pluginInventory/list 回执 + settings/describe 泛化兜底（T28） --------------
+
+/// `pluginInventory/list` 的一条 Loader 条目（主干 `RenderPluginInventoryContentAsync`
+/// `MW:13339-13350` 收进 `entryRows` 的四格）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PluginInventoryEntry {
+    module: String,
+    entry_id: String,
+    /// 主干那句 `fiberPhase is { Length: > 0 } p ? p : L("（无 fiber）")`：空串在**渲染侧**
+    /// 才换成「（无 fiber）」，这里保留原文。
+    phase: String,
+    enabled: bool,
+}
+
+/// 组装行那一侧的每个预设（`MW:13436-13456`）：预设 id + 行名表（`模块（phase）`）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PluginPresetRows {
+    id: String,
+    names: Vec<String>,
+}
+
+/// `pluginInventory/list {}` 的解析结果（主干 `MW:13279` 起那两格读法）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct PluginInventory {
+    entries: Vec<PluginInventoryEntry>,
+    presets: Vec<PluginPresetRows>,
+}
+
+/// 主干 `Str(entry, key)` 的按名宽容取值：缺席/非字符串 = 空串。
+fn inv_str(value: &Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// 主干 `MW:13271` 那发 `CallOkAsync("pluginInventory/list", new { })` 的回执解析。
+/// `entries` / `agentPresets` 两格都按主干的 `TryGetProperty + ValueKind == Array` 宽容读：
+/// 缺席或形状不合 = 空表（概览卡照样出「共 0 个」），不判死。
+fn parse_plugin_inventory(reply: &Value) -> PluginInventory {
+    let mut inventory = PluginInventory::default();
+    if let Some(entries) = reply.get("entries").and_then(Value::as_array) {
+        for entry in entries {
+            inventory.entries.push(PluginInventoryEntry {
+                module: inv_str(entry, "moduleName"),
+                entry_id: inv_str(entry, "entryId"),
+                phase: inv_str(entry, "fiberPhase"),
+                enabled: entry.get("enabled").and_then(Value::as_bool) == Some(true),
+            });
+        }
+    }
+    if let Some(presets) = reply.get("agentPresets").and_then(Value::as_array) {
+        for preset in presets {
+            // 主干 `MW:13438`：`presetId` 优先，缺了回落 `id`。
+            let id = {
+                let pid = inv_str(preset, "presetId");
+                if pid.is_empty() {
+                    inv_str(preset, "id")
+                } else {
+                    pid
+                }
+            };
+            let mut names = Vec::new();
+            if let Some(rows) = preset.get("rows").and_then(Value::as_array) {
+                for row in rows {
+                    let mut module = inv_str(row, "moduleName");
+                    if module.is_empty() {
+                        module = inv_str(row, "name");
+                    }
+                    if !module.is_empty() {
+                        let phase = inv_str(row, "fiberPhase");
+                        names.push(if phase.is_empty() {
+                            module
+                        } else {
+                            format!("{module}（{phase}）")
+                        });
+                    }
+                }
+            }
+            inventory.presets.push(PluginPresetRows { id, names });
+        }
+    }
+    inventory
+}
+
+/// 主干 `RehydrateSchema`（`MW:10370-10437`）的逐字移植：schema 带 `uid`(数) + `refs`(表)
+/// 即为压缩形态 ⇒ 递归解引用（整数且命中 refs = 引用索引）；其余数字（温度 0.7 等）原样。
+/// 已是展开形态 = 原样返回（主干那句 `return null` 后调用方回落 raw 的合流点）。
+fn rehydrate_schema(schema: &Value) -> Value {
+    let refs = match schema.get("refs") {
+        Some(refs) if refs.is_object() && schema.get("uid").and_then(Value::as_i64).is_some() => {
+            refs
+        }
+        _ => return schema.clone(),
+    };
+    let uid = schema["uid"].to_string();
+    let Some(root) = refs.get(&uid) else {
+        return schema.clone();
+    };
+    fn write(node: &Value, refs: &Value, out: &mut Value) {
+        match node {
+            Value::Number(_) => {
+                // 只有「整数 + refs 命中」才是引用索引；其余数字原样写出（主干 `MW:10395-10411`
+                // 那条「无条件 GetInt32 会抛 FormatException」的教训）。
+                let index = node.as_i64();
+                if let (Some(_), Some(target)) = (index, index.and_then(|i| refs.get(i.to_string()))) {
+                    write(target, refs, out);
+                } else {
+                    *out = node.clone();
+                }
+            }
+            Value::Object(map) => {
+                let mut deref = Map::new();
+                for (name, value) in map {
+                    if name == "refs" || name == "uid" {
+                        continue; // 解引用后引用表不再需要
+                    }
+                    let mut slot = Value::Null;
+                    write(value, refs, &mut slot);
+                    deref.insert(name.clone(), slot);
+                }
+                *out = Value::Object(deref);
+            }
+            Value::Array(items) => {
+                let mut out_items = Vec::with_capacity(items.len());
+                for item in items {
+                    let mut slot = Value::Null;
+                    write(item, refs, &mut slot);
+                    out_items.push(slot);
+                }
+                *out = Value::Array(out_items);
+            }
+            other => *out = other.clone(),
+        }
+    }
+    let mut out = Value::Null;
+    write(root, refs, &mut out);
+    out
+}
+
+/// 插件页 nav 卡的 AutomationId（主干调用点是**逐字字面量**，`MW:13048-13070`）：
+/// 官方六卡 = `PluginsNav_{camel(id)}`，唯独自动审查卡主干写的是 `PluginsNav_autoReview`
+/// （不是 camel 出来的 autoApproval）⇒ 在这里钉这一条特例。
+fn plugin_nav_automation_id(id: &str) -> String {
+    if id == "auto-approval" {
+        return "PluginsNav_autoReview".to_string();
+    }
+    format!("PluginsNav_{}", camel(id))
+}
+
+/// 主干 `AppendGenericPluginNsFallback`（`MainWindow.SettingsExtras.cs:575-593`）的筛选器
+/// 逐字移植：settings/describe 里其余 **writable** 插件式 ns（非官方 4 卡、非壳/模型/权限域）。
+/// 返回序 = 主干那句 `extras.OrderBy(e => e.Ns, StringComparer.Ordinal)`（Ordinal 升序）。
+fn generic_plugin_ns_list(snapshot: &[SettingsNamespace]) -> Vec<String> {
+    const KNOWN_PLUGIN_NS: [&str; 4] = ["shell", "agent-loop", "subagent-model-selection", "web-search-deepseek"];
+    const SHELL_DOMAIN_NS: [&str; 8] = [
+        "permission",
+        "ui-theme",
+        "ui-chat",
+        "ui-conversation",
+        "locale",
+        "agent-default-model",
+        "agent-presets",
+        "settings.onboarding",
+    ];
+    let mut extras: Vec<String> = Vec::new();
+    for ns in snapshot {
+        if KNOWN_PLUGIN_NS.contains(&ns.ns.as_str()) {
+            continue;
+        }
+        if ns.ns.starts_with("llm-") {
+            continue;
+        }
+        if SHELL_DOMAIN_NS.contains(&ns.ns.as_str()) {
+            continue;
+        }
+        let Some(schema) = ns.field("schema") else {
+            continue;
+        };
+        let rehydrated = rehydrate_schema(schema);
+        if !rehydrated.is_object() {
+            continue;
+        }
+        let Some(dict) = rehydrated.get("dict").and_then(Value::as_object) else {
+            continue;
+        };
+        if dict.keys().all(|key| key == "refs" || key == "uid") {
+            continue;
+        }
+        if !ns.is_writable() {
+            continue;
+        }
+        extras.push(ns.ns.clone());
+    }
+    extras.sort();
+    extras
 }
 
 // ---- Permission（#56 第二颗）：`PermissionButton` 的三态与危险档闸 ----------------------
@@ -6000,20 +6962,18 @@ struct PermissionRow {
     checked: bool,
 }
 
-/// 主干 `PermissionPresetDescZh`（现测 `MW:16764-16779`）：只有四档有产品文案，`custom` 与未知档
-/// 走 `_ => ""` ⇒ 落回内核给的英文 `description`，内核也没给才是空串。
-/// ⚠ **主干那张表里没有 `"auto"`**（`:16766-16771` 四臂 = read-only / workspace-write /
-///   danger-full-access / auto-approve）⇒ 分叉今天**已忠实**，本刀**只动 glyph 表、不动这一颗**
-///   （补 auto 说明 = 主干没有的文案位，多做即缺陷）。
+/// 主干 `PermissionPresetDescZh`（0.9.0.2/0.9.0.3 现测 `MW:16983-16996`）：只有四档有产品
+/// 文案，`custom` 与未知档走 `_ => ""` ⇒ 落回内核给的英文 `description`，内核也没给才是空串。
+/// ⚠ **主干那张表里的第四臂 0.9.0.2 起从 `auto-approve` 换成了 `auto`**（内核 auto-review
+///   用「会话当前的提供方/模型」做判定，壳侧没有也不该有独立判定模型——注释原文），旧
+///   `auto-approve`（dsh-approval-gate）档随之落 `_ => ""` 吃内核文案。
 /// 「表里没有 ≠ 直接用内核文案」这个**次序**不许倒装（倒装了英文界面就再也回不到中文表）。
 fn permission_preset_desc_zh(catalog: &Catalog, value: &str, kernel_desc: &str) -> String {
     match value {
         "read-only" => catalog.l("只读：可浏览工作区，不能写文件或执行修改"),
         "workspace-write" => catalog.l("可写工作区与允许的临时目录；更广范围的重试需审批"),
         "danger-full-access" => catalog.l("完全文件访问，不再弹出审批确认"),
-        "auto-approve" => {
-            catalog.l("Flash 预判写入/命令是否不可回补：安全自动批准，有风险转人工审批")
-        }
+        "auto" => catalog.l("每次工具调用前由当前会话模型预判是否授权：安全的直接放行，有风险的带理由转人工"),
         _ => kernel_desc.to_string(),
     }
 }
@@ -6139,16 +7099,31 @@ fn permission_local_rows(catalog: &Catalog, current: &str) -> Vec<PermissionRow>
 /// ⚠ #196 A-2 收尾：设置页那张卡**不再**吃这颗（它只吃 [`catalog_default_preset_values`]，
 /// 目录空 ⇒ 空表 ⇒ 整卡收起）；主干那两手的回落方向本来就相反，把它们共吃一颗是那次做错的合并。
 /// 第二级（schema union）今天不接，理由见那颗常量的注释（#196 A-4 已把原先那半句假理由删掉）。
+/// 0.9.0.2 起主干在这张表尾**补一行 `auto`**（`MW:17094-17105`）：目录 `defaultOptions` 只是
+/// 配置表（`registerAuto` 动态注册的 live `auto` 只在 `options` 里），但用户要在主界面就能选
+/// 「自动审查」⇒ 目录的 `options` 含 `auto` 而屏上还没有时补在末尾。`auto` 不落盘默认档
+/// （选中只记 [`Shell::pending_new_session_auto`] 意图，见那格的文档），所以补行只影响
+/// 「屏上多一行」，不影响 [`catalog_default_preset_values`] 那张设置页的表。
 #[must_use]
 fn default_preset_values(catalog: Option<&PermissionCatalog>) -> Vec<String> {
-    let catalog_rows = catalog_default_preset_values(catalog);
-    if !catalog_rows.is_empty() {
-        return catalog_rows;
+    let mut values = catalog_default_preset_values(catalog);
+    if values.is_empty() {
+        values = PERMISSION_LOCAL_PRESETS
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect();
     }
-    PERMISSION_LOCAL_PRESETS
-        .iter()
-        .map(|value| (*value).to_string())
-        .collect()
+    // 空态也给出「自动审查」（主干 `if (!choices.Any(c => c.Value == "auto"))` 那一段）：
+    // 判据 = 目录**活选项表**（`options`）里有 `auto`（= auto-review bundle 已选入 profile），
+    // 且屏上那三档回落里本来没有（配置表不含 live auto，这里只是防重复补）。
+    if !values.iter().any(|value| value == "auto")
+        && catalog.is_some_and(|catalog| {
+            catalog.options.iter().any(|option| option.value == "auto")
+        })
+    {
+        values.push("auto".to_string());
+    }
+    values
 }
 
 /// 空态表体的**建法**（与会话态那三处差别原样保留：`desc` 恒空 —— 主干这里建的是
@@ -6482,17 +7457,21 @@ impl Shell {
             // 「有内核但快照没拉到」那一格主干整颗钮都不画；分叉今天照旧**必画**（撤它要先给
             // 「还没回帧」与「回帧失败」造一枚主干没有的第三态，且会把已走查过的空态构图整颗撤掉）。
             // 记入报告 §4/§7，不是漏接。
-            let value = self.permission_default_value();
+            let values = default_preset_values(self.permission_catalog.as_ref());
+            // 空态选过「自动审查」且屏上那张表真有这一行 ⇒ 当前档显示 `auto`（主干
+            // `if (_pendingNewSessionAuto && choices.Any(c => c.Value == "auto")) current = "auto";`，
+            // `MW:17106-17109`）。意图没记过 / 活选项表里没有 auto ⇒ 走既有那三档读法。
+            // `auto` 在表里 ⇒ 下面 [`permission_default_value`] 那道表外复检对它原样放行，
+            // 这里不需要（也不许）绕开那一格状态另立第二份「当前值」真相。
+            let value = if self.pending_new_session_auto && values.iter().any(|v| v == "auto") {
+                "auto".to_string()
+            } else {
+                self.permission_default_value()
+            };
             return Some(PermissionFace::Default {
                 label: permission_local_current_name(catalog, &value),
                 glyph: permission_preset_glyph(&value),
-                // #190 P3 ⑦：表体第一级 = 目录 `defaultOptions`（主干 `ShowDefaultPermissionAsync`
-                // 里 `if (defaultOptions.Count > 0)` 那一支），它没货才落本地三档。
-                rows: permission_default_rows(
-                    catalog,
-                    &default_preset_values(self.permission_catalog.as_ref()),
-                    &value,
-                ),
+                rows: permission_default_rows(catalog, &values, &value),
             });
         };
         // 两把 `?` 各挡一档，对应主干 `RefreshSessionStateBar` 里那两次 `Collapsed`：
@@ -6663,11 +7642,33 @@ impl Shell {
             // 也不回落到首档（那会把「行没了」伪装成「用户选了第一档」）。
             return;
         };
+        // 「自动审查」行（主干 `MW:17130-17140` 的 `if (value == "auto")` 臂）：auto 不落盘
+        // defaultPreset（启动毒化，见 [`Shell::pending_new_session_auto`] 的文档）⇒ 只记意图，
+        // 触发器的名/字形/tooltip 由声明式渲染按那枚意图现算（主干是就地改四枚属性，同果）。
+        if value == "auto" {
+            self.pending_new_session_auto = true;
+            return;
+        }
+        // 其余档先清意图（主干 `_pendingNewSessionAuto = false;` 排在 `SetDefaultPermissionAsync`
+        // 之前）—— 刚选了别的默认档，上一枚「下次开会的 auto」意图就不再成立。
+        self.pending_new_session_auto = false;
         if is_danger_full_access_preset(&value) {
             self.ask_danger_full_access(true, PendingDanger::DefaultPreset(index));
             return;
         }
         self.store_default_permission(index, &value);
+    }
+
+    /// 空态「自动审查」意图的**兑点**（主干 `OpenSessionAsync` 的 `if (_pendingNewSessionAuto)`
+    /// 那一段，`MW:4922-4928`）：会话一开就清意图、发 `/permission auto`（auto 是会话级 live
+    /// 预设，只能走命令、不能写 defaultPreset）。主干四个「开会话」入口（选行 / 首发新建 /
+    /// 新建钮 / 分支进子会话）全部汇进 `OpenSessionAsync` ⇒ 分叉四个等价点各兑一次；命令
+    /// 通路（危险档闸 / 会话判空 / 在途闸）全在 [`Shell::execute_command`] 那颗共用壳里。
+    fn consume_pending_new_session_auto(&mut self, context: &ComponentContext<Shell>) {
+        if !std::mem::take(&mut self.pending_new_session_auto) {
+            return;
+        }
+        self.execute_command("/permission auto".to_string(), false, context);
     }
 
     /// 屏上那张空态表的第 `index` 行的**机器值**（渲染与回写共吃 [`default_preset_values`]，
@@ -9996,6 +10997,11 @@ struct Shell {
     /// 语义与主干同：派发前 `take` 一次，已在飞就不重复发；回执落地时 **`Ok`/`Err` 两支都清**
     /// （分叉没有 `finally`，靠「`spawn_background` 的闭包总要回一条 Msg」这条等价性）。
     permission_catalog_refetch_queued: bool,
+    /// 空态选了「自动审查」的待生效意图（主干 `_pendingNewSessionAuto`，`MW:2583-2586`）：
+    /// `auto` 不能落盘 defaultPreset——下次启动 permission 构造期 autoAdmit 未注册、
+    /// `resolve("auto")` 会抛，整个权限服务毒化 ⇒ 选中**只记这枚意图**，开新会话时由
+    /// [`Shell::consume_pending_new_session_auto`] 发 `/permission auto` 切过去，发完即清。
+    pending_new_session_auto: bool,
     /// #136 R2（MR3）：网页搜索二级页那几行 API Key 的数据源（主干把回帧现算现用，
     /// **不缓存** —— `OpenWebSearchSubPageAsync` 每次点卡都重新问一发，`MW:12684-12696`）。
     /// `None` = 还没问过（分叉的绘制是同步的，问那一发在后台线程上 ⇒ 首帧与主干「一次性建全」
@@ -10024,6 +11030,12 @@ struct Shell {
     /// #142 刀4：状态行覆盖。`Some` = 落过一次盘（`failed` 决定走哪句 i18n），`None` = 还没动过。
     instructions_note: Option<String>,
     instructions_failed: bool,
+    /// 主干「记忆内容」卡（`RenderMemoryContentCard` `MainWindow.xaml.cs:14857-14887`）：
+    /// 启动这一发读进来的记忆 JSONL 原文（[`shellfiles::load_memory_text`]，对位主干
+    /// `LoadMemoryRaw` → `DshPluginBootstrap.ReadMemoryText()`，缺文件/读失败 = 空串）。
+    /// 编辑器草稿的唯一真相仍是 `fields["memory_content"]`（主干 `_memoryDraft`），这份只当
+    /// 回填初值与「共 N 行」的计数底稿。分叉不接盘写（主干那条防抖保存线是 #70 的活）。
+    memory_loaded: String,
     /// #142 刀5：`shell-skin.opacity` 那枚 300 ms 防抖（`MainWindow.xaml.cs:8723-8738`）的两位。
     skin_opacity_armed: bool,
     skin_opacity_target: f64,
@@ -10054,6 +11066,22 @@ struct Shell {
     /// #140 刀2（MW2）：主干 `Pet.cs:726-731 PetInstallSay` 的那一行常驻状态
     /// （`(已解析文本, warn)`；`None` = 还没点过安装那颗 ⇒ 不入树）。
     pet_status: Option<(String, bool)>,
+    /// 宠物库清单（主干 `ReloadPetLibraryAsync` 那 `await _petClient.GetPetsAsync()` 的回执）：
+    /// `None` = 还没回（骨架「正在读取宠物清单…」那一档）；`Err` = 插件路由 404 / 传输失败
+    /// —— 主干那一档 `pets is null || Count == 0` 走**同一句**空态文案（`Pet.cs:388-398`），
+    /// 分叉的 `Err` 也折进那一档画。
+    pets: Option<Result<Vec<PetListEntry>, String>>,
+    /// 当前宠物 id（主干 `GetStateAsync().PetId`，`Pet.cs:399-402` 用来标「使用中」+ 禁用钮）。
+    pet_active: Option<String>,
+    /// 行内两击删除的**待确认**那只（`Msg::PetRemove` 的第一击落格，第二击真删；
+    /// `None` = 没有武装中的行）。主干那发是应用级 `ContentDialog`，分叉沿用行内
+    /// 轻量确认的形制偏差——理由写在 `Msg::PetRemove` 那一臂的注释里。
+    pet_remove_armed: Option<String>,
+    /// 来源判定缓存（主干 `_petLocalIds` / `_petCodexIds`，`Pet.cs:384-386`）：
+    /// 本机 pets 目录（`DataHome/pets`）与 Codex pets 目录（`~/.codex/pets`）的 id 集合。
+    /// 主干重载清单时现扫，分叉随 [`Shell::load_pets`] 同批扫。
+    pet_local_ids: Vec<String>,
+    pet_codex_ids: Vec<String>,
     /// #160 UK2 S1：主干 `_aboutUpdateStatus` 的**文本覆盖位**（`SetAboutStatus(text)` 的落点）。
     /// `None` = 这一轮还没点过「检查更新」⇒ 卡内那一格回主干的初值 `LF("更新源：{0}", …)`
     /// （`About.cs:104-110`：`_aboutUpdateStatus` 这颗 TextBlock 的初值**就是**「更新源」那句，
@@ -10162,6 +11190,17 @@ struct Shell {
     /// ⚠ 别和 `DetailsLedger` 那本**按气泡**的 `context_window` 混：同一句
     /// `data.contextWindow` 在两本账里各记一次，一本给详情浮层、一本给容量圈。
     context_meters: cm::ContextMeterBook,
+    /// 主干 `_journalCursor`（`MainWindow.xaml.cs:380`，单 int）的**按会话**分桶版：每个
+    /// 会话「已渲染到的最大 seq」。主干只在活跃会话上收帧（`ApplyFollowFrameAsync` 的
+    /// `Current()` 闸 `:5529`），一颗 int 就够；分叉的 follow 流**跨会话常驻**
+    /// （[`Self::ensure_follow`] 的 `follows` 表），所以游标也得按 sid 记。
+    /// 写侧两处：① 开会话复位（`Msg::Select` / `Msg::Branched` 的 retain，对应主干
+    /// `OpenSessionAsync:4873` 那句 `Volatile.Write(ref _journalCursor, 0)`）；
+    /// ② [`Shell::apply_journal_event`] 臂首的 max 推进（两个生产臂——历史回放与
+    /// follow——的合流点，对应主干 `RenderJournalCore:6364` 与
+    /// `ApplyFollowFrameAsync:5572` 两处推进）。
+    /// 读侧唯一入口 = [`Shell::apply_follow_frame`] 的 follow 闸（对应主干 `:5561/:5568`）。
+    journal_cursors: Vec<(String, i64)>,
     /// #139 件三：主干 `_compactions`（`MainWindow.MessageDetails.cs:102`，key = compactionId）
     /// 那张贴身旁路表。采集判据是纯函数 [`note_compaction_start`] /
     /// [`note_compaction_summary`] / [`note_compaction_end`]，这里只存插入序与气泡键；
@@ -10175,9 +11214,18 @@ struct Shell {
     compaction_open: Vec<String>,
     /// 同上，服务成员编排卡那颗 `WorkflowMembersToggle`（`:1191-1197`）。
     workflow_open: Vec<String>,
+    /// 上下文注入过程卡（[`Shell::context_injection_card`]）那颗 `ContextExpand` 头的展开态，
+    /// 口径同 [`Self::compaction_open`]：主干那格展开态活在 `MessageDetailState`（旁路表）里，
+    /// 分叉按气泡寻址键记（先例 = `reasoning_open` / `compaction_open`）。
+    context_open: Vec<String>,
     /// 主干 `_openMutationPaths`：本轮在途 callId → 突变目标路径（非突变登记空串），
     /// `tool/call` 写、`tool/result` 读，`turn/start` 整表清空。
     mutations: Vec<(String, String)>,
+    /// 工具卡结果旁路表（主干 `_toolCardStates[ChatBubble]` 里 ResultTime/IsError/ResultJson
+    /// 三格的分叉等价，按 callId 记）。喂口 = `tool/result` 采集臂（[`note_tool_result`]），
+    /// 读口 = [`Shell::tool_line`] 的时长 chip 与 ⋯ 菜单「复制结果 JSON」。
+    /// 清点 = 会话切换（气泡表重建，主干那张挂气泡上的表同命运）。
+    tool_results: Vec<ToolResultRow>,
     /// 主干 `_producedByTurn`：turn → 成功突变（结果信封 seq, 路径），按到达顺序累加。
     produced: Vec<(i64, Vec<(i64, String)>)>,
     /// 处于「已复制」态的气泡键（操作行图标换成对勾那一下）。
@@ -10210,6 +11258,13 @@ struct Shell {
     /// 交付物卡 ⋯ 菜单（主干 `FileActionMenu` 那张 MenuFlyout）：`None` = 没开。
     /// 只记「开着的是哪张卡的第几个文件 + 键盘选中行」，五项的表体是常量 [`FILE_MENU_ITEMS`]。
     file_menu: Option<FileMenuState>,
+    /// 工具卡行尾 ⋯ 那张复制菜单（主干 `BuildToolCopyMenu` 那张 `MenuFlyout` 的分叉替身）：
+    /// `Some(气泡寻址键)` = 开着的是哪一行卡的菜单，`None` = 整层不入树（reactor 没有
+    /// `Visibility`，口径同 [`Self::file_menu`]）。主干是系统级 flyout（light-dismiss），
+    /// 分叉的替身 = 整面透明遮罩 + 贴角菜单卡（同 ⋯ 菜单刻法）；同刻至多一张由这一格本身保证，
+    /// 与兄弟层的互斥由「开它之前那一层自己的 light-dismiss 遮罩先吃掉下一次按下」成立
+    /// （骨架同 [`Self::session_menu`] 族，本次不逐臂改写兄弟开臂，理由见报告）。
+    tool_menu: Option<String>,
     /// #240：输入区「+」那张 `ComposerAddFlyout`（`MX:1167-1180`）——主干它就是一张
     /// 系统 `MenuFlyout`，分叉同族自绘层（scrim + 贴左下的卡）。`false` = 没开；
     /// 表体九项的成员与序见 [`COMPOSER_ADD_ITEMS`]，开关四路出口同 [`Shell::file_menu`]。
@@ -10356,10 +11411,36 @@ struct Shell {
     /// 消费口是 `CreateSessionCoreAsync` 把 `agentPreset` 带进 `session/create`（`MW:4629-4632`），
     /// 那一发在分叉还没接上 ⇒ 记报告 §8 未做 N-1。
     pending_agent_preset: Option<(String, String)>,
+    /// 主干 `_pendingWorkspace`（`MW:2496`）：待用工作区 `(id, title)`；`None` = 文档目录
+    /// （默认档）。只在 `PickWorkspace` 一处写（主干 `MW:5161-5163`），全仓无复位点
+    /// ⇒ 换会话、切页都保留；唯一消费口 = 新建会话那一发 `session/create` 把 `workspaceId`
+    /// 顶掉 `cwd`（`MW:4621-4624`，见 [`Shell::pending_workspace_id`]）。
+    pending_workspace: Option<(String, String)>,
+    /// 「新建工作区…」从选择器菜单（而不是侧栏加号）唤出时点亮：`WorkspaceWrite::Create`
+    /// 成功回执落地时据此「建完即选为待用工作区」（主干 `CreateWorkspaceFromPickerAsync`
+    /// → `PickWorkspace(created)`，`MW:4774-4784`）。侧栏加号那一入口**不**点它
+    /// （主干把返回值整个丢掉）⇒ 这格是两条入口分岔的唯一载体，对话框收起时清。
+    workspace_picker_create: bool,
     /// 上一次成功那一趟 `agentPresets/list` 追加的自定义档（`(id, name)`，已过 `seen` 去重）。
     /// 每次展开先清这一格再重拉 —— 主干 `Items.Clear()`（`MW:4822`）在 `try` **之前**，
     /// 所以「重开时 RPC 失败」那一档菜单里只剩内置四档，而不是上一轮的残留。
     agent_presets: Vec<(String, String)>,
+    /// 设置页预设卡的那份清单（主干 `RenderPresetsSectionAsync` 每次进节重拉的那发）。
+    /// `None` = 还没回（界面先出段说明）；`Err` = 主干失败臂那一行文案的载荷。
+    preset_cards: Option<Result<Vec<PresetCardView>, String>>,
+    /// 插件页 Tab（主干 `_pluginsTab`，`MW:12984-12985`：0 = config 插件配置 / 1 = inventory 插件列表）。
+    plugins_tab: usize,
+    /// 「插件列表」Tab 的清单（主干 `RenderPluginInventoryContentAsync` 那发）：
+    /// `None` = 没拉/没回；`Err` = 主干失败横幅那行文案的载荷。
+    plugin_inventory: Option<Result<PluginInventory, String>>,
+    /// 清单过滤框的草稿（主干 `Rebuild(query)` 那格 query，`MW:13352`）。
+    inventory_filter: String,
+    /// 模型页提供方行（主干 `LoadProviderRowsAsync` 每次进节重拉的那两发拼出来的表）。
+    /// `None` = 没拉/没回；`Err` = 主干那行「读取可配置提供方失败」的载荷。
+    provider_rows: Option<Result<Vec<ProviderRowView>, String>>,
+    /// 行卡内嵌编辑态（主干 `_modelsEditor` + `_modelsAdding`）：
+    /// `Some((provider, ns, display, adding))`。`adding = true` = 添加卡那档。
+    models_editor: Option<(String, String, String, bool)>,
     /// #56 第二颗 `PermissionButton`：场上那张展开层已经由上面的 [`Shell::selectors`] 装着
     /// （`SelectorKind::Permission`），这里只留**这颗独有**的一格 —— 危险档确认卡。
     /// `None` = 不入树。它不在 `selectors` 那一格里，因为主干这两张**不是同一层东西**：
@@ -10811,6 +11892,30 @@ impl Shell {
         }
     }
 
+    /// 主干 `MakeChoiceField` / `MakeThemeDropdown` 那族下拉的**当前下标**三档读法：
+    /// ① pending（`picks`，用户改了还没保存的那格）→ ② 内核快照的**字符串值**按选项表
+    /// 折回下标（主干 `SelectedItem = items.First(i => i.Tag == value)` 那一句）→
+    /// ③ 形参 fallback。`pick` 那颗只有 ①③ 两档 ⇒ 之前内核里存过值（如
+    /// `transcriptView=normal`、`ui-theme/preference=system`）的分叉侧永远显示字面默认，
+    /// 与主干同数据不同显示（视觉比对两处：对话显示/繁忙发送/整窗主题档）。② 档只在值
+    /// 命中选项表时才算数，读不出（缺 ns / 值不在表里）落 ③，与主干 `FirstOrDefault`
+    /// 空表 + `IsSelected` 没人点亮的同款终点。
+    fn choice_index(&self, key: &str, values: &[&str], fallback: usize) -> usize {
+        if let Some((_, index)) = self.picks.iter().find(|(name, _)| name == key) {
+            return *index;
+        }
+        if let Some(value) = self
+            .settings_snapshot
+            .as_deref()
+            .and_then(|snapshot| snapshot_string(snapshot, key))
+        {
+            if let Some(index) = values.iter().position(|candidate| *candidate == value) {
+                return index;
+            }
+        }
+        fallback
+    }
+
     /// 统计时间范围的当前档位（天数）。未选过 = 表的第一颗 = 主干那颗 `IsSelected=True`
     /// 的 7 天。下标夹一手：这一格的写入方只有 [`Shell::usage_range_row`] 那两颗钮，
     /// 越界下标不可能出现，夹住只是让「读」这一侧永不上 panic。
@@ -11040,6 +12145,8 @@ impl Shell {
         // 换会话会重建整张聊天台账 ⇒ 主干那张 flyout 的锚点没了、它自己就关。
         // 分叉的锚点（交付物卡 / 那颗 Details 钮 / chip）同样会消失，三张自绘浮层都必须跟着清。
         self.file_menu = None;
+        // 工具卡行尾 ⋯ 那张的锚（气泡里的那颗钮）同样随台账重建消失 ⇒ 同口径清层。
+        self.tool_menu = None;
         // #240：「+」那张 flyout 的锚（那颗 + 钮）虽不随会话重建，但主干系统级 flyout
         // 换会话同样收（焦点域没了）⇒ 同口径收层。
         self.composer_add = false;
@@ -11327,11 +12434,39 @@ impl Shell {
     /// （`已自动保存 · {0}` / `保存失败：{0}` 两串早已入库，见 `i18n.rs:1489` / `:1241`）：
     /// 主干 `SetInstructionsStatus(LF(...), tone)`（`Personalization.cs:301/306`）。
     /// 默认那句今天**没过 `catalog.l`**（英文界面露中文），这里一并补上。
+    ///
+    /// #142 补刀（计数行三档，主干 `UpdateInstructionsState` `Personalization.cs:311-331`）：
+    /// · 保存注记（成功/失败）最高优先，同主干「结果文案不被计数行刷掉」；
+    /// · 其余按 dirty 分两路：草稿 ≠ 已存正文 ⇒「有未保存的修改…」；无改动 ⇒ 计数行，
+    ///   已存正文为空 = 「共 0 字 · 停止输入后自动保存」，非空 = `字数 {n} / 4000`
+    ///   （上限 = 主干 `InstructionsMaxLength`，`shellfiles::INSTRUCTIONS_MAX_CHARS` 同源）。
+    /// dirty 判据 = 字段值（用户键入的原文）与 `instructions_saved`（启动读盘的 Trim 稿）
+    /// 逐字比 —— 与 [`Shell::flush_instructions_draft`] 那条「改回原样 = 撤销待保存」同口径。
+    /// R3 复验：读字段这发**必须带与编辑框回填同一条回落**（`&self.instructions_saved`）。
+    /// 原来传的空串回落只在「用户真清空」那档成立；启动时 `fields` 空表、内核快照也没这键
+    /// （指令正文住 `AGENTS.md` 文件，不进内核设置），`field(KEY, "")` 读到的是空串回落
+    /// ⇒ 30 字的盘上稿被判成「草稿 ≠ 已存」 ⇒ 初始态误标「有未保存的修改…」，而主干
+    /// `UpdateInstructionsState`（`Personalization.cs:311-331`）的初值是计数行「字数 30 / 4000」。
     fn instructions_status(&self) -> String {
         match (&self.instructions_note, self.instructions_failed) {
             (Some(detail), true) => self.catalog.lf("保存失败：{0}", &[detail.clone()]),
             (Some(detail), false) => self.catalog.lf("已自动保存 · {0}", &[detail.clone()]),
-            (None, _) => self.catalog.l("共 0 字 · 停止输入后自动保存"),
+            (None, _) => {
+                if self.field(INSTRUCTIONS_KEY, &self.instructions_saved) != self.instructions_saved {
+                    return self.catalog.l("有未保存的修改…");
+                }
+                if self.instructions_saved.is_empty() {
+                    self.catalog.l("共 0 字 · 停止输入后自动保存")
+                } else {
+                    self.catalog.lf(
+                        "字数 {0} / {1}",
+                        &[
+                            self.instructions_saved.chars().count().to_string(),
+                            shellfiles::INSTRUCTIONS_MAX_CHARS.to_string(),
+                        ],
+                    )
+                }
+            }
         }
     }
 
@@ -11412,9 +12547,11 @@ impl Shell {
         )
         .to_string();
         // #56：没有活跃会话时这一发要顺手建会话 ⇒ 建的时候得带上输入区那颗 `AgentModeButton`
-        // 挑中的预设。闭包是 `move`，故在这里（还在 `&self` 上的最后一行）取成 owned 值。
-        // 主干同一形状：`SubmitInputAsync` 走的也是 `CreateSessionCoreAsync`（`MW:4614`）那一颗。
+        // 挑中的预设与那颗 `WorkspacePickerButton` 挑中的工作区。闭包是 `move`，故在这里
+        // （还在 `&self` 上的最后一行）取成 owned 值。主干同一形状：`SubmitInputAsync`
+        // 走的也是 `CreateSessionCoreAsync`（`MW:4614`）那一颗。
         let agent_preset = self.agent_preset_to_send();
+        let workspace_id = self.pending_workspace_id();
         // #147 半 A：降级开关的取值要在 `&self` 还在的最后一行取成 owned 值（闭包是 `move`）。
         let assistant_stream = self.live_stream_requested();
         // 主干每次发送前都补一发 session/selectModel；分叉还没有模型选择器，拿不出可信的
@@ -11425,7 +12562,7 @@ impl Shell {
                 Err(_) => return Msg::Prompted(Err("内核状态不可用".to_string())),
             };
             let sid = if session.is_empty() {
-                match kernel.create_session_with(&default_session_cwd(), agent_preset.as_deref()) {
+                match kernel.create_session_in(workspace_id.as_deref(), &default_session_cwd(), agent_preset.as_deref()) {
                     Ok(id) => id,
                     Err(error) => return Msg::Prompted(Err(error)),
                 }
@@ -11463,8 +12600,12 @@ impl Shell {
                 match kernel.call("session/prompt", args.clone()) {
                     Ok(_) => break Ok(()),
                     Err(error) => {
+                        // 常驻复用（0.9.0.4）之后这一发必须**点名豁免当前内核**：会话中途的
+                        // 清扫若拿零参版，眼里这颗 attach 来的常驻内核（父进程 = 上一次的死壳）
+                        // 就是孤儿 ⇒ 撞租约重发之前先把唯一能用的内核扫掉了。豁免 pid 取
+                        // `kernel.pid()`（spawn / attach 都有），`None ⇒ 0` = 不豁免（等价零参）。
                         let swept = if prompt_attempt == 1 && procguard::is_lease_busy_error(&error) {
-                            procguard::sweep_orphan_kernels()
+                            procguard::sweep_orphan_kernels_sparing(kernel.pid().unwrap_or(0))
                         } else {
                             procguard::SweepOutcome::default()
                         };
@@ -13826,6 +14967,37 @@ impl Shell {
         });
     }
 
+    /// 开会话时的**投影补齐**（主干 `RefreshSessionStateFromListAsync`，`MW:4948-4993`，
+    /// 调用点 `:4930` = `OpenSessionAsync` 里排在历史回读之前的那一发）。主干那句是
+    /// 「`_sessionProjections` 缓存命中直用、未命中拉一次 `session/list`」；分叉的左栏行
+    /// （`SessionInfo`）不带投影、没有那本缓存 ⇒ 每次都走它的「未命中」支（同端点同判据，
+    /// 多一次本地 RPC 是缓存缺失的等价代价，不是第二份语义）。回执按行过滤出**这一条**
+    /// 会话的整块 `projections`，经 [`Msg::SessionProjectionsLoaded`] 进
+    /// [`ControlState::absorb_projections`] —— 那颗落表口在 kernel.rs 里就是为这条链造的，
+    /// 此前零调用 ⇒ 会话态状态条（plan chip / 权限预设）只剩引导期 baseline 一条数据源，
+    /// 缺了它主干口径的「打开会话必补齐投影」整段缺席（R2 实测：会话内权限钮整颗消失）。
+    /// ⚠ 失败臂**静默**：主干那发 `catch (Exception)` 只有一行注释（「投影补齐失败不阻塞
+    /// 会话打开，状态条保持收起，不显示猜测值」）⇒ 这里也只写日志、不出声。
+    fn refresh_session_projections(&self, session: &str, context: &ComponentContext<Shell>) {
+        let Some(shared) = self.kernel.clone() else {
+            return;
+        };
+        let session = session.to_string();
+        context.spawn_background(move |_| {
+            let outcome = shared
+                .lock()
+                .map_err(|_| "内核状态不可用".to_string())
+                .and_then(|mut kernel| kernel.list_session_rows())
+                .and_then(|rows| {
+                    rows.into_iter()
+                        .find(|row| row.info.id == session)
+                        .map(|row| row.projections)
+                        .ok_or_else(|| "会话清单里没有这一行".to_string())
+                });
+            Msg::SessionProjectionsLoaded(session, outcome)
+        });
+    }
+
     /// 历史回读落地：主干 `RenderJournal(pages[i])` 的时间序回放（:4945-4948）+ durable
     /// title 回填（:4954-4964）。四条分叉特有的口径：
     /// · **重放里的 `session/title` 整型跳过**：主干那两半各用一套判据，分叉共用一颗投影器，
@@ -13927,6 +15099,11 @@ impl Shell {
         if switched {
             self.reset_feedback();
             self.load_feedback(session, context);
+        }
+        // 空态直接发 = 内核新建一条会话，等价一次「进会话」（主干首发走 `OpenSessionAsync`
+        // ⇒ `_pendingNewSessionAuto` 在那里兑）⇒ 这里就是那个兑点的等价位。
+        if switched {
+            self.consume_pending_new_session_auto(context);
         }
         // 发送路径自己 `session/create` 出来的会话可能还不在清单里（真内核 follow 流延迟 /
         // 桩不登记）：先补一行台账，侧栏这一行与后面「分支→改名」的基准标题都靠它。
@@ -14197,6 +15374,12 @@ impl Shell {
         let used = self.unique_seq("tool", turn, seq);
         let mut bubble = Bubble::new("tool", text, turn, used);
         bubble.time = time;
+        // 主干给注入行写 `ToolName="context-injection"`（`MessageDetails.cs:313`）⇒
+        // 渲染分派按它走 [`Shell::context_injection_card`]（主干 `:923-927` → `BuildContextCard`），
+        // 不再落无图标灰行。中继 / 召回两型写的是 `session-recall`（`:250/:268`）⇒ 维持灰行不变。
+        if matches!(injection, Injection::Context(_)) {
+            bubble.tool_name = CONTEXT_INJECTION_TOOL.to_string();
+        }
         self.push_bubble(bubble);
         let row = details_key_at(&self.bubbles, "tool", turn, used);
         self.details.note_event(event, row.as_ref());
@@ -14234,6 +15417,24 @@ impl Shell {
                     );
                     return false;
                 }
+                // 主干 `ApplyFollowFrameAsync` 的**游标闸**（records 臂 `MW:5561`
+                // `if (seq <= _journalCursor) continue;`、单帧臂 `:5567-5568` 的
+                // `seq > _journalCursor` 才 `RenderEventCore`）：历史回放
+                // （`RenderJournalCore:6361-6365`）与 follow 帧共用同一颗 journal 游标——
+                // 回放先把游标推到整段历史的最大 seq，开流快照的每条记录都落在游标之内
+                // ⇒ 整段跳过，`RenderEventCore`（`TrackRunStats`/`TrackContextMeter` 的宿主）
+                // 一帧都不再折。分叉缺这道闸时，快照把历史回放折过的每一帧**原样再折一遍**：
+                // 步数 / token 四桶 / 各时长全翻倍（2026-10-31 R2 实测：重写线 84 步 ·
+                // 526.8 万 tok，主干 42 步 · 263.4 万 tok；tok/s 与缓存命中率纹丝不动
+                // —— 比值的分子分母同倍，正是「全量重复折叠」的指纹）。闸只装在 follow
+                // 臂：history 臂的重复由 `drop_overlapped`（气泡层）与换会话的
+                // `run_stats.forget(新 sid)`（主干 `ResetRunStats` 同款）各挡各的。
+                // 被跳过的帧在主干也**不**触发 `RequestSessionsRefresh`（`continue` 在那发
+                // 之前）⇒ 闸放在举旗之前，被去重的帧不算「新活动」。
+                let seq = event["seq"].as_i64().unwrap_or(0);
+                if seq <= self.journal_cursor(session) {
+                    return true;
+                }
                 // 台账 #217 腿 A：主干把 `RequestSessionsRefresh();` 钉在 live 单帧那一支
                 // （`MainWindow.xaml.cs:5421`，判据 `:5417-5418` 的 `seq > _journalCursor`）⇒
                 // 会话有新活动就该回内核重取 `session/list`，左栏那行的 `updatedAt` 才有新值
@@ -14244,8 +15445,9 @@ impl Shell {
                 // 历史回放的**共用**入口（回放那一支住在 `apply_history` 的循环体里），举进去
                 // 就是「读历史也算新活动」，与主干反向（本 mod 末 `p217_*` 那把反向锁钉这条）。
                 // 已知覆盖面差一档（照实记）：`snapshot` 那一支递归回这里，所以首帧快照的逐条
-                // 记录也会举旗 —— 分叉没有主干那枚 `_journalCursor` 可比 ⇒ 多出来的只有
-                // 「同一条 follow 流开流时那一批」，而合帧闸保证它最多兑一发。
+                // 记录也会举旗 —— 游标闸落地后，快照里落在游标之内的记录在举旗**前**就被跳掉
+                // ⇒ 与主干 records 臂同形（`continue` 先于那发），多出来的只剩「游标之外」
+                // 的真新帧；而合帧闸保证它最多兑一发。
                 self.sessions_live_wanted = true;
                 self.apply_journal_event(session, event);
             }
@@ -14255,8 +15457,40 @@ impl Shell {
         true
     }
 
+    /// 主干 `_journalCursor` 的读格（[`Self::journal_cursors`] 的唯一读口）：没见过的会话
+    /// 回 0 —— 与主干开流前 `Volatile.Write(ref _journalCursor, 0)` 同一起点（journal
+    /// 的 seq 从 1 起，`seq <= 0` 的帧在主干 follow 单帧臂 `:5567` 同样进不来）。
+    fn journal_cursor(&self, session: &str) -> i64 {
+        self.journal_cursors
+            .iter()
+            .find(|(id, _)| id == session)
+            .map_or(0, |(_, seq)| *seq)
+    }
+
+    /// 推进那格游标（主干 `RenderJournalCore:6364` 的 `Math.Max` 与 follow 臂 `:5572` 的
+    /// 赋值在分叉合流成这一发：两个生产臂最终都进 [`Shell::apply_journal_event`]，
+    /// max 口径对两条臂都成立——follow 帧按 seq 升序到齐，等价于逐发赋值）。
+    fn advance_journal_cursor(&mut self, session: &str, seq: i64) {
+        if seq <= 0 {
+            return;
+        }
+        match self
+            .journal_cursors
+            .iter_mut()
+            .find(|(id, _)| id == session)
+        {
+            Some(slot) => slot.1 = slot.1.max(seq),
+            None => self.journal_cursors.push((session.to_string(), seq)),
+        }
+    }
+
     fn apply_journal_event(&mut self, session: &str, event: &Value) {
         let seq = event["seq"].as_i64().unwrap_or(0);
+        // 游标推进（主干 `RenderJournalCore:6364` 是「推进先于渲染」，follow 臂 `:5572`
+        // 是「渲染后赋值」——分叉合流成臂首 max 推进，对单线程的 UI reducer 等价）。
+        // 排在这一格而不是各臂里：历史回放推进游标后，follow 开流快照的逐条记录才会在
+        // 上面那道闸整段落网 —— 这正是「首开双折」的挡板。
+        self.advance_journal_cursor(session, seq);
         let time = event["time"].as_i64().unwrap_or(0);
         let turn = event["data"]["turn"].as_i64().unwrap_or(0);
         let kind = event["type"].as_str().unwrap_or_default();
@@ -14433,6 +15667,13 @@ impl Shell {
                     self.unique_seq("tool", turn, seq),
                 );
                 bubble.time = time;
+                // 主干 `ChatBubble.ToolName/ToolArgs` 同源的两格：原始工具名进 `tool_name`，
+                // `data.arguments` 原文进 `args`（⋯ 菜单那四发复制载荷与时长配对键 `call_id`）。
+                bubble.args = match raw.as_str() {
+                    Some(text) => text.to_string(),
+                    None => raw.to_string(),
+                };
+                bubble.call_id = call_id.to_string();
                 bubble.icon = Some(code);
                 // 主干 `:6284`：内核原始工具名写进**气泡自己**那颗字段（详情浮层「工具」那一格
                 // 的唯一读源，见 `Bubble::tool_name`）。
@@ -14442,6 +15683,15 @@ impl Shell {
             }
             // 主干 `tool/result`：结果非 error 且 callId 命中本轮突变登记，才按结果信封 seq 记一条产出。
             "tool/result" => {
+                // 主干 `RenderEventCore` tool/result 分支那发 `NoteToolResult(bubble, data, resultTime)`
+                // （`ToolCards.cs:58-91`）先于产出登记跑、**error 结果也照记**（IsError 只是卡头的一格
+                // 状态）⇒ 采集落格排在下面那道「is_error 早退」之前。
+                note_tool_result(
+                    &mut self.tool_results,
+                    event["data"]["message"]["source"]["callId"].as_str().unwrap_or_default(),
+                    time,
+                    &event["data"],
+                );
                 let message = &event["data"]["message"];
                 let call_id = message["source"]["callId"].as_str().unwrap_or_default();
                 // 官方只看 content[0] 的 isError。
@@ -14777,10 +16027,18 @@ impl Shell {
         }
     }
 
+    /// `ui-theme/preference` 的三档**内核值**（主干 `MakeThemeDropdown` 的 options 表，
+    /// `MW:10862-10866`），下标序 = `SETTINGS_THEME_CUBES` / `SETTINGS_THEMES` 的既有
+    /// 0=浅 / 1=深 / 2=跟随系统。`choice_index` 靠它把快照里的字符串折回下标。
+    const THEME_PREFERENCE_VALUES: [&'static str; 3] = ["light", "dark", "system"];
+
     /// 主干 `ui-theme/preference`：选「跟随系统」时回落到窗口报上来的实际配色。
     /// 分叉状态键一律下划线（曾写成点号，与下拉发的键永不相等 ⇒ 主题钮是死的）；默认 1=深色 对齐主干 `dark`。
+    /// 三档读法（pending → 快照字符串 → 默认）见 [`Shell::choice_index`]：启动批拉到的快照
+    /// 一落地（`Msg::SettingsSnapshot` 那臂）这里就会吃到内核存的 `system`/`light`，
+    /// 与主干 `ApplyKernelThemeFromSettingsAsync` 的启动换肤同一条。
     fn apply_theme(&mut self) {
-        self.scheme = match self.pick("ui-theme_preference", 1) {
+        self.scheme = match self.choice_index("ui-theme_preference", &Self::THEME_PREFERENCE_VALUES, 1) {
             0 => Scheme::Light,
             1 => Scheme::Dark,
             _ => self.system_scheme,
@@ -14906,7 +16164,9 @@ impl Shell {
     /// 就验过一遍，`Task.Delay(100)` 是**续臂时**才睡的），所以第一发不睡。
     fn arm_workspace_baseline_poll(&mut self, context: &ComponentContext<Shell>) {
         match workspace_baseline_step(self.workspace_baseline_arrived, 0) {
-            BaselinePoll::Arrived { attempt } => self.record_workspace_baseline_ready(attempt),
+            BaselinePoll::Arrived { attempt } => {
+                self.record_workspace_baseline_ready(attempt, context)
+            }
             BaselinePoll::TimedOut => self.workspace_baseline_timed_out(),
             BaselinePoll::Poll { next } => {
                 let generation = self.mux_generation;
@@ -14918,27 +16178,47 @@ impl Shell {
         }
     }
 
-    /// 「工作区清单就绪」那一段的**唯一**记录口，住在轮询链之外。
+    /// 「工作区清单就绪」那一段的**唯一**记录口，住在轮询链之外；本刀起它同时是
+    /// 引导链的**收尾口**（第 4、5 段 + `end_round` + 排队补发都搬进来了，理由见
+    /// `Msg::MuxReady(Ok)` 那一臂尾部的搬家说明）。
     ///
     /// 主干 0.8.3.9（`ed109d3c`）把 `BootMilestone(L("工作区清单就绪"))` 从循环体搬到循环外，
     /// 注释原文：「循环退出条件与 body 里的记录判的是同一个标志，基线恰在 `Task.Delay` 期间被
     /// 事件线程翻上来时，循环按条件直接退出、body 整段跳过——段数停在 5/6（83%）」。
     /// 分叉这边是同一个形状：翻标志的是帧泵（`apply_mux_events`），跑链的是 tick，两者不是
     /// 同一条执行路径 ⇒ 记录只挂在「头判据看见 arrived」那一格，绝不挂在「这一发亲手等到」
-    /// 那一格。#185 BM1 之后，这一格既落自持诊断日志一行（口径同 B1/B2）、也点亮**里程碑第 4 段**
+    /// 那一格。#185 BM1 之后，这一格既落自持诊断日志一行（口径同 B1/B2）、也点亮**里程碑第 3 段**
     /// （主干 MX:3033 那发的对位），`workspace_baseline_recorded` 保证整轮只出一行。
-    fn record_workspace_baseline_ready(&mut self, attempt: u32) {
+    fn record_workspace_baseline_ready(
+        &mut self,
+        attempt: u32,
+        context: &ComponentContext<Shell>,
+    ) {
         if self.workspace_baseline_recorded {
             return;
         }
         self.workspace_baseline_recorded = true;
         self.push_log(format!("BOOT workspace baseline at poll {attempt}"));
-        // 里程碑第 4 段：主干 MX:3033 那一发住在轮询 `for` 的**右括号之后**（0.8.3.9 `ed109d3c`
+        // 里程碑第 3 段：主干 MX:3033 那一发住在轮询 `for` 的**右括号之后**（0.8.3.9 `ed109d3c`
         // 的修复本体）。分叉的对位就是这个记录口 —— 它本来就住在轮询链之外，且上面那道
         // `workspace_baseline_recorded` 闸保证整轮只出一行；把它搬回续臂体内就是主干修掉的那个
         // 「段数永停 5/6（83%）」死形状，`workspace_baseline_milestone_is_recorded_outside_the_poll_body`
         // 与 `workspace_baseline_poll_arms_after_the_frame_pump` 两枚锁都会当场红。
         self.boot_milestone("工作区清单就绪");
+        // 第 4、5 段（主干 `MW:3234/3253`：并行批完成 → 引导完成）与收尾：主干那两发
+        // 都在第 3 段**之后**的 await 链上 ⇒ 分叉把 MuxReady 臂尾巴那对（原在基线之前
+        // 同步点亮 = 运行序 2→5→3→4）搬到这里，观测序回到主干的 3→4→5。booting 闸
+        // 跟行搬：只有引导链走到这一格才点亮（重连回填 `RestoreBusinessStreamsAsync`
+        // 那一路不进基线轮询，天然一声不出）。`end_round` 必须收在 5 段之后——
+        // 关闸之后里程碑就再也进不来（对位主干引导完成即出闸）。
+        if self.boot.booting {
+            self.boot_milestone("会话与模型就绪");
+            self.boot_milestone("引导完成");
+            self.boot.end_round();
+        }
+        // 引导期间静默排队的发送补发（主干 `MW:3259` 的「补发引导期间排队的发送」，
+        // 引导完成之后同一时刻）。
+        self.flush_send_queued_while_booting(context);
     }
 
     /// 主干 `if (attempt >= 600) { FailKernelBoot("内核启动失败", "工作区服务未就绪（基线超时）");
@@ -15606,18 +16886,45 @@ impl Shell {
                 }
                 Ok(launch) => launch,
             };
-            // 缺口 #68：主干 `MainWindow.xaml.cs:2499` 那一发 `SweepOrphanKernels()` —— 起新内核
-            // **之前**先收掉上次崩溃残留、还占着会话写租约的内核。为什么必须收：内核持着每条会话
-            // 目录的写租约、只有进程死亡才释放（`DshKernelHost.cs:164-167`），漏一个孤儿在机器上，
-            // 之后重进同一条会话就必撞 `SessionAlreadyOwnedError`（= 「闪退后发送失败」的根因）。
-            // 用户可见效果与主干同档：只有一行 `DIAG:`（主干是 `:2501` 的 `Debug.WriteLine`），
-            // 加载卡一个字都不动；判定比主干窄两条（按路径而非进程名 + owner 集含主干 `Blade2`），
-            // 见 `procguard` 模块头 —— 这条机器的 node 是 agent 工具链自己在跑的。
-            let swept = procguard::sweep_orphan_kernels();
-            emit_line(&format!("DIAG: {}", swept.note));
-            let kernel = match Kernel::start(&launch) {
-                Err(error) => return Msg::Failed("内核启动失败".to_string(), error),
-                Ok(kernel) => kernel,
+            // 常驻复用（主干 0.9.0.4 `TryAttachResidentAsync`，`MainWindow.KernelBoot.cs:185-245`）：
+            // 冷启之前先按 `launch.dsh_home` 里的状态文件探活上一轮壳退出时留下的常驻内核。
+            // attach-first 是硬顺序——常驻内核的父进程是**上一次已死的壳**，在 attach 之前扫，
+            // 清扫眼里它就是一枚孤儿（父死 + 路径同款）⇒ 必被误杀。`Some(k)` 直接跳过清扫与
+            // `Kernel::start`，落到下面与冷启同一条的「连接就绪」路径（`list_sessions` →
+            // `Msg::Connected`）；探活任一环失败（`None`）才走原「清扫 → 冷启」的老路。
+            // 回退级内核（`dsh_home == None`，`Launch::from_env` 的 cmd 分叉）没有状态文件可读
+            // ⇒ `and_then` 短路成 `None`，与主干「数据家缺置就没有常驻可复用」同形。
+            let resident = launch
+                .dsh_home
+                .as_deref()
+                .and_then(blade2_rs::kernel::try_attach_resident);
+            let kernel = match resident {
+                Some(kernel) => {
+                    // 对位冷启 `Kernel::start` 成功后的留痕（`[resident] state written pid=…`）：
+                    // 只进诊断通道，加载卡一个字都不动。
+                    emit_line(&format!(
+                        "[resident] attached pid={}",
+                        kernel.pid().unwrap_or(0)
+                    ));
+                    kernel
+                }
+                None => {
+                    // 缺口 #68：主干 `MainWindow.xaml.cs:2499` 那一发 `SweepOrphanKernels()` —— 起新内核
+                    // **之前**先收掉上次崩溃残留、还占着会话写租约的内核。为什么必须收：内核持着每条会话
+                    // 目录的写租约、只有进程死亡才释放（`DshKernelHost.cs:164-167`），漏一个孤儿在机器上，
+                    // 之后重进同一条会话就必撞 `SessionAlreadyOwnedError`（= 「闪退后发送失败」的根因）。
+                    // 用户可见效果与主干同档：只有一行 `DIAG:`（主干是 `:2501` 的 `Debug.WriteLine`），
+                    // 加载卡一个字都不动；判定比主干窄两条（按路径而非进程名 + owner 集含主干 `Blade2`），
+                    // 见 `procguard` 模块头 —— 这条机器的 node 是 agent 工具链自己在跑的。
+                    // 引导期清扫保持在 attach 之后（常驻可复用 ⇒ 没有可豁免的在用 pid，零参版即
+                    // `sweep_orphan_kernels_sparing(0)`）。
+                    let swept = procguard::sweep_orphan_kernels();
+                    emit_line(&format!("DIAG: {}", swept.note));
+                    match Kernel::start(&launch) {
+                        Err(error) => return Msg::Failed("内核启动失败".to_string(), error),
+                        Ok(kernel) => kernel,
+                    }
+                }
             };
             let shared = Arc::new(Mutex::new(kernel));
             let listed = shared
@@ -15668,8 +16975,9 @@ impl Shell {
     /// 主线 `OnKernelBootRetryClick` + `RestartKernelBootAsync`（KC:270-305），逐步对应：
     /// · `CancelKernelBoot()` → `boot_task.cancel()`（`component.rs:534-541`：摘掉排队中的结果，
     ///   已跑完那发也因 `TaskControl` 进了 Cancelled 而丢弃）；
-    /// · `_rpc = null` / `await staleRpc.DisposeAsync()` → `self.kernel = None`（`Kernel::drop`
-    ///   就是 `shutdown()`，`kernel.rs:659`，旧进程随句柄归零收掉）；
+    /// · `_rpc = null` / `await staleRpc.DisposeAsync()` → `kill_and_clear()` 后丢句柄
+    ///   （`self.kernel.take()`；常驻设计 0.9.0.4 起 `Drop` 不收进程，显式杀树 + 清状态文件
+    ///   才是 `staleRpc` 那一发的等价物——旧「`= None` 靠 drop 收进程」的链已断）；
     /// · `_kernel = new DshKernelHost()` → 下一轮 `start_kernel` 里 `Kernel::start` 新起的宿主；
     /// · 四个长驻流标记（`_workspaceStreamOpen` / `_controlStreamId` / `_sessionStreamId` /
     ///   `_businessStreamsResetPending`）→ 分叉的 workspace/follow 与 `$events` 流是 `Mux` 实例
@@ -15681,7 +16989,16 @@ impl Shell {
         if let Some(task) = self.boot_task.take() {
             task.cancel();
         }
-        self.kernel = None;
+        // 常驻设计（主干 0.9.0.4）之后 `Kernel::drop` 不再收进程（`kernel.rs` 头注：作业对象
+        // 那条链已整体切断）⇒ 丢弃旧句柄之前必须显式 `kill_and_clear`：按 spawn/attach 记下的
+        // 模块路径核对身份再杀整棵树 + 删常驻状态文件。覆盖的全是「内核已到手」的失败面
+        // （mux 开流失败 / 基线超时走的就是这颗重试钮）；`Msg::Failed`（宿主没起来）那一臂
+        // 不用加——`Kernel::start` 内部已自收。幂等：句柄不在（None）就不进这一发。
+        if let Some(shared) = self.kernel.take() {
+            if let Ok(mut kernel) = shared.lock() {
+                kernel.kill_and_clear();
+            }
+        }
         // 丢实例 = 丢流（`invalidate_mux`），并且推一代 ⇒ 上一根 socket 的读手回来也对不上号。
         self.invalidate_mux();
         // 缺口 #67：手动重试取代本轮退避循环，那条在飞的延时 tick 一并作废
@@ -15915,6 +17232,41 @@ fn effort_rows(reasoning: &Value) -> Vec<EffortRow> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// `modelSelection` 投影里 `next` 的三枚字段（主干 `ApplyModelSelectionProjection` 的
+/// 取数段，`MW:14022-14030`）。`next` = 待生效选择 ?? 会话上次实际使用。
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ModelSelectionNext {
+    model: String,
+    provider: String,
+    effort: String,
+}
+
+/// 主干 `MW:14016-14022` 的取数口径：wire = `{lastUsed, next}`，这里只认
+/// `next` 是对象且 `next.model` 非空那一型 —— `next` 缺席 / `model` 空（主干
+/// `model.Length == 0` 那条 early return）都返 `None` = 壳侧一概不动。
+/// `lastUsed`（主干 `CaptureModelLastUsed`，只喂「上次使用」菜单行）分叉的模型菜单
+/// 没有那一行 ⇒ 不消费，与 [`Shell::model_face`] 的注释同一条备案。
+fn model_selection_next(view: &Value) -> Option<ModelSelectionNext> {
+    let next = view.get("next")?;
+    let model = next.get("model").and_then(Value::as_str).unwrap_or_default();
+    if model.is_empty() {
+        return None;
+    }
+    Some(ModelSelectionNext {
+        model: model.to_string(),
+        provider: next
+            .get("provider")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        effort: next
+            .get("reasoningEffort")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    })
 }
 
 /// 档位行的文案（主干 `MW:13792` 那枚三元）：内核给了 `name` 就**原样**，缺才过表中文化。
@@ -16848,29 +18200,96 @@ fn traj_observe(
 }
 
 impl Shell {
+    /// 内核跟随那一段的**取数腿**（主干 `ApplyModelSelectionProjection` 的取数段，
+    /// `MW:16368-16372` 批量 + `:16152-16163` 增量两路都灌进同一颗）：活动会话的
+    /// `modelSelection` 投影 → [`model_selection_next`]。
+    /// 单独成颗有一个理由：[`Shell::model_face`] 的源窗锁
+    /// （`the_model_trigger_never_collapses_and_carries_exactly_two_names`）禁止
+    /// `self.active`/`self.kernel` 字样进窗——锁的本意是「脸**永不收起**、没数据只有
+    /// 文案回落」，这条腿只供显示覆盖、从不改变「必画」，挪出去既守锁又不丢跟随；
+    /// 无活动会话 / 无投影 ⇒ `None`，脸照旧走壳侧那份。
+    fn model_selection_follow(&self) -> Option<ModelSelectionNext> {
+        self.active
+            .as_deref()
+            .and_then(|session| self.control.projections(session))
+            .and_then(|projections| projections.value_of("modelSelection"))
+            .and_then(model_selection_next)
+    }
+
     /// 主干 `UpdateModelEffortLabel`（`MW:13587-13593`）：**触发器那一帧的两枚字**。
     ///
     /// 返回 `ModelFace` 而**不是** `Option<ModelFace>` —— 与 [`Shell::permission_face`] 的签名
     /// 差别就是这条判据本身：`ModelButton.Visibility` 在主干一次都没被赋值，无内核、无会话、
     /// 目录拉失败、`rows` 空表**都不收起**，只把文案回落成 `L("选择模型")`。这里因此
     /// **不判** `self.kernel`，也不判 `self.active`。
+    ///
+    /// #56 补（第一轮门控「模型钮只显『选择模型』」的根因）：主干在投影帧
+    /// `modelSelection` 上还有一条**内核跟随**通路（`ApplyModelSelectionProjection`，
+    /// `MW:14015-14047`）：官方触发器口径 = `next ?? catalog.default`，会话自己选过模型就
+    /// 跟随会话（内核 `modelSelectionProjection` 的 `next` = 待生效选择 ?? 会话上次实际使用），
+    /// 没选过才落回壳里记的意图——「内核的判定优先于壳里记的意图」是主干那颗函数的原注释。
+    /// 分叉此前只接了 boot 默认（`apply_model_catalog`）与用户点选（`apply_model_pick`）
+    /// 两路，投影这一路没接 ⇒ 内核明明在跑某个模型，触发器永远停在占位文案。
+    /// 这里在渲染帧按活动会话的投影现算，语义逐条对齐主干那颗：
+    /// · `next.model` 空 / `next` 缺席 ⇒ 一切不动（主干 `:14016-14022` 两条 early return）；
+    /// · 名字：`rows` 里按 id 找得到就换 `row.name`（主干 `:14036`），找不到**保留壳侧那份**
+    ///   （主干 `:14033-14037` 的 if 不命中就是不改 `_selectedModelName`）；
+    /// · 档位：`next.reasoningEffort` 非空就跟随（主干 `:14043-14046` 的 `SetEffortUi`），
+    ///   空则保留壳侧；档位**表**跟随名字那条的查找结果（找得到 = 该模型的表，主干
+    ///   `SetEffortMenuFromModel`；找不到 = 保留壳侧现表，主干也不动菜单）。
     fn model_face(&self) -> ModelFace {
         let state = &self.model;
         let catalog = &self.catalog;
-        // `MW:13589`：显示名为空 ⇒ 回落占位文案（这就是主干唯一的「没数据」形态）。
-        let model = if state.selected_name.is_empty() {
+        // ① 内核跟随：取数腿在 [`Shell::model_selection_follow`]（源窗锁把它挪出了本窗，
+        //    理由见那颗函数的文档）。
+        let next = self.model_selection_follow();
+        // ② 主干 `MW:13589`：显示名为空 ⇒ 回落占位文案（这就是主干唯一的「没数据」形态）。
+        let (model, efforts) = match &next {
+            Some(next) => {
+                let row = state.rows.iter().find(|row| row.id == next.model);
+                let model = match row {
+                    // 主干 `:14036`：表里找得到 ⇒ 显示名换成内核跟的这一档
+                    Some(row) => row.name.clone(),
+                    // 找不到 ⇒ 保留壳侧那份（主干不命中那个 if 就是原样不动）
+                    None => state.selected_name.clone(),
+                };
+                // 档位表跟随：找得到 = 该模型的 `reasoning.efforts`（空 ⇒ 静态四档兜底，
+                // [`set_effort_menu`] 同一条规则，渲染帧不改状态所以这里现算一份脸用表）；
+                // 找不到 = 壳侧现表。
+                let efforts = match row {
+                    Some(row) if row.efforts.is_empty() => STATIC_EFFORT_IDS
+                        .iter()
+                        .map(|id| EffortRow {
+                            id: (*id).to_string(),
+                            label: String::new(),
+                        })
+                        .collect(),
+                    Some(row) => row.efforts.clone(),
+                    None => state.efforts.clone(),
+                };
+                (model, efforts)
+            }
+            // 没有 next ⇒ 壳侧意图原样（主干那颗函数对这一形态一概早退）
+            None => (state.selected_name.clone(), state.efforts.clone()),
+        };
+        let model = if model.is_empty() {
             catalog.l("选择模型")
         } else {
-            state.selected_name.clone()
+            model
         };
-        // `MW:13590`：`FirstOrDefault(...).Label` 在空表 / 无匹配时给 null ⇒ 走 `IsNullOrEmpty`。
-        let effort = state
-            .efforts
+        // ③ 档位 id：投影非空就跟随（主干 `SetEffortUi` 只在非空时调），空则壳侧。
+        let effort_id = next
+            .as_ref()
+            .filter(|next| !next.effort.is_empty())
+            .map(|next| next.effort.clone())
+            .unwrap_or_else(|| state.effort.clone());
+        // 主干 `MW:13590`：`FirstOrDefault(...).Label` 在空表 / 无匹配时给 null ⇒ 走 `IsNullOrEmpty`。
+        let effort = efforts
             .iter()
-            .find(|row| row.id == state.effort)
+            .find(|row| row.id == effort_id)
             .map(|row| effort_row_label(catalog, row))
             .unwrap_or_default();
-        // `MW:13591`：档位空 ⇒ **不带尾空格**的那一支。
+        // 主干 `MW:13591`：档位空 ⇒ **不带尾空格**的那一支。
         let label = if effort.is_empty() {
             model
         } else {
@@ -17145,7 +18564,7 @@ impl Shell {
         let plan = self.control.projections(session)?.plan.as_ref()?;
         let face = plan_face(Some(plan), self.plan_pending_kind().map(|kind| kind.as_str()))?;
         let catalog = &self.catalog;
-        let p = Palette::for_scheme(self.scheme);
+        let p = theme::palette(self.scheme);
         let mut cells: Vec<KeyedView> = Vec::new();
         // 主干那枚 `FontIcon` **没有** `x:Name` ⇒ UIA 名只有三枚，这里用无 id 的 `mark_size`。
         cells.push(KeyedView::new(
@@ -17192,6 +18611,9 @@ impl Shell {
         let band = StackPanel::new()
             .orientation(Orientation::Horizontal)
             .spacing(space::S6)
+            // 主干 `MX:1268`（0.9.0.4）：chip 内容纵轴**居中** —— Border 高度由同行布局决定时，
+            // 默认 Stretch 会把横排顶到盒顶。分叉同形补上这一发。
+            .vertical_alignment(VerticalAlignment::Center)
             .keyed_children(cells);
         // ⚠ `automation_name` 必须在 `.content()` **之前**挂 —— 那颗扩展只在原生控件（`LayoutControl`）
         // 上存在，而 `.content()` 的返回已经是 `View`（类型擦除后 `AutomationExt` 的约束不再满足）。
@@ -17304,9 +18726,16 @@ impl Component for Shell {
             (TRAY_MINIMIZE_KEY.to_string(), shell_options.minimize_to_tray),
             (TRAY_CLOSE_KEY.to_string(), shell_options.close_to_tray),
             (TRAY_NOTIFICATIONS_KEY.to_string(), shell_options.show_notifications),
+            // 主干 `LoadSkinVideoPauseOnBlur`（`xaml.cs:9067-9081`）：启动读盘一次进内存，
+            // 渲染路径零 IO（对位 `_skinVideoPauseOnBlur` 字段，缺省开）。
+            (
+                SKIN_VIDEO_PAUSE_KEY.to_string(),
+                shellfiles::load_skin_video_pause(),
+            ),
         ];
-        // `AGENTS.md` 读回来**不**灌进 `fields`：那颗编辑框是非受控的（`TextBox` 没有
-        // `.text(...)` 绑定），灌进去只会让「状态格有字、屏幕空着」。它只当脏检基线用。
+        // `AGENTS.md` 读回来只当脏检基线用；编辑框的**回填**在视图那半
+        // （`settings_personalization` 的 `.text(self.field(INSTRUCTIONS_KEY, &instructions_saved))`，
+        // 对位主干 `LoadInstructions` 的 `_instructionsBox.Text = _instructionsDraft`）。
         let shell_boot_trace = format!(
             "tray={}/{}/{} notif={} material={} bubble={} bubble_opacity={:.2} skin={:.1} agents={} chars",
             shell_options.show_tray_icon,
@@ -17362,6 +18791,8 @@ impl Component for Shell {
             // #190 P3：目录还没落到过、重拉也没在飞（首拉在 `Msg::Connected` 那一发之后）。
             permission_catalog: None,
             permission_catalog_refetch_queued: false,
+            // 空态的「自动审查」意图从没记过（主干 `_pendingNewSessionAuto` 的 `false` 初值）。
+            pending_new_session_auto: false,
             search_credentials: None,
             credential_writes: Vec::new(),
             system_scheme: Scheme::Dark,
@@ -17393,11 +18824,14 @@ impl Component for Shell {
             run_stats: RunStatsLedger::new(),
             trajectory_steps: TrajectoryLedger::new(),
             context_meters: cm::ContextMeterBook::new(),
+            journal_cursors: Vec::new(),
             compactions: Vec::new(),
             workflow_runs: Vec::new(),
             compaction_open: Vec::new(),
+            context_open: Vec::new(),
             workflow_open: Vec::new(),
             mutations: Vec::new(),
+            tool_results: Vec::new(),
             produced: Vec::new(),
             copied: None,
             reasoning_open: Vec::new(),
@@ -17415,6 +18849,7 @@ impl Component for Shell {
             reference: ReferenceState::idle(),
             // 首屏没有 ⋯ 菜单开着（reactor 没有 Visibility ⇒ `None` 就是那棵节点不入树）。
             file_menu: None,
+            tool_menu: None,
             composer_add: false,
             // 首屏也没有详情浮层（同一口径：`None` ⇒ 那棵节点不入树）。
             message_details: None,
@@ -17469,6 +18904,16 @@ impl Component for Shell {
                 AGENT_MODE_BUILTINS[0].1.to_string(),
             )),
             agent_presets: Vec::new(),
+            preset_cards: None,
+            plugins_tab: 0,
+            plugin_inventory: None,
+            inventory_filter: String::new(),
+            provider_rows: None,
+            models_editor: None,
+            // #56 工作区选择器：主干 `_pendingWorkspace` 声明期即 `null`（`MW:2496`）
+            // ⇒ 初值 `None` = 「文档目录（默认）」那一档，与「待用预设**有**初值」那颗相反。
+            pending_workspace: None,
+            workspace_picker_create: false,
             permission_confirm: None,
             reset_confirm: None,
             model: ModelSelection::default(),
@@ -17526,6 +18971,9 @@ impl Component for Shell {
             instructions_pending: String::new(),
             instructions_note: None,
             instructions_failed: false,
+            // 记忆 JSONL 只读半格：启动这一发读盘（对位主干 `LoadMemoryRaw` 那次 `ReadMemoryText`），
+            // 之后渲染路径零 IO（与上面 `shell_json_saved` / `instructions_saved` 同一条纪律）。
+            memory_loaded: shellfiles::load_memory_text(),
             skin_opacity_armed: false,
             // `-1.0` 是「还没落过盘」的哨兵：滑杆合法域 10..80，取不到负数。
             skin_opacity_target: -1.0,
@@ -17543,6 +18991,11 @@ impl Component for Shell {
             skin_video_armed: false,
             // #140 刀2：`PetInstallSay` 那行初值是「还没点过那颗」⇒ 不入树（主干是空 Text，同相）。
             pet_status: None,
+            pets: None,
+            pet_active: None,
+            pet_remove_armed: None,
+            pet_local_ids: Vec::new(),
+            pet_codex_ids: Vec::new(),
             // #160 UK2 S1：关于页手动那一发的两位。初值 = 主干「还没点过那颗」那一帧
             // （`_aboutUpdateStatus.Text` = 「更新源：{0}」、`_aboutBusy` = false）。
             about_status: None,
@@ -17655,6 +19108,8 @@ impl Component for Shell {
                 // 切页 ⇒ 交付物卡那一棵随页退役，主干那张系统级 flyout 也随之关闭。
                 // #93e 那张详情浮层同理：它就长在聊天页那一格里，切页即收。
                 self.file_menu = None;
+                // 工具卡行尾 ⋯ 那张菜单的锚长在聊天流里 ⇒ 同口径随页退役。
+                self.tool_menu = None;
                 // #240：「+」那张 flyout 同族，切页即收（锚在聊天页的 composer 上）。
                 self.composer_add = false;
                 self.message_details = None;
@@ -17711,6 +19166,9 @@ impl Component for Shell {
                 self.system_scheme = scheme;
                 self.apply_theme();
             }
+            // 下拉的程序化回声（见 [`Msg::PickEcho`] 的取数口径）：整发吞掉，一个格都不动
+            // —— 对位主干 `MakeChoiceField` 那枚 `ready` 闸的「只有用户操作后的变化才登记」。
+            Msg::PickEcho => {}
             Msg::Pick(key, index) => {
                 // #56 第二颗：`permission.defaultPreset` 这一格**有闸**。主干那颗下拉不是普通的
                 // `MakeChoiceField`，是 `MakeDefaultPermissionChoiceField`
@@ -17735,36 +19193,37 @@ impl Component for Shell {
                     }
                 }
             }
-            // 外观方块。`on == false` 一律不写状态 —— 它只有两种来源：① 同组另一颗被选中后
-            // 本轮重绘把本颗 `is_checked` 写成 false 的**原生回声**；② 用户**重按已选中的那颗**
-            // （原生态自己翻成 Off）。两种都必须忽略：前者已经落到新值上，后者正是主干
-            // `Click` 里「把 IsChecked 压回 true」的等价物 —— 视图每轮从 `pick` 重算
-            // `is_checked`，下一帧就把那颗重新钉回 On。
-            // 相同下标也不写：写回 true 会让原生再报一次 `IsCheckedChanged(true)`，
-            // 不挡就是自激循环（挡法同 `set_feedback_rating` 的那两种回声）。
-            Msg::ThemePick(index, on) => {
-                if on && self.pick("ui-theme_preference", 1) != index {
-                    self.set_pick("ui-theme_preference", index);
-                    self.apply_theme();
+            // 外观行已换成 `MakeThemeDropdown` 下拉（主干 `MW:10855-10890` 的现形），
+            // 选择走上面 `Msg::Pick("ui-theme_preference", index)` 那一臂（即时 `apply_theme`）。
+            // 原三颗方块的 `Msg::ThemePick`（Toggle 回声闸）随方块一起退役。
+            Msg::StatsRangeByText(text) => {
+                // 主干 `OnStatsRangeChanged`（`MW:15152`）：`Tag` 反查不到 = 整个不动
+                // ⇒ 文本对不上档位表也不写格。写完不显式触发任何事：趋势图/模型用量都在
+                // `settings_usage` 里现算，声明式重渲染会自己带上新档位（主干那两次
+                // 手动重渲染的等价物）。
+                let next = text.as_deref().and_then(|text| {
+                    STATS_RANGE_CHOICES
+                        .iter()
+                        .map(|(label, _)| self.catalog.l(label))
+                        .position(|label| label == text)
+                });
+                if let Some(next) = next {
+                    self.set_pick(STATS_RANGE_PICK_KEY, next);
                 }
             }
-            Msg::StatsRange(index, on) => {
-                // `on == false` 那一发是「重按已选中的那颗」：原生 `ToggleButton` 会先把
-                // `IsChecked` 打成 false 再等视图拨回。**必须整发吞掉**（不写格、不重渲染），
-                // 否则选中态被自己的回落冲掉，还来回抖两帧。口径同 [`Msg::ThemePick`]。
-                // 写完不显式触发任何事：趋势图/模型用量都在 `settings_usage` 里现算，
-                // 声明式重渲染会自己带上新档位（主干 :1560/1570 那两次手动重渲染的等价物）。
-                if on {
-                    self.set_pick(STATS_RANGE_PICK_KEY, index);
-                }
-            }
-            // #143 热力图口径（`On == false` 那一发整口吞，理由与守卫口径同上一臂）。
-            // 写完不显式触发任何事：热力格子与 `max` 都在 `usage_heat_rows` 里现算，
-            // 声明式重渲染会自己带上新口径（主干 `OnStatsHeatMetricChanged` 那一次手动
+            // #143 热力图口径（守卫与反查口径同上一臂）：文本对不上 = 不动；写完不显式
+            // 触发任何事 —— 热力格子与 `max` 都在 `usage_heat_cells` 里现算，声明式重渲染
+            // 会自己带上新口径（主干 `OnStatsHeatMetricChanged` 那一次手动
             // `RenderStatsHeatmap()` 的等价物）。
-            Msg::StatsHeatMetric(index, on) => {
-                if on {
-                    self.set_pick(STATS_HEAT_METRIC_PICK_KEY, index);
+            Msg::StatsHeatMetricByText(text) => {
+                let next = text.as_deref().and_then(|text| {
+                    STATS_HEAT_METRIC_CHOICES
+                        .iter()
+                        .map(|label| self.catalog.l(label))
+                        .position(|label| label == text)
+                });
+                if let Some(next) = next {
+                    self.set_pick(STATS_HEAT_METRIC_PICK_KEY, next);
                 }
             }
             Msg::Toggle(key, on) => {
@@ -17804,6 +19263,11 @@ impl Component for Shell {
                             }
                         }
                         self.write_shell_json();
+                    }
+                    // 主干 `OnSkinVideoPauseToggled`（`xaml.cs:9120-9127`）：改字段 + 立即
+                    // `SaveSkinVideoPauseOnBlur()`（落 `shell-skin.videopause`，写失败吞掉）。
+                    SKIN_VIDEO_PAUSE_KEY => {
+                        shellfiles::save_skin_video_pause(on);
                     }
                     _ => {}
                 }
@@ -18019,6 +19483,14 @@ impl Component for Shell {
             }
             Msg::PaletteMove(_) if self.composer_add => {}
             Msg::PaletteAccept if self.composer_add => {}
+            // 工具卡行尾 ⋯ 那张同借三档（形制 = ⋯ 菜单族）：行无高亮态 ⇒ ↑↓ / Enter 吞掉，
+            // Esc 收层。问序排在这批瞬时层里即可——五张层互斥（见 `Msg::ToolMenuToggle`
+            // 那两臂的备案），先后不改变行为。
+            Msg::PaletteClose if self.tool_menu.is_some() => {
+                self.tool_menu = None;
+            }
+            Msg::PaletteMove(_) if self.tool_menu.is_some() => {}
+            Msg::PaletteAccept if self.tool_menu.is_some() => {}
             // 列表浮层**也**借那三档（它入树在最后、压在详情浮层之上 ⇒ 先问它）。
             Msg::PaletteClose if self.session_refs.is_some() => {
                 session_ref_list_close(&mut self.session_refs);
@@ -18226,6 +19698,58 @@ impl Component for Shell {
                 file_menu_close(&mut self.file_menu);
             }
             Msg::FileMenuPick(slot) => self.run_file_menu_pick(Some(slot), context),
+            // ---- 工具卡行尾 ⋯ 的复制菜单 ------------------------------------------------
+            // 形制 = ⋯ 菜单族的自绘替身（遮罩 + 贴角卡）。toggle 收放同 [`Msg::FileMenuToggle`]，
+            // 但**不逐发改写兄弟层的开臂**：这张的锚在气泡行内，兄弟层自己的 light-dismiss
+            // 遮罩会先吃掉下一次按下（同刻至多一张由遮罩域成立）；换页/换会话的清点在
+            // `Msg::Nav` 与 `forget_commands` 里。
+            Msg::ToolMenuToggle(key) => {
+                if self.tool_menu.as_deref() == Some(key.as_str()) {
+                    self.tool_menu = None;
+                } else {
+                    self.tool_menu = Some(key);
+                }
+            }
+            Msg::ToolMenuClose => {
+                self.tool_menu = None;
+            }
+            Msg::ToolMenuPick(key, slot) => {
+                self.tool_menu = None;
+                self.run_tool_menu_pick(&key, slot);
+            }
+            // ---- 设置·宠物页的插件路由两发 ------------------------------------------------
+            // 回执两格各自落位；来源判定（本机/Codex/内置）随清单回执重扫（主干
+            // `ReloadPetLibraryAsync` 开头那两发 ScanLocal/ScanCodexIds 同一批）。
+            Msg::PetsLoaded(outcome) => match outcome {
+                Ok((pets, active)) => {
+                    self.pets = Some(Ok(pets));
+                    self.pet_active = active;
+                    // 行删除/切换后的重载都从这条臂过图 ⇒ 待确认的武装一并撤掉
+                    // （删完了那行已不在，武装留着就是给幽灵行发的第二击）。
+                    self.pet_remove_armed = None;
+                    self.rescan_pet_sources();
+                }
+                Err(error) => {
+                    // 主干 `GetPetsAsync` null（路由 404）那一档：`pets is null` 走空态句
+                    // ⇒ 分叉把 `Err` 折进同一档（`settings_pet` 的渲染口按 `Err`/空表同画）。
+                    self.pets = Some(Err(error));
+                }
+            },
+            Msg::PetUse(id) => self.pet_use(&id, context),
+            // 行内两击确认（见 Msg::PetRemove 的注释）：第一击只记待确认格，
+            // 第二击同一只才进真删。换一只点 = 换待确认的那只（主干 ContentDialog
+            // 是模态、没有「换一只」的档；这里点别的行的删除等价把上一只的武装撤掉）。
+            Msg::PetRemove(id) => {
+                if self.pet_remove_armed.as_deref() == Some(id.as_str()) {
+                    self.pet_remove(&id, context);
+                } else {
+                    self.pet_remove_armed = Some(id);
+                }
+            }
+            // 失败只进诊断日志（主干那支是 Debug.WriteLine）：清单保持原样，
+            // 「使用中」标记等下一次重载再刷新。
+            Msg::PetUsed(Err(error)) => self.push_log(format!("DIAG: 切换宠物失败：{error}")),
+            Msg::PetUsed(Ok(())) => {}
             // ---- #240 输入区「+」那张 flyout ------------------------------------------------
             // 开臂同族互斥：ComposerAddFlyout 与 ⋯ 菜单/详情/召回/选择器那批系统级替身同一档
             // （主干同一时刻只有一张 flyout 在场）⇒ 互斥清单的写法照抄上面 `Msg::FileMenuToggle`。
@@ -18315,6 +19839,9 @@ impl Component for Shell {
                         // `PopulateModelOptions` 内部的 `lock` 里，`:13495`），失败那一发因此
                         // 保留上一轮的表；`load_agent_mode_menu` 是**先清再拉**，不许照抄。
                         SelectorKind::Model => self.load_model_catalog(context),
+                        // 工作区选择器：表体读侧栏那棵树（`MW:5117-5152` 重建时也只读
+                        // `_workspaces`，不发 RPC）⇒ 展开时机没有那一发。
+                        SelectorKind::Workspace => {}
                     }
                 }
             }
@@ -18464,6 +19991,20 @@ impl Component for Shell {
                 self.pending_agent_preset = Some((id, name));
                 self.selectors = None;
             }
+            Msg::WorkspacePick(workspace) => {
+                // 主干 `PickWorkspace`（`MW:5161-5163`）：只写 `_pendingWorkspace` 再重算触发器，
+                // 当场一发 RPC 都不发；点完 flyout 自动关（与上面那颗同一口径）。
+                self.pending_workspace = workspace;
+                self.selectors = None;
+            }
+            Msg::WorkspacePickerCreate => {
+                // 主干 `CreateWorkspaceFromPickerAsync` 的**开卡那一半**：弹的还是侧栏加号
+                // 那张「新建工作区」卡（`CreateWorkspaceAsync` 共用），先点「建完即选」的旗；
+                // 「建完把它设为待用值」那一半在 `Msg::WorkspaceWritten` 的 Create 支里。
+                self.selectors = None;
+                self.workspace_picker_create = true;
+                self.show_workspace_dialog(WorkspaceDialogKind::Create, context);
+            }
             Msg::AgentPresetsLoaded(Ok(roster)) => {
                 self.agent_presets = roster;
             }
@@ -18472,6 +20013,286 @@ impl Component for Shell {
                 // 不阻塞选择」。开层那一刻 [`Shell::load_agent_mode_menu`] 已经把自定义表清空
                 // （= 主干 `Items.Clear()`，`MW:4822` 在 `try` **之前**），所以这一支什么都不做
                 // 就是主干行为 —— 不弹提示、不清已挑过的待用值、也不留上一轮的残留。
+            }
+            // ---- 设置页预设卡的五发腿（主干 `RenderPresetsSectionAsync` 一族）----
+            Msg::PresetCardsLoaded(outcome) => {
+                self.preset_cards = Some(outcome);
+            }
+            Msg::PresetView(id, shown) => {
+                // 主干 `ShowPresetCompositionAsync`（`SettingsExtras.cs:39-84`）：前置
+                // `_rpc is null ⇒ return`（一声不出）；`agentPresets/read` 回执里 name 缺失
+                // 回落显示名、content 缺失回落空串；失败弹 `无法读取预设组装：{0}`。
+                let Some(shared) = self.kernel.clone() else {
+                    return;
+                };
+                let name = shown;
+                context.spawn_background(move |_token| {
+                    let call = agent_presets_read(&id);
+                    let outcome = shared
+                        .lock()
+                        .map_err(|_| "内核状态不可用".to_string())
+                        .and_then(|mut kernel| kernel.call(call.method, call.args))
+                        .map(|reply| {
+                            let title = reply
+                                .get("name")
+                                .and_then(Value::as_str)
+                                .filter(|s| !s.is_empty())
+                                .map(String::from)
+                                .unwrap_or(name);
+                            let content = reply
+                                .get("content")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_string();
+                            (title, content)
+                        });
+                    Msg::PresetViewLoaded(outcome)
+                });
+            }
+            Msg::PresetViewLoaded(Ok((title, content))) => {
+                // 主干那一发是 ContentDialog（只读 yml + 关闭钮）；分叉的弹窗通道是
+                // `error_dialog` 那张卡（同为主干 `ShowErrorAsync` 的对位），标题拼进正文头行。
+                // 火一律走 [`Msg::ErrorDialog`] 那颗唯一闸口（drop 不排队）⇒ 不许直写那一格。
+                self.update(
+                    Msg::ErrorDialog(format!(
+                        "{}\n\n{}",
+                        self.catalog.lf("组装（agent.cordis.yml）· {0}", &[title]),
+                        content
+                    )),
+                    context,
+                );
+            }
+            Msg::PresetViewLoaded(Err(error)) => {
+                self.update(
+                    Msg::ErrorDialog(self.catalog.lf("无法读取预设组装：{0}", &[error])),
+                    context,
+                );
+            }
+            Msg::PresetUseForSession(id, name) => {
+                // 主干 `SelectPresetAsync`（`MW:13619-13641`）：无活跃会话 ⇒
+                // `请先在左侧选择一个会话…`；select 的回执（生效 id）拼进成功句。
+                let Some(session) = self.active.clone().filter(|s| !s.is_empty()) else {
+                    self.update(
+                        Msg::ErrorDialog(self.catalog.l(
+                            "请先在左侧选择一个会话：预设切换作用在会话的 agent 上。",
+                        )),
+                        context,
+                    );
+                    return;
+                };
+                let Some(shared) = self.kernel.clone() else {
+                    return;
+                };
+                context.spawn_background(move |_token| {
+                    let call = agent_presets_select(&session, &id);
+                    let outcome = shared
+                        .lock()
+                        .map_err(|_| "内核状态不可用".to_string())
+                        .and_then(|mut kernel| kernel.call(call.method, call.args))
+                        .map(|reply| {
+                            // 主干回执读法（`SettingsExtras.cs:134`）：`applied.GetString()`——
+                            // 形状缺席/非串时主干会抛（被外层 catch 接住），这里宽容成空串。
+                            reply
+                                .get("preset")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_string()
+                        });
+                    Msg::PresetUseForSessionDone(name, outcome)
+                });
+            }
+            Msg::PresetUseForSessionDone(name, Ok(applied)) => {
+                self.update(
+                    Msg::ErrorDialog(self.catalog.lf(
+                        "会话已切换到预设「{0}」（内核回执：{1}）。",
+                        &[name, applied],
+                    )),
+                    context,
+                );
+            }
+            Msg::PresetUseForSessionDone(name, Err(error)) => {
+                // 主干内层 catch（`MW:13637-13640`）：常见 `agent-preset/locked`。
+                self.update(
+                    Msg::ErrorDialog(self.catalog.lf("切换预设失败：{0}", &[error])),
+                    context,
+                );
+                let _ = name;
+            }
+            Msg::PresetSetDefault(id) => {
+                // 主干（`MW:13583-13598`）：`settings/update { ns: agent-presets, patch.default }`
+                // 成功 ⇒ 重拉该节刷默认标记；失败 ⇒ `设为默认失败：{0}`。主干那发不带
+                // expected revision（`patch = new { @default = id }`）⇒ 分叉同传 `None`。
+                let Some(shared) = self.kernel.clone() else {
+                    return;
+                };
+                context.spawn_background(move |_token| {
+                    let call = settings_update("agent-presets", &json!({ "default": id }), None);
+                    let outcome = shared
+                        .lock()
+                        .map_err(|_| "内核状态不可用".to_string())
+                        .and_then(|mut kernel| kernel.call(call.method, call.args))
+                        .map(|_| ());
+                    Msg::PresetSetDefaultDone(outcome)
+                });
+            }
+            Msg::PresetSetDefaultDone(Ok(())) => {
+                self.load_preset_cards(context);
+            }
+            Msg::PresetSetDefaultDone(Err(error)) => {
+                self.update(
+                    Msg::ErrorDialog(self.catalog.lf("设为默认失败：{0}", &[error])),
+                    context,
+                );
+            }
+            // ---- 插件页 Tab 与清单 ----
+            Msg::PluginsTabByText(text) => {
+                // 主干 `SelectionChanged`（`MW:13022-13030`）：Tag 反查不到 = 不动；
+                // 换 Tab 时内容源不同，inventory 侧进 Tab 才拉清单（主干每帧现渲染）。
+                let next = text.as_deref().and_then(|text| {
+                    [self.catalog.l("插件配置"), self.catalog.l("插件列表")]
+                        .iter()
+                        .position(|label| *label == text)
+                });
+                if let Some(next) = next {
+                    if next != self.plugins_tab {
+                        self.plugins_tab = next;
+                        if next == 1 {
+                            self.load_plugin_inventory(context);
+                        }
+                    }
+                }
+            }
+            Msg::InventoryFilter(value) => {
+                self.inventory_filter = value;
+            }
+            Msg::PluginInventoryLoaded(outcome) => {
+                self.plugin_inventory = Some(outcome);
+            }
+            // ---- 模型页提供方行卡 ----
+            Msg::ProviderRowsFetched(outcome) => match outcome {
+                Ok((providers, described)) => {
+                    let snapshot = self.settings_snapshot.as_deref();
+                    self.provider_rows = Some(Ok(build_provider_rows(
+                        &providers,
+                        &described,
+                        snapshot,
+                    )));
+                }
+                Err(error) => {
+                    self.provider_rows = Some(Err(error));
+                }
+            },
+            Msg::ModelsEditorToggle(provider, ns, display, adding) => {
+                // 主干 `edit.Click`（`MW:11468-11483`）：同一行再点 = 收起；否则展开。
+                let already_open = self
+                    .models_editor
+                    .as_ref()
+                    .is_some_and(|(p, n, _, adding)| !(*adding) && p == &provider && n == &ns);
+                self.models_editor = if already_open {
+                    None
+                } else {
+                    Some((provider, ns, display, adding))
+                };
+            }
+            Msg::ModelsEditorClose => {
+                self.models_editor = None;
+            }
+            Msg::ProviderSaveKey(key_ref, _display) => {
+                // 最小面板只管密钥：`credentials/set {ref, value}`（主干编辑卡保存那发）。
+                let Some(shared) = self.kernel.clone() else {
+                    return;
+                };
+                let draft = self.credential_draft(&key_ref);
+                context.spawn_background(move |_token| {
+                    let call = credentials_set(&key_ref, &draft);
+                    let outcome = shared
+                        .lock()
+                        .map_err(|_| "内核状态不可用".to_string())
+                        .and_then(|mut kernel| kernel.call(call.method, call.args))
+                        .map(|_| ());
+                    Msg::ProviderSaveKeyDone(key_ref, outcome)
+                });
+            }
+            Msg::ProviderSaveKeyDone(key_ref, Ok(())) => {
+                // 该格草稿已落凭据库 ⇒ 从待写表里撤（主干 `SaveSettingsAsync` 成功后
+                // 移除同一对象版本的等价物），关面板 + 重拉行（回执臂自动刷新）。
+                self.credential_writes
+                    .retain(|(name, _)| name != &key_ref);
+                self.models_editor = None;
+                self.load_provider_rows(context);
+            }
+            Msg::ProviderSaveKeyDone(_key_ref, Err(error)) => {
+                self.fail(error);
+            }
+            Msg::ProviderRemove(managed_ref, ns, path, removes_credential) => {
+                // 主干 `RemoveProviderAsync` 的 RPC 半段（`MW:12605-12624`）：先清页面托管的
+                // 凭据（removesCredential 才发），再 unset 该提供方子树；两步都幂等。
+                let Some(shared) = self.kernel.clone() else {
+                    return;
+                };
+                context.spawn_background(move |_token| {
+                    // `settings_op_unset` 吃 `&[&str]`（lib kernel.rs:14061），Msg 里的
+                    // `Vec<String>` path 借一份 str 切片过去。
+                    let path_refs: Vec<&str> = path.iter().map(String::as_str).collect();
+                    let ops = [settings_op_unset(&path_refs)];
+                    let outcome = shared
+                        .lock()
+                        .map_err(|_| "内核状态不可用".to_string())
+                        .and_then(|mut kernel| {
+                            if removes_credential {
+                                let call = credentials_unset(&managed_ref);
+                                kernel.call(call.method, call.args)?;
+                            }
+                            let call = settings_mutate(&ns, &ops, None);
+                            kernel.call(call.method, call.args)
+                        })
+                        .map(|_| ());
+                    Msg::ProviderRemoveDone(outcome)
+                });
+            }
+            Msg::ProviderRemoveDone(Ok(())) => {
+                self.settings_snapshot = None;
+                self.ensure_settings_snapshot(context);
+                self.load_provider_rows(context);
+            }
+            Msg::ProviderRemoveDone(Err(error)) => {
+                self.fail(error);
+            }
+            Msg::RestoreDefaultModel => {
+                // 主干 `RestoreDefaultModelAsync`（`ModelExtras.cs:170-211`）：三发
+                // `settings/mutate` unset（两家族 models + agent-default-model 两格）。
+                let Some(shared) = self.kernel.clone() else {
+                    self.fail("恢复默认模型失败：内核未连接。".to_string());
+                    return;
+                };
+                context.spawn_background(move |_token| {
+                    let outcome = shared
+                        .lock()
+                        .map_err(|_| "内核状态不可用".to_string())
+                        .and_then(|mut kernel| {
+                            for ns in ["llm-deepseek", "llm-pi-ai"] {
+                                let ops = [settings_op_unset(&["models"])];
+                                let call = settings_mutate(ns, &ops, None);
+                                kernel.call(call.method, call.args)?;
+                            }
+                            let ops = [
+                                settings_op_unset(&["provider"]),
+                                settings_op_unset(&["model"]),
+                            ];
+                            let call = settings_mutate("agent-default-model", &ops, None);
+                            kernel.call(call.method, call.args)
+                        })
+                        .map(|_| ());
+                    Msg::RestoreDefaultModelDone(outcome)
+                });
+            }
+            Msg::RestoreDefaultModelDone(Ok(())) => {
+                self.settings_snapshot = None;
+                self.ensure_settings_snapshot(context);
+                self.load_provider_rows(context);
+            }
+            Msg::RestoreDefaultModelDone(Err(error)) => {
+                self.fail(format!("恢复默认模型失败：{error}"));
             }
             // ---- #93e 「消息详情」浮层（主干 `MessageDetails.cs:1440` 那一发） ----------------
             Msg::DetailsToggle(key) => {
@@ -19705,6 +21526,10 @@ impl Component for Shell {
                 } else {
                     self.workspace_dialog = None;
                 }
+                // 「从选择器唤出的新建工作区」取消/失败收尾：旗不留给下一趟（主干
+                // `CreateWorkspaceFromPickerAsync` 只在 `await CreateWorkspaceAsync()` 成功
+                // 那一支才 `PickWorkspace`，取消这一路什么都不选）。
+                self.workspace_picker_create = false;
             }
             Msg::WorkspaceDirectoryBrowse => {
                 let seq = self.workspace_seq;
@@ -19813,6 +21638,20 @@ impl Component for Shell {
                     if let Some(frame) = write.frame(&value) {
                         self.tree.apply(&frame);
                     }
+                    // #56 选择器「新建工作区…」的**收尾那一半**（主干 `CreateWorkspaceFromPickerAsync`
+                    // → `PickWorkspace(created)`，`MW:4779-4781`）：只有从选择器唤出的那一趟才
+                    // 「建完即选」（侧栏加号那一入口不点旗）⇒ 旗在这里一次性消费。回执本身就是
+                    // 那颗工作区视图（`WorkspaceWrite::frame` 的 Create 支整棵喂树），id/标题从
+                    // 它身上摘；摘不出（形状不合）就只建不选，与主干 `is { WorkspaceId.Length:>0 }`
+                    // 那道守卫同向。
+                    if matches!(write, WorkspaceWrite::Create { .. }) && self.workspace_picker_create {
+                        self.workspace_picker_create = false;
+                        let id = value["workspaceId"].as_str().unwrap_or_default().to_string();
+                        if !id.is_empty() {
+                            let title = value["title"].as_str().unwrap_or_default().to_string();
+                            self.pending_workspace = Some((id, title));
+                        }
+                    }
                     // 会话改名那一发不写树：主干 `:4020` 紧跟一句 `RefreshAllListsAsync()`
                     // ⇒ 分叉折成重拉会话台账（`session/list`）。树那一侧 follow 流自己会送帧。
                     if matches!(write, WorkspaceWrite::RenameSession { .. }) {
@@ -19820,6 +21659,12 @@ impl Component for Shell {
                     }
                 }
                 Err(error) => {
+                    // 失败那一趟同样把「从选择器唤出」的旗收掉：submit 已把卡 take 走，
+                    // 这格旗若留着，下一次**侧栏加号**建工作区会被误当成选择器那一趟
+                    // 多做一步「建完即选」。
+                    if matches!(write, WorkspaceWrite::Create { .. }) {
+                        self.workspace_picker_create = false;
+                    }
                     self.push_log(self.catalog.lf(write.error_key(), &[error]));
                 }
             },
@@ -20073,6 +21918,24 @@ impl Component for Shell {
                 }
                 self.ensure_follow(&session, context);
             },
+            // 开会话的投影补齐回执（主干 `RefreshSessionStateFromListAsync` 的收尾）：
+            // 只灌**仍是当前会话**的那一份 —— 迟到的回执灌进已切走的会话，就是
+            // `apply_history`「迟到整批丢」同一条理由；Err 按主干那发 catch 的口径只写日志。
+            // absorb 是逐键整键替换（`apply_key` 文档），与主干 `ApplyProjectionValues` 的
+            // 每键覆写同语义；灌完渲染侧下一轮现读 `permission_face` / plan chip 即可。
+            Msg::SessionProjectionsLoaded(session, outcome) => {
+                if self.active.as_deref() != Some(session.as_str()) {
+                    return;
+                }
+                match outcome {
+                    Ok(projections) => {
+                        self.control.absorb_projections(&session, &projections);
+                    }
+                    Err(error) => self.push_log(format!(
+                        "DIAG: 投影补齐失败（不阻塞会话）：{error}"
+                    )),
+                }
+            },
             Msg::Present(seq, index, action) => self.present_open(seq, index, &action, context),
             Msg::Presented(Ok((status, body))) => match status {
                 // 204 = 内核已经把文件交给系统，主干这时直接 return，不写任何提示。
@@ -20128,14 +21991,21 @@ impl Component for Shell {
             // `Msg::SessionRefList` 那一臂），这里不再往日志条上出声。
             Msg::Select(id) => {
                 // #135 清闸前置：`self.active` 在下一行就被换成新会话 ⇒ 「正要离开的那一屏」
-                // 必须在这之前取。主干 `ResetRunStats`（`RunStats.cs:205-209`）摘的是
-                // `Volatile.Read(ref _activeSessionId)` 那一刻还**是旧值**的那个 sid；顺序一歪就清错
-                // 会话（#137「去重旗无复位」同族坑，也是母本 §2.4 点名的那一条）。
+                // 必须在这之前取。⚠ 主干 `ResetRunStats`（`RunStats.cs:205-209`）摘的是
+                // `_activeSessionId` 当前值 = **新 sid**（主干每个 `OpenSessionAsync` 调用点都
+                // 先写 id 再进函数），不是旧值 —— 此前这里的旧注释把方向读反了，清闸跟着清错
+                // 了格子（见下面清闸那段的复核）。`left` 如今只服务轨迹账本那发。
                 let left = self.active.clone();
                 self.active = Some(id.clone());
                 self.page = Page::Chat;
                 // 换会话就换一屏：历史由这一路 follow 的 snapshot.records 重放回来。
                 self.bubbles.clear();
+                // journal 游标随屏复位（主干 `OpenSessionAsync` 第一句
+                // `Volatile.Write(ref _journalCursor, 0)`，`MW:4873`）：屏已清空 =
+                // 「已渲染」归零，follow 臂那道游标闸的判据重新从 1 数起。复位前残留的
+                // 旧游标会把「历史回读失败后补来的快照」整段误杀（屏上没有任何东西、
+                // 游标却停在旧最大 seq）——主干那发复位挡的就是这一档。
+                self.journal_cursors.retain(|(sid, _)| *sid != id);
                 // #93d：旁路表跟着气泡表一起作废（主干全仓唯一清表点 `MainWindow.xaml.cs:2590`
                 // 的 `ResetMessageDomainState`，与 `ForgetLiveAttempts()` 并列）。那颗跨清表存活的
                 // seen 位按**这一条会话**补回来，判据与上面行文案用的是同一本台账。
@@ -20150,19 +22020,25 @@ impl Component for Shell {
                 // 再在流程末尾补上主干最后那句 `LoadFeedbackAsync`（= 下面的 `load_feedback`）。
                 self.reset_feedback();
                 // #135 清闸：家 A 靠「先清零、再由随后的完整 transcript 回放重建」防回放翻倍
-                // （`RunStats.cs:203-211` + `MainWindow.xaml.cs:4501`）；分叉的 `apply_history` 走
-                // `drop_overlapped` 去重，与这条**不同源** ⇒ 这一发漏了，重放一轮 `steps` 就翻倍。
+                // （`RunStats.cs:203-211`）。主干 `ResetRunStats` 摘的是
+                // `Volatile.Read(ref _activeSessionId)` 那一格，而主干**每个** `OpenSessionAsync`
+                // 调用点都先写 `_activeSessionId = vm.SessionId` 再进函数（nav `MW:4811-4813`、
+                // boot 补开 `:5088`、搜索跳转 `:14293`、引用回跳 `:16669`）⇒ 清的是**要打开的**
+                // 这条会话，不是离开的那条 —— 此前分叉清反了方向：旧会话的格子被摘、新会话的
+                // 旧账原封不动，历史一回放就叠上去（2026-10-31 R2 实测：84 步 / 526.8 万 tok
+                // 恰为真值两倍）。轨迹账本（家 B）自带 seq 去重，照旧清**离开**的那条。
                 if let Some(left) = left.as_deref() {
-                    self.run_stats.forget(left);
                     self.trajectory_steps.forget(left);
-                    // #57：容量圈那本**按会话**的账同口径复位。主干 `ResetContextMeter`
-                    // （`MainWindow.xaml.cs:4488`）删的就是旧 sid 那一格，且它在「清屏那一串」
-                    // 里排在换 id 之后 —— 分叉靠上面那发 `let left` 的取旧值门拿到同一个 sid。
-                    // 漏这一发的后果 = 上一会话的读数留给下一会话（#137 同族）。
-                    self.context_meters.reset(left);
                 }
+                self.run_stats.forget(&id);
+                // #57：容量圈那本**按会话**的账同口径 —— 主干 `ResetContextMeter`
+                // （`ContextMeter.cs:137-146`）摘的同样是 `_activeSessionId`（= 新 sid）那一格
+                // （「last-wins 无累计，清零只为不让上一条会话的容量在新会话首批事件前残留」）。
+                self.context_meters.reset(&id);
                 self.turn_starts.clear();
                 self.mutations.clear();
+                // 工具卡结果旁路表同样随会话退役（主干那张挂在气泡上，气泡重建 = 表作废）。
+                self.tool_results.clear();
                 self.produced.clear();
                 self.header_model.clear();
                 self.pending_user = None;
@@ -20174,11 +22050,18 @@ impl Component for Shell {
                 self.compactions.clear();
                 self.workflow_runs.clear();
                 self.compaction_open.clear();
+                self.context_open.clear();
                 self.workflow_open.clear();
                 self.pill_hover = None;
                 self.forget_commands();
                 // #78：先回读历史、再开 follow 流（主干 `OpenSessionAsync` 的 :4220 → :4221
                 // 就是这个先后）。开流点因此搬到 `Msg::HistoryLoaded`，回读失败也照样补开。
+                // 空态「自动审查」意图在「复位三态 → 拉历史」之间兑掉（主干 `MW:4922-4928`
+                // 的挂接位：清意图 → 发 `/permission auto`，不等回执）。
+                self.consume_pending_new_session_auto(context);
+                // 主干 `OpenSessionAsync` 的投影补齐（`MW:4930`，排在历史回读**之前**的那一发）：
+                // 会话态状态条（plan chip / 权限预设）的数据源从此不只有引导期的 baseline 一条。
+                self.refresh_session_projections(&id, context);
                 self.load_history(&id, context);
                 self.load_feedback(&id, context);
                 // 批 M1（#55）目标条的换会话两发（主干 `OpenSessionAsync` 的 `:4504-4507` +
@@ -20220,6 +22103,9 @@ impl Component for Shell {
                 self.active = Some(child.clone());
                 self.page = Page::Chat;
                 self.bubbles.clear();
+                // journal 游标随屏复位（主干分叉完走 `OpenSessionAsync(child)`，同一句
+                // `_journalCursor = 0`；理由见 [`Msg::Select`] 那一臂）。
+                self.journal_cursors.retain(|(sid, _)| *sid != child);
                 // #93d：进子会话同样是「换一屏」⇒ 旁路表整张作废 + 按子会话 id 补种 seen 位
                 // （子会话是新建的那条，台账里还没有它 ⇒ 补的是 `false`，正合主干
                 // `RunStats` 里那条新会话的默认值）。
@@ -20260,14 +22146,17 @@ impl Component for Shell {
                 self.chat_stick = scroll::Stick::bottom();
                 self.reset_feedback();
                 self.turn_starts.clear();
-                // #135：进子会话也是「换一屏」⇒ 上一条会话的折叠跟着清零（口径同 `Msg::Select`）。
+                // #135：进子会话也是「换一屏」⇒ 清闸口径同 `Msg::Select`（主干分叉完走
+                // `OpenSessionAsync(child)`，`ResetRunStats` 摘的是 child 那一格）。
                 if let Some(left) = left.as_deref() {
-                    self.run_stats.forget(left);
                     self.trajectory_steps.forget(left);
-                    // #57：同上——父会话的容量读数不许跟进子会话（两扇门少补一扇就是半个 bug）。
-                    self.context_meters.reset(left);
                 }
+                self.run_stats.forget(&child);
+                // #57：容量圈同口径，摘 child 那一格（主干 `ResetContextMeter` 同一句）。
+                self.context_meters.reset(&child);
                 self.mutations.clear();
+                // 进子会话也是「换一屏」⇒ 工具卡结果旁路表跟着清（口径同 `Msg::Select`）。
+                self.tool_results.clear();
                 self.produced.clear();
                 self.header_model.clear();
                 self.pending_user = None;
@@ -20276,6 +22165,7 @@ impl Component for Shell {
                 self.compactions.clear();
                 self.workflow_runs.clear();
                 self.compaction_open.clear();
+                self.context_open.clear();
                 self.workflow_open.clear();
                 if !title.is_empty() {
                     // 主干 `child.Title = increased` + `RebuildNavMenu()`：左栏那行换成新标题。
@@ -20284,6 +22174,12 @@ impl Component for Shell {
                     }
                 }
                 // #78：子会话的 journal 是父会话的副本，回读回来正是「点开就有色」。
+                // 主干分叉完是 `OpenSessionAsync(child)` 那一整套 ⇒ 空态「自动审查」意图
+                // 同在那一串里兑（`MW:4924`）。
+                self.consume_pending_new_session_auto(context);
+                // 子会话同样走主干 `OpenSessionAsync(child)` 那一整套 ⇒ 投影补齐同在
+                // （口径与 [`Msg::Select`] 那一臂同形）。
+                self.refresh_session_projections(&child, context);
                 // follow 流不在这里开 —— `load_history` 的结果落地时才开，与 `Msg::Select` 同一序。
                 self.load_history(&child, context);
                 self.load_feedback(&child, context);
@@ -20371,6 +22267,14 @@ impl Component for Shell {
                     toggle_slot(&mut self.workflow_open, &key);
                 }
             }
+            // 上下文注入卡：主干 `BuildContextCard` 的 `IsEnabled = expandable`（条目非空才可点）
+            // ⇒ 这里同一道门再挡一次（disabled 的 ToggleButton 发不出事件，防陈旧键点空）。
+            // 可展开判据本体在 [`Shell::context_injection_expandable`]，与渲染侧同一格。
+            Msg::ContextToggle(key) => {
+                if self.context_injection_entries(&key).is_some() {
+                    toggle_slot(&mut self.context_open, &key);
+                }
+            }
             Msg::ToggleGroup(key) => self.toggle_group(&key),
             Msg::Cap(key, open) => self.set_cap(&key, open),
             Msg::Section(id) => {
@@ -20389,6 +22293,27 @@ impl Component for Shell {
                 // （`MainWindow.xaml.cs:14935`）：切进「用量」这一页才决定要不要打内核。
                 if self.section == "usage" {
                     self.load_usage_stats(context);
+                }
+                // 主干 `RenderPresetsSectionAsync` 每次进节重拉 `agentPresets/list`（`MW:13491`）。
+                if self.section == "agent-presets" {
+                    self.load_preset_cards(context);
+                }
+                // 主干 `RenderPluginsSectionAsync`：Tab 停在「插件列表」时那发
+                // `pluginInventory/list`（`MW:13033-13037` → `:13271`）才打。
+                if self.section == "plugins" && self.plugins_tab == 1 {
+                    self.load_plugin_inventory(context);
+                }
+                // 主干 `RenderModelsSectionAsync` → `LoadProviderRowsAsync`（`MW:11270`）。
+                // 编辑态不跨重拉存活（主干重渲染时 `_modelsEditor` 仍在——但内容重建；
+                // 分叉声明式下同款保留，等新行回帧再画）。
+                if self.section == "models" {
+                    self.load_provider_rows(context);
+                }
+                // 主干 `RenderPetSection`（`MainWindow.Pet.cs:232-255`）尾发
+                // `await ReloadPetLibraryAsync()`：进这一节才拉插件路由（清单 + 当前宠物）。
+                // 分叉此前只画「正在读取宠物清单…」骨架、数据链整条缺席（2026-10-31 R2）。
+                if self.section == "pet" {
+                    self.load_pets(context);
                 }
                 // #136 R1（MR3）：主干 `RenderSectionAsync`（`MW:10498`）在渲染任何分区之前都
                 // `await EnsureSettingsSnapshotAsync()` —— 快照是**所有**分区那三档读法的 ② 档，
@@ -20435,24 +22360,16 @@ impl Component for Shell {
             Msg::OpenSub(id) => {
                 // #136 R2（MR3）：主干 `OpenWebSearchSubPageAsync`（`MW:12684-12696`）是
                 // **先拉再开页**（注释原文「页面因此一次性建全、没有占位骨架」），而且
-                // **只有网页搜索这一张卡**问内核 —— 其余四张二级页一发都不许多
-                // （自动审批那张问，见下面那一发：主干 `AddAutoApprovalModelCardAsync`）。
+                // **只有网页搜索这一张卡**问内核 —— 其余二级页一发都不许多。
+                // （自动审批那张原是第二张问内核的页——判定模型下拉的 `session/modelCatalog`；
+                // 0.9.0.2/0.9.0.3 判定模型卡随 auto-review 拆掉后主干不再问 ⇒ 分叉同拆。）
                 // 每次点卡都重问（主干那发没有缓存）⇒ 先把上一答撤掉，问回来的那一帧之前
                 // 一行密钥都不画（= 主干「还没建页」那一档），绝不留上一次的旧状态。
                 let asks_credentials = id == "web-search";
-                let asks_model_catalog = id == "auto-approval";
                 self.sub = Some(id);
                 if asks_credentials {
                     self.search_credentials = None;
                     self.load_search_credentials(context);
-                }
-                // 主干 `AddAutoApprovalModelCardAsync`（`MW:14606`）进页第一发就是
-                // `await _rpc.CallOkAsync(session/modelCatalog, …)` —— 判定模型那颗下拉的
-                // 选项整表由它铺。所以自动审批是**第二张**问内核的二级页（第一张是上面那颗
-                // 网页搜索的密钥表）；每次点卡都重问，主干那发同样没有缓存。
-                // 内核没起来 ⇒ `load_model_catalog` 自己早退（主干 `if (_rpc is null) return;`）。
-                if asks_model_catalog {
-                    self.load_model_catalog(context);
                 }
             }
             Msg::CloseSub => self.sub = None,
@@ -20463,6 +22380,16 @@ impl Component for Shell {
             // 或一张红卡就是分叉自造的行为。
             Msg::SettingsSnapshot(Ok(namespaces)) => {
                 self.settings_snapshot = Some(namespaces);
+                // 主干 `ApplyKernelThemeFromSettingsAsync`（`MW:3321-3345`，引导并行批的一员）：
+                // 快照一落地就照 `ui-theme/preference` 换肤 + 按 `fontSize` 复位会话正文字号。
+                // 快照来得比首帧晚（后台线程一发 RPC）⇒ 首帧仍用初值画，这一臂落完下一帧整窗
+                // 重算 —— 与主干「PostUi 换肤」同一节奏。字号沿用主干那道 `>= 12 and <= 17`
+                // 的界内闸（界外保持现值，不 clamp 成边界值）。
+                self.apply_theme();
+                let stored_font = self.number("ui-theme_fontSize", self.font_size);
+                if (size::FONT_SIZE_MIN..=size::FONT_SIZE_MAX).contains(&stored_font) {
+                    self.font_size = stored_font;
+                }
             }
             Msg::SettingsSnapshot(Err(_)) => {
                 // 主干 `return null` 且不写缓存 ⇒ 缓存留在「没拉到」那一档，下次换分区再试。
@@ -20605,30 +22532,9 @@ impl Component for Shell {
                 self.stop_skin_video();
                 mw2_clear_skin_files();
             }
-            // 自动审批「判定模型」：主干 `MW:14683-14684` 那两发 `Edit`——provider 与 model
-            // **必须成对**（门控 `currentSelection()` 两个字段都读）。写点只留这一处：
-            // 设置页那颗下拉与（将来）任何别的入口都走同一个 Msg，不留第二份真相。
-            // 回显闸：视图每轮按那两格重算 `selected_index`，原生若把这一发回拨回来，
-            // 值没变就不写、也不排 autosave（同 [`Msg::ThemePick`] 的挡回声口径）。
-            Msg::ApprovalModel(index) => {
-                if let Some(row) = self.model.rows.get(index) {
-                    if self.field(APPROVAL_MODEL_MODEL_KEY, "") != row.id {
-                        set_pair(
-                            &mut self.fields,
-                            APPROVAL_MODEL_PROVIDER_KEY.to_string(),
-                            row.provider.clone(),
-                        );
-                        set_pair(
-                            &mut self.fields,
-                            APPROVAL_MODEL_MODEL_KEY.to_string(),
-                            row.id.clone(),
-                        );
-                        // 主干每一发 `Edit` 之后紧跟 `ScheduleSettingsAutoSave()`（`:10418`）：
-                        // 两发 Edit 只排一次程（`request_settings_autosave` 自带「至多一枚在飞」闸）。
-                        self.request_settings_autosave(context);
-                    }
-                }
-            }
+            // （自动审批「判定模型」那一臂 `Msg::ApprovalModel` 已随 0.9.0.3 拆卡整臂摘掉：
+            // 主干 `AddAutoReviewCardsAsync` 的子页没有判定模型卡，也没有那两发
+            // `Edit("agent-default-model", …)` 的写点。）
             // ---- #240 皮肤导入两发 + 海报回执 ----------------------------------------------
             // 主干两发 handler 的**同步半段**逐字对位（`xaml.cs:9017-9056` / `9058-9100`）：
             // 图片档 = 清 WE 标记 → 删视频槽 → 拷图片槽 → 上屏；视频档 = 清 WE 标记 → 拷视频槽 →
@@ -20914,25 +22820,15 @@ impl Component for Shell {
                 if self.boot.booting {
                     self.arm_workspace_baseline_poll(context);
                 }
-                // 引导链路的尾巴（主干 `MainWindow.xaml.cs:2968`，紧跟在三条长驻流开完那一发上）：
-                // 此刻没有卡要撤（主干全程静默，压根没上过卡），只有引导期间静默排队的那一发要补。
-                // `restored` = 这是断流重连的回填而不是首连，主干那一处只在引导链里补发 ⇒ 早退由
-                // `flush_send_queued_while_booting` 首行的标记判据自己给。
-                // 里程碑第 5、6 段（主干 MX:3089 `会话与模型就绪` → MX:3108 `引导完成`）：
-                // 主干那是两条**串行 await** 之后的两发，分叉把这一对压在同一条臂的尾巴上
-                // （#185 §3 第 8 格自己点名的「结构不对齐」那半件）。两发都**必须**排在
-                // `end_round()` 之前 —— 那一发之后 `booting` 已关，上面那道闸就把它们挡住了。
-                // 同一条臂的闸还顺保证了：重连回填不点亮这两段（主干的重连路 `RestoreBusinessStreamsAsync`
-                // 同样一声不出）。
-                if self.boot.booting {
-                    // 分叉在这一格能确证的只有「会话台账已在 + 目录首拉已发」，主干那发是
-                    // `Task.WhenAll(sessions / model catalog / permission catalog / theme)` 之后
-                    // ⇒ 这一枚标签的语义在分叉是**压缩过的**（报告 §5 已登记，等目录回执落点接线）。
-                    self.boot_milestone("会话与模型就绪");
-                    self.boot_milestone("引导完成");
-                }
-                self.boot.end_round();
-                self.flush_send_queued_while_booting(context);
+                // 引导链路尾巴的**搬家说明**（本刀，R1 视觉比对 §P-about）：主干第 3 段
+                // `工作区清单就绪`（`MW:3178`，基线轮询循环退出后）**先于**第 4 段
+                // `会话与模型就绪`（`MW:3234`，并行批 Task.WhenAll 完成后）与第 5 段
+                // `引导完成`（`MW:3253`）——观测顺序就是 3→4→5。分叉此前把 4、5 两段压在
+                // MuxReady 臂的同步尾巴上，而第 3 段要等基线帧（至少一个 RTT）⇒ 运行序
+                // 变成 2→5→3→4（版本卡里「工作区清单就绪」落到引导完成之后，R1 差异清单
+                // P-about 项点名的就是它）。本刀把尾巴两发与 `end_round` / 排队补发一起
+                // 搬进 [`Shell::record_workspace_baseline_ready`]（第 3 段的唯一记录口），
+                // 与主干 3→4→5 的相对序对齐；booting 闸跟行搬过去（重连回填照旧一声不出）。
             }
             Msg::MuxReady(Err(error)) => {
                 if self.mux_retry.in_flight {
@@ -21031,7 +22927,7 @@ impl Component for Shell {
                 }
                 match workspace_baseline_step(self.workspace_baseline_arrived, attempt) {
                     BaselinePoll::Arrived { attempt } => {
-                        self.record_workspace_baseline_ready(attempt)
+                        self.record_workspace_baseline_ready(attempt, context)
                     }
                     BaselinePoll::TimedOut => self.workspace_baseline_timed_out(),
                     BaselinePoll::Poll { next } => {
@@ -21107,6 +23003,14 @@ impl Component for Shell {
                 // 本身就并行，所以**一发就够**，不必另造一批。放在 `self.kernel = Some(..)`
                 // **之后**：派发口第一句就是「无内核 ⇒ 连错都不报」，放前面会被自己的闸挡掉。
                 self.refresh_permission_catalog(context);
+                // 同一批里主干并行拉的两件，分叉此前只在「点开模型菜单 / 进设置页」时才发，
+                // 后果是启动首帧模型钮只显占位「选择模型」、壳主题也没吃到内核存的
+                // `ui-theme/preference`（视觉比对：发送键强调底随主题档整体错色）⇒
+                // 补进同一挂点：`session/modelCatalog`（主干 `LoadModelCatalogDefaultsAsync`
+                // 那一发）与 `settings/describe`（主干 `ApplyKernelThemeFromSettingsAsync`
+                // 那一发，回执臂里再 `apply_theme`）。
+                self.load_model_catalog(context);
+                self.ensure_settings_snapshot(context);
                 // bs1（重取）：首帧台账可能是**空的**（引导链那一发的 `Err` 现在被吞进 DIAG、
                 // 不再判死）⇒ 这里补的就是主干「吞掉异常后靠再触发把台账拉回来」那一手在分叉的
                 // 对位。**复用现成的那条腿** [`Shell::reseed_session_rows`]（`api-session/{added,removed}`
@@ -21130,14 +23034,15 @@ impl Component for Shell {
             Msg::BootRetry => self.restart_kernel_boot(context),
             Msg::NewSession => {
                 // #56：「新建会话」钮是这一格的第二个消费口（主干两个入口共用
-                // `CreateSessionCoreAsync`）⇒ 同样把待用的预设 id 递进去。
+                // `CreateSessionCoreAsync`）⇒ 同样把待用的预设 id 与待用工作区递进去。
                 let agent_preset = self.agent_preset_to_send();
+                let workspace_id = self.pending_workspace_id();
                 let outcome = self.kernel.as_ref().map(|shared| {
                     shared
                         .lock()
                         .map_err(|_| "内核状态不可用".to_string())
                         .and_then(|mut kernel| {
-                            kernel.create_session_with(&default_session_cwd(), agent_preset.as_deref())
+                            kernel.create_session_in(workspace_id.as_deref(), &default_session_cwd(), agent_preset.as_deref())
                         })
                 });
                 match outcome {
@@ -21148,6 +23053,9 @@ impl Component for Shell {
                         // 主干 `CreateSessionAsync` 末尾也是 `OpenSessionAsync`：新会话同样
                         // 「先复位再拉一次」，别把上一条会话的反馈态带进这个空白会话。
                         self.reset_feedback();
+                        // 主干 `OpenSessionAsync` 的空态「自动审查」意图兑点（`MW:4924`）：
+                        // 新建会话一开就发 `/permission auto`。
+                        self.consume_pending_new_session_auto(context);
                         // 主干 `CreateSessionAsync`：清单里还没有这条就先本地合成一行。
                         self.ensure_local_session_row(&id);
                         self.forget_commands();
@@ -21244,11 +23152,14 @@ impl Component for Shell {
         context.on_color_scheme(scheme);
         context.window_title("Blade²");
         // #240 主题接窗：`ui-theme_preference` 默认 1=深色（`apply_theme`），但窗口的
-        // ActualTheme 此前**从未**随动 ⇒ `Brush::Theme` 一族（正文/表面/强调）吃窗口的
-        // 亮色档，而 `Brush::Solid` 一族（次级/三级文字、若干底色）按 [`Palette::for_scheme`]
-        // 取暗色支的白墨——亮底上近乎隐形（实测 2026-10-05：会话行时间戳与「工作区」段头
-        // 墨深 R≈243，正文 R=26）。主干 `RequestedTheme` 是整窗一体切换（`MW` 构造 + 设置页），
+        // ActualTheme 此前**从未**随动 ⇒ 框架默认档（TextBlock 默认前景等）吃窗口的
+        // 亮色档，而 `Brush::Solid` 一族按 [`Palette::for_scheme`] 取暗色支的白墨——
+        // 亮底上近乎隐形（实测 2026-10-05：会话行时间戳与「工作区」段头墨深 R≈243，
+        // 正文 R=26）。主干 `RequestedTheme` 是整窗一体切换（`MW` 构造 + 设置页），
         // 分叉等值物 = 每帧把 `self.scheme` 灌进 `WindowVisuals::theme`。
+        // （2026-10-26 追记：palette 上的 `Brush::Theme` 档经 `theme::palette` 全部
+        // 实色化——reactor 把元素属性上的主题画刷静默丢弃，见 theme.rs accent 段；
+        // 本条现在是「窗口 ActualTheme 必须随动」这条事实的落点，不再是画刷取档的通路。）
         context.window_visuals(
             WindowVisuals::new()
                 .theme(match self.scheme {
@@ -21273,7 +23184,10 @@ impl Component for Shell {
                 .backdrop(self.window_backdrop()),
         );
 
-        let mut palette = Palette::for_scheme(self.scheme);
+        // 运行时调色板走 `theme::palette`：`accent` 换成系统强调色实色
+        // （reactor 把元素属性上的 `Brush::Theme` 一律静默丢弃，见 theme.rs accent 段），
+        // 发送钮那族强调色四态才真的上屏；其余档与 for_scheme 逐字节同值。
+        let mut palette = theme::palette(self.scheme);
         // 主干 `ApplyBubbleMaterial`（MW:18109）在构造里就先落一次、之后每改一次设置落一次：
         // 气泡底由「材质档 + 不透明度 + 窗口材质」现算并覆掉 Tokens.xaml 那支基线，
         // 用户/助手/交付物三处气泡读的都是 `p.bubble` ⇒ 改这两个控件就是全量即时生效。
@@ -22284,11 +24198,11 @@ impl Shell {
 
 impl Shell {
     fn drag_region(&self) -> View {
-        // 树里那份「零布局成本」的连接证据挂在这颗 TitleBar 上：它本来就出现在 UIA 树里
-        // （加 Name 不会新增节点、也不把别的元素往下挤一层），而 WinUI 渲染的是它的 `Title`
-        // （这里显式给 None），不是 AutomationProperties.Name ⇒ 界面上一个字都不多。
-        // 于是老配方 `tests/gui_uia.ps1 -WaitFor '内核: 已连接'`（读树里的 Name）没被删掉自测条
-        // 那一刀彻底弄断。
+        // 树里这份 Name 只报「连接状态」四字（主干 `MainWindow.SettingsExtras.cs` 那颗
+        // `ConnectionStatusBar` 的可访问名同款）：状态串本体带着 `http://…/?token=… (pid n)`，
+        // 整串塞进 AutomationProperties.Name 等于把内核 token 摊给 UIA 树里任何进程读 ——
+        // 连接细节的运行证据走 app 自己的日志（`STATUS: 内核: …`，`tests/gui_uia.ps1` 的
+        // 规范等待 `-WaitForLog` 读的就是那一行），不再借树里这枚 Name 承载。
         TitleBar::new()
             .grid_row(0)
             .grid_column_span(2)
@@ -22296,7 +24210,7 @@ impl Shell {
             .is_back_button_visible(false)
             .is_pane_toggle_button_visible(false)
             .preferred_height(WindowTitleBarHeight::Standard)
-            .automation_name(format!("内核: {}", self.status))
+            .automation_name(self.catalog.l("连接状态"))
             .into()
     }
 
@@ -22377,20 +24291,39 @@ impl Shell {
                                 .vertical_alignment(VerticalAlignment::Center)
                                 .opacity(0.72)
                                 .content(mark_size(glyph::SEARCH, size::GLYPH_BODY)),
-                            TextBox::new()
+                            // 输入框包一层透明 ghost 钮当**资源载体**：主干
+                            // `MainWindow.xaml:145-151` 在 AutoSuggestBox.Resources 里把
+                            // TextControl 六键覆成 Transparent（不覆则 Focused 态的模板
+                            // 动画照画不透明内框+描边，R5 的「浅描边+放大镜独立圆底」就是它）。
+                            // reactor 0.100.0 只有 Button 开着 `resource_overrides`
+                            // （资源沿子树向下生效）⇒ 载体钮四态钉透明 + Padding 归零，
+                            // 自身一个像素都不画；配方见 [`search_input_resources`]。
+                            // 已知代偿：UIA 树多一枚无名 Button、Tab 序多一站 —— 主干结构
+                            // 是 AutoSuggestBox（UIA 本就与分叉的 TextBox 不同形），可接受。
+                            Button::new()
                                 .grid_column(1)
-                                .text(self.search.clone())
-                                .placeholder_text(self.catalog.l("搜索会话…"))
-                                .min_height(size::TOUCH_TARGET)
-                                .background(p.transparent)
-                                .border_thickness(0.0)
-                                .margin(th([6.0, 0.0, 8.0, 0.0]))
-                                .on_text_changed(context.callback(|text: String| Msg::Search(text)))
-                                // 主干 `MainWindow.xaml` 那颗搜索框写死了
-                                // `AutomationProperties.AutomationId="SessionSearchBox"`
-                                // （自测矩阵按 id 取元素，只有 Name 时量到 MISSING）。
-                                .automation_id("SessionSearchBox")
-                                .automation_name("搜索会话"),
+                                .min_width(0.0)
+                                .min_height(0.0)
+                                .horizontal_content_alignment(HorizontalAlignment::Stretch)
+                                .vertical_content_alignment(VerticalAlignment::Stretch)
+                                .resource_overrides(search_input_resources())
+                                .content(
+                                    TextBox::new()
+                                        .text(self.search.clone())
+                                        .placeholder_text(self.catalog.l("搜索会话…"))
+                                        .min_height(size::TOUCH_TARGET)
+                                        .background(p.transparent)
+                                        .border_thickness(0.0)
+                                        .margin(th([6.0, 0.0, 8.0, 0.0]))
+                                        .on_text_changed(context.callback(|text: String| {
+                                            Msg::Search(text)
+                                        }))
+                                        // 主干 `MainWindow.xaml` 那颗搜索框写死了
+                                        // `AutomationProperties.AutomationId="SessionSearchBox"`
+                                        // （自测矩阵按 id 取元素，只有 Name 时量到 MISSING）。
+                                        .automation_id("SessionSearchBox")
+                                        .automation_name("搜索会话"),
+                                ),
                         )),
                 ),
         ));
@@ -23751,7 +25684,10 @@ impl Shell {
             ("page-chat", self.chat_page(context, p)),
             ("page-settings", self.settings_page(context, p)),
         );
-        let surface: View = match self.mw2_skin_backdrop() {
+        // 皮肤层在场与否还要喂给下面 content 格的底色判据（同一格状态，不出第二份真相）。
+        let backdrop = self.mw2_skin_backdrop();
+        let skin_laid = backdrop.is_some();
+        let surface: View = match backdrop {
             Some(backdrop) => Grid::new().children((backdrop, pages)).into(),
             None => pages,
         };
@@ -23764,7 +25700,22 @@ impl Shell {
                 "content",
                 Border::new()
                     .grid_column(1)
-                    .background(p.surface_alt)
+                    // 主干皮肤的底色分流（R3 复验余留）：
+                    // * 图片皮肤是「换底」：ApplySkinFromPath 把 ImageBrush 直接刷上
+                    //   ContentSurface.Background（`xaml.cs:9306`），SurfaceAltBrush 退场 ⇒
+                    //   这格铺 transparent，基色 = 透上来的云母。上一轮实测过：继续铺
+                    //   surface_alt 会比主干亮一档（0.6×surface_alt@30% 那份，+4~5/255）。
+                    // * 视频皮肤**不换底**：ApplySkinVideoFromPath 开头一发
+                    //   `ContentSurface.Background = ThemeBrush("SurfaceAltBrush")`
+                    //   （`xaml.cs:9325`）再把播放器插到子 Grid 底层 ⇒ SurfaceAlt 恒在、
+                    //   40% 视频压在它上面。分叉原来对视频也铺 transparent，基色比主干暗
+                    //   一档（R3 实测暗部 main≈30-33 / rust≈20-27/255）⇒ 视频皮肤回铺
+                    //   surface_alt。判据 = [`Shell::skin_video`] 在册（与 22591/22608 的
+                    //   「当前皮肤是视频」同一格，不出第二份真相）。
+                    .background(match (skin_laid, self.skin_video.is_some()) {
+                        (true, false) => p.transparent,
+                        _ => p.surface_alt,
+                    })
                     .content(surface),
             ),
         ];
@@ -24682,6 +26633,17 @@ impl Shell {
     ) {
         let kind = group_nav_kind(key);
         let nested = !key.is_empty();
+        // 展开箭头：主干 `NavigationViewItem` 有子项（`MenuItems.Count > 0`）时模板那颗
+        // ExpandCollapseChevron **常显**（收起 ∨ E70D / 展开 ∧ E70E，方向随 `IsExpanded`）。
+        // 空组（无会话）主干 `MenuItems` 为空 ⇒ 无箭头，这里同判据（`rows.is_empty()`）。
+        // 方向读 [`Shell::group_open`] —— 与下面那发「展开才画子行」同格状态，不分家。
+        let chevron = if rows.is_empty() {
+            None
+        } else if self.group_open(key) {
+            Some(glyph::COLLAPSE_GROUP)
+        } else {
+            Some(glyph::EXPAND_GROUP)
+        };
         items.push(KeyedView::new(
             format!("group-{key}"),
             self.nav_item_menu(
@@ -24698,6 +26660,8 @@ impl Shell {
                 // return ⇒ 那一项的菜单点开也没事可做，`workspace_menu_toggle` 同样拒空串。
                 nested.then_some(key),
                 None,
+                chevron,
+                0.0,
                 context,
                 p,
             ),
@@ -24705,7 +26669,11 @@ impl Shell {
         if !self.group_open(key) {
             return;
         }
-        self.push_group_rows(items, key, rows, nested, context, p);
+        // 「未分组」在主干同样经 groupItem.MenuItems 嵌套（`MW:3741`，WorkspaceId="" 那颗
+        // 节点照样有子项）⇒ 子行缩进与真工作区组同档（实测 mainline4\S0：未分组组内
+        // 会话行文字 x=71.33 DIP，与工作区组内逐像素同位）。`nested` 这格从此只管
+        // 右键菜单那发（`nested.then_some(key)`），缩进恒真值，不再两用。
+        self.push_group_rows(items, key, rows, true, context, p);
     }
 
     /// 一个组里的**会话行 + 尾巴行**（「展开其余 N 个会话」/「收起」）。与上面那颗组头
@@ -24744,10 +26712,14 @@ impl Shell {
         match tail {
             // 「展开其余 N 个会话」：主干 `:3478` Content、`:3485` Name 与 Content 同串、
             // `:3482` glyph E70D、`:3479` `SelectsOnInvoked=false`、`:3481` Tag。
+            // 尾行在主干同样长在 groupItem.MenuItems 里（AppendSessionRows 把 cap 行和
+            // 会话行塞进同一个 host，`MW:3829-3845`）⇒ 缩进与组内会话行同档（组嵌套才缩，
+            // 单列表平铺那支不缩，与 `nested` 同一判据）；实测 mainline4\S0 的
+            // 「展开其余 179 个会话」行 ∨ 字形墨迹 x≈72 DIP，与会话行 71.33 同位。
             Some(GroupTail::Expand { hidden }) => {
                 items.push(KeyedView::new(
                     format!("expand-{key}"),
-                    self.nav_item(
+                    self.nav_item_menu(
                         NavKind::ExpandGroup(key),
                         &format!("cap-{key}"),
                         self.catalog
@@ -24755,6 +26727,10 @@ impl Shell {
                         glyph::EXPAND_GROUP,
                         false,
                         Msg::Cap(key.to_string(), true),
+                        None,
+                        None,
+                        None,
+                        if nested { size::NAV_GROUP_INDENT } else { 0.0 },
                         context,
                         p,
                     ),
@@ -24766,13 +26742,17 @@ impl Shell {
             Some(GroupTail::Collapse) => {
                 items.push(KeyedView::new(
                     format!("collapse-{key}"),
-                    self.nav_item(
+                    self.nav_item_menu(
                         NavKind::CollapseGroup(key),
                         &format!("cap-{key}"),
                         self.catalog.l("收起"),
                         glyph::COLLAPSE_GROUP,
                         false,
                         Msg::Cap(key.to_string(), false),
+                        None,
+                        None,
+                        None,
+                        if nested { size::NAV_GROUP_INDENT } else { 0.0 },
                         context,
                         p,
                     ),
@@ -25042,6 +27022,8 @@ impl Shell {
             message,
             None,
             None,
+            None,
+            0.0,
             context,
             p,
         )
@@ -25060,6 +27042,8 @@ impl Shell {
         message: Msg,
         workspace_menu: Option<&str>,
         session_menu: Option<&str>,
+        chevron: Option<char>,
+        indent: f64,
         context: &mut ViewContext<Shell>,
         p: Palette,
     ) -> View {
@@ -25075,9 +27059,12 @@ impl Shell {
             NavKind::CollapseGroup(_) => self.catalog.l("收起已展开的会话"),
             _ => label.clone(),
         };
-        let content = StackPanel::new()
+        let label_row = StackPanel::new()
             .orientation(Orientation::Horizontal)
-            .spacing(10.0)
+            // icon→文字间距：主干 NavigationViewItem 模板图标列 16 + 内容间距，R3\S0 同串
+            // 实测（新会话 / DshWinUI / 未分组三行两侧文字墨迹恒差 12px@2x = 6 DIP）⇒
+            // 10 → 16。这一格同时管设置分区行（同一颗工厂）——主干那边同差 6，一并收。
+            .spacing(16.0)
             .children((
                 // 主干 NavigationViewItem.Icon 不写 FontSize，但模板把图标夹在
                 // `Viewbox Height=16` 里 ⇒ 实际墨迹 16，不是 FontIcon 默认的 20。
@@ -25090,17 +27077,38 @@ impl Shell {
                     } else {
                         FontWeight::NORMAL
                     })
-                    .foreground(p.text_primary)
+                    .foreground(p.text_primary.clone())
                     .vertical_alignment(VerticalAlignment::Center),
             ));
+        // 展开箭头（2026-10-27 终验清单第 3 项）：主干分组行是 `NavigationViewItem`，
+        // 有子项时模板的 ExpandCollapseChevron **常显**在行右端（收起 ∨ / 展开 ∧，WinUI
+        // 模板 FontSize=12；终验截图 mainline4\S0 的 Documents 行 ∨、未分组行 ∧）。
+        // 分叉此前只画图标 + 标题 ⇒ 右端没箭头。方向随 [`Shell::group_open`]（同一格
+        // 状态驱动行的折叠/展开与箭头方向，不另立第二份真相）。
+        // R3 复验：chevron 一直贴在标题右侧而不是行右端 —— reactor 的 `children`
+        // 不按序自动分列（见 [`Shell::settings_card_with_trailing`] 那条注），右列同样
+        // 要显式钉 `grid_column(1)`（主干模板里 chevron 在 `Grid.Column=2` 的右端槽）。
+        let content: View = match chevron {
+            Some(code) => Grid::new()
+                .columns([GridLength::STAR, GridLength::Auto])
+                .children((
+                    label_row,
+                    Border::new()
+                        .grid_column(1)
+                        .content(mark_vcenter(code, size::GLYPH_CAPTION)),
+                ))
+                .into(),
+            None => label_row.into(),
+        };
         // 固定项/分组头的缩进为 0：侧留白 4 DIP 已由 `nav_row` 自己的 margin 给（主干同形）。
+        // 组内子行（会话/容量尾行）由调用方传 [`tokens::size`] 的 `NAV_GROUP_INDENT`。
         self.nav_row(
             kind,
             key,
             content,
             name,
             selected,
-            0.0,
+            indent,
             message,
             workspace_menu,
             session_menu,
@@ -25290,10 +27298,13 @@ impl Shell {
             content,
             shown,
             selected,
-            // 缩进加在行内容上（主干子代理 `row.Margin=(14,0,0,0)`、组内再缩一级），
+            // 缩进加在行内容上（主干子代理 `row.Margin=(14,0,0,0)`），
             // 顶格行给 0 ⇒ 高亮带一律铺满整行、侧留白恒为 4 DIP。
+            // 子代理那 14 是**叠**在嵌套缩进之上的（主干 margin 与 NavigationView 模板缩进
+            // 相加，组内 = 14+30.8），不是二选一 —— 平铺那支没有嵌套层，只剩 14。
             if is_child {
                 size::SUBAGENT_INDENT
+                    + if nested { size::NAV_GROUP_INDENT } else { 0.0 }
             } else if nested {
                 size::NAV_GROUP_INDENT
             } else {
@@ -25892,6 +27903,12 @@ impl Shell {
                 "selectors",
                 self.selector_layer(context, p),
             ));
+        }
+        // 工具卡行尾 ⋯ 那张复制菜单：入树序在 `selectors` **之后**（同一条「点开才在」的
+        // 瞬时层族，后入者在上）。锚长在聊天流里 ⇒ 点行那一下先被自己的光标命中，不存在
+        // 与兄弟层同屏的稳定形态；兄弟开臂不改写的备案见 `Msg::ToolMenuToggle` 那两臂的注释。
+        if self.tool_menu.is_some() {
+            cells.push(KeyedView::new("tool-menu", self.tool_menu_layer(context, p)));
         }
         // 批 MD1：那三张应用级模态卡（#106 任务清单 / 批 M4 轨迹 / 批 M2c 目标）**不再长在这一格里**。
         // 它们的宿主是 [`Shell::app_modal_host`]，挂在根网格（`view` 那一台）的末格 ⇒ 遮罩域 = 整窗，
@@ -27625,10 +29642,20 @@ impl Shell {
             )
     }
 
-    /// 主干 `ToolCallTpl` 的行：图标 12/.8 + 标题 + 半个透明度的「·」+ .85 的摘要。
-    /// 主干运行态还有一道 LinearGradientBrush 扫光（Storyboard），reactor 没有动画原语，抄不了。
-    fn tool_line(&self, bubble: &Bubble, p: Palette) -> View {
-        let Some(code) = bubble.icon else {
+    /// 主干工具卡折叠头（`BuildToolCard` 的 `headerInner`，`ToolCards.cs:138-296`）：
+    /// `[chevron(E76B, 10), 图标(12, .8), 标题(Caption+Medium), "·", 摘要(Hint+Ellipsis)]`
+    /// + metaChips（**时长 chip** `ToolCardDuration`，`:181-185`）+ 行尾 ⋯ 钮（`ToolCopyJson`，
+    /// `:195-210`）。主干整卡是 `ToggleButton`（点了展开卡体），分叉的卡体（命令/stdout/
+    /// 退出码那族）没有铺 ⇒ 头行收成**非展开行**，chevron 是折叠态的静态一档；展开欠账登记
+    /// 在报告。两处抄不动的形制差：扫光（动画原语缺失）与 chip 的胶囊端头（走
+    /// [`Shell::domain_status_chip`] 同款折算）。
+    fn tool_line(
+        &self,
+        bubble: &Bubble,
+        p: Palette,
+        context: &mut ViewContext<Shell>,
+    ) -> View {
+        let Some(_code) = bubble.icon else {
             // 主干 `ToolTpl`：system/message 那类灰行，没图标、没摘要段、可换行、0.62。
             return Border::new()
                 .margin(th(pad::LIST_ITEM))
@@ -27644,9 +29671,16 @@ impl Shell {
                 );
         };
         let mut cells: Vec<View> = vec![
-            Border::new()
-                .opacity(0.8)
-                .content(mark_size(code, size::GLYPH_CAPTION)),
+            // `ToolCards.cs:139`：`FontIcon{Glyph = Expanded ? E76C : E76B, FontSize=10}`。
+            // 分叉恒折叠 ⇒ 恒 E76B（左向）。
+            mark_size(COMPACTION_CHEVRON, size::GLYPH_MINI),
+            // R3 复验第 10 项：chevron 与标题之间**不画工具图标**。主干头行代码里
+            // 确实有一颗 `FontIcon{Glyph, 12, 0.85}`（`ToolCards.cs:141-146`），但
+            // R3\S2 实测那颗在屏上是**空白**（「<  工具调用 · …」「<  Pwsh · …」
+            // chevron 与标题之间只有间距没有墨迹；「上下文注入」行那对 `{}` 是字面
+            // 量串所以照渲染）—— PUA 码位在这一格没落字形。分叉的 mark 把 PUA 画成
+            // 实心方块 ⇒ 屏上比主干多一枚方形图标，按 R3 渲染真值收掉；`TOOL_TABLE`
+            // 的字形与 [`tool_row`] 查表保留（摘要/UIA 那半还在用）。
             TextBlock::new()
                 .text(self.catalog.l(bubble.text.as_str()))
                 .font_size(type_ramp::CAPTION.size)
@@ -27676,6 +29710,31 @@ impl Shell {
                     .into(),
             );
         }
+        // 时长 chip（`ToolCards.cs:181-185`）：结果时刻到、且不早于调用时刻才发。
+        if let Some(duration) =
+            tool_duration_text(&self.tool_results, &bubble.call_id, bubble.time)
+        {
+            cells.push(self.domain_status_chip(
+                duration,
+                p.text_tertiary.clone(),
+                p.clone(),
+                "ToolCardDuration",
+            ));
+        }
+        // 行尾 ⋯（`ToolCards.cs:195-210`）：`E712` 图标钮、id `ToolCopyJson`、
+        // Name/tooltip「复制参数 JSON」，点开 [`Shell::tool_menu_layer`] 那张五项菜单。
+        let key = bubble_key(bubble);
+        let menu_name = self.catalog.l("复制参数 JSON");
+        cells.push(
+            Button::new()
+                .min_width(0.0)
+                .automation_id("ToolCopyJson")
+                .automation_name(menu_name.clone())
+                .on_click(context.message(Msg::ToolMenuToggle(key.clone())))
+                .content(mark_size(glyph::MORE_12, size::GLYPH_CAPTION))
+                .tooltip(menu_name)
+                .into(),
+        );
         Border::new()
             .margin(th(pad::LIST_ITEM))
             .padding(th(pad::BUBBLE_TOOL))
@@ -27785,7 +29844,10 @@ impl Shell {
                     if open {
                         glyph::THINK_OPEN
                     } else {
-                        glyph::CHEVRON_RIGHT
+                        // 主干 `MessageActions.cs:486` 折叠态字面 E76B（左向，= `THINK`）。
+                        // 此前写 `CHEVRON_RIGHT`（E76C）= 与展开态同向，折叠行箭头恒朝右
+                        // （主干是「折叠〈左 / 展开〉右」，见 tokens.rs 里 THINK 族注释）。
+                        glyph::THINK
                     },
                     size::GLYPH_MINI,
                 ),
@@ -27835,7 +29897,13 @@ impl Shell {
             lines.push(
                 TextBlock::new()
                     .text(bubble.text.clone())
-                    .font_size(type_ramp::BODY.size)
+                    // 主干 `OnReasoningLoaded` 的正文 `TextBlock` **不设字号也不挂样式**
+                    // （`MessageActions.cs:523-529`）⇒ 跟助手/用户正文一样吃
+                    // `ChatList.FontSize` 的继承（会话字号档，`ui-theme/fontSize` 12–17，
+                    // `MW:3343/10914`）。分叉此前钉死 BODY 14 ⇒ 用户把字号调到 15+ 时
+                    // 只有气泡正文跟着变、思考正文原地不动（第一轮「字号整体小一号」
+                    // 的成因之一）。改挂 [`Shell::font_size`] 与气泡正文同源。
+                    .font_size(self.font_size)
                     .foreground(p.text_primary.clone())
                     .opacity(0.78)
                     .margin(th([20.0, space::S2, 0.0, 0.0]))
@@ -28097,11 +30165,16 @@ impl Shell {
             )
     }
 
-    /// 主干 `MakeChip(text, brush, mono: false, id)`（`MainWindow.ToolCards.cs:997-1021`）的分叉
-    /// 等价件：`Border{CornerRadius=4, Padding=(Sp4,1,Sp4,1), Background=SoftBrushFrom(brush,0.1)}`
-    /// 包一枚 `TextBlock{CaptionTextStyle, Foreground=brush, MaxWidth=280,
-    /// Trimming=CharacterEllipsis}`。**UIA id 长在 TextBlock 上**（`:1013`，不是外层那颗 Border）
+    /// 主干 `MakeChip(text, brush, mono: false, id)`（`MainWindow.ToolCards.cs:997-1027`）的分叉
+    /// 等价件：`Border{CornerRadius=RadiusPill(24)+HookPillRadius, Padding=(Sp4,1,Sp4,1),
+    /// Background=SoftBrushFrom(brush,0.1)}` 包一枚 `TextBlock{CaptionTextStyle, Foreground=brush,
+    /// MaxWidth=280, Trimming=CharacterEllipsis, VerticalAlignment=Center}`。
+    /// **UIA id 长在 TextBlock 上**（`:1013`，不是外层那颗 Border）
     /// ⇒ 主干那枚 `WorkflowMemberStatus` 的寻址层级在这里必须同形。
+    /// 0.9.0.4 两发对齐：① 端头从写死 4 换**胶囊**（主干 `HookPillRadius` = ActualHeight/2；
+    /// 分叉的等价折算 = `radius::clamp(PILL, 短边)`，短边 = caption 行高 16 + 上下内边距各 1
+    /// = 18 ⇒ 夹到 9，正是实测高的一半）；② 文字**纵轴居中**（横排把矮 chip 拉到同行最高项
+    /// 等高时，TextBlock 默认从盒顶开始渲染，mono 短 chip 的文字全贴顶）。
     ///
     /// 底色走 [`soft_brush_from`]（主干那一句推导法本身，不是它的近似）：分叉吃得到实色的三档
     /// （`completed`→`success` / `cancelled`→`warning` / `_`→`text_secondary`）⇒ 同色 10% 底，
@@ -28114,9 +30187,12 @@ impl Shell {
     /// 而主干五档各是**该档前景色**的 10% ⇒ 方向就错了，不只是差一档透明度。
     fn domain_status_chip(&self, text: String, foreground: Brush, p: Palette, id: &str) -> View {
         let background = soft_brush_from(&foreground, CHIP_SOFT_ALPHA, &p);
+        // 端头半径按短边折算（主干 `HookPillRadius` 的 SizeChanged=ActualHeight/2 那一发）：
+        // 高 = caption 行高 16 + 上下 padding 各 1，夹出来的 9 恰是半高 ⇒ 体育场端帽。
+        let short_side = type_ramp::CAPTION.line + 1.0 + 1.0;
         Border::new()
             .background(background)
-            .corner_radius(4.0)
+            .corner_radius(radius::clamp(radius::PILL, short_side))
             .padding(th([space::S4, 1.0, space::S4, 1.0]))
             .content(
                 TextBlock::new()
@@ -28125,6 +30201,7 @@ impl Shell {
                     .foreground(foreground)
                     .max_width(280.0)
                     .text_trimming(TextTrimming::CharacterEllipsis)
+                    .vertical_alignment(VerticalAlignment::Center)
                     .automation_id(id),
             )
     }
@@ -28299,6 +30376,149 @@ impl Shell {
     ///
     /// 与主干同的一点：`list` 与 `toggle` 都在 `st is null || count == 0` 那道门**之后**才建，
     /// 所以「查不到格」与「成员为空」两档在分叉长出完全一样的一行头。
+    /// 上下文注入过程卡（主干 `BuildContextCard`，`MessageDetails.cs:1275-1358`）：
+    /// 卡根同族（`MessageDomainCard_context-injection`），卡头 = `ToggleButton`（透明底四态覆盖件，
+    /// 同压缩卡刻法）内 `[chevron(E76B/E76C, 10), FontIcon(E943, 12, .85), 标题(Caption+Medium),
+    /// "·"(.45), 摘要(Hint+Ellipsis)]`（`:1307-1327`），正文 = `Margin=(22,Sp2,0,0)` 的条目列表
+    /// （标题 Caption+SemiBold / 正文 Hint+Wrap，`:1330-1351`）。
+    ///
+    /// 两处主干判据：
+    /// · `expandable = SystemPromptText 非空 || ContextEntries 非空`（`:1284`）—— 注入行只喂
+    ///   `ContextEntries`，分叉的等价物 = 详情台账那格的 `context_entries`（键 = 气泡寻址键）；
+    /// · 摘要 = 首条 entry 的标题（空则正文）截 48 字（`:1286-1291`），没有 entry 才回落
+    ///   `bubble.Text` 里「·」之后那段（`:1292-1295`）。
+    fn context_injection_card(
+        &self,
+        bubble: &Bubble,
+        p: Palette,
+        context: &mut ViewContext<Shell>,
+    ) -> View {
+        let key = bubble_key(bubble);
+        let entries = self.context_injection_entries(&key).unwrap_or_default();
+        let expandable = !entries.is_empty();
+        let open = expandable && self.context_open.iter().any(|item| item == &key);
+        let title = self.catalog.dt("上下文注入", "Context injection");
+        let summary = context_injection_summary(&bubble.text, &entries);
+        let header = StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .spacing(space::S6)
+            .vertical_alignment(VerticalAlignment::Center)
+            .children((
+                mark_size(
+                    if open {
+                        COMPACTION_CHEVRON_OPEN
+                    } else {
+                        COMPACTION_CHEVRON
+                    },
+                    size::GLYPH_MINI,
+                ),
+                mark_faded(CONTEXT_INJECTION_GLYPH, size::GLYPH_CAPTION, 0.85),
+                View::from(
+                    TextBlock::new()
+                        .text(title.clone())
+                        .font_size(type_ramp::CAPTION.size)
+                        .font_weight(FontWeight::SEMI_BOLD)
+                        .vertical_alignment(VerticalAlignment::Center),
+                ),
+                View::from(
+                    TextBlock::new()
+                        .text("·")
+                        .font_size(type_ramp::CAPTION.size)
+                        .opacity(0.45)
+                        .vertical_alignment(VerticalAlignment::Center),
+                ),
+                View::from(
+                    TextBlock::new()
+                        .text(summary)
+                        .font_size(type_ramp::CAPTION.size)
+                        .foreground(p.text_tertiary.clone())
+                        .text_wrapping(TextWrapping::NoWrap)
+                        .text_trimming(TextTrimming::CharacterEllipsis)
+                        .vertical_alignment(VerticalAlignment::Center),
+                ),
+            ));
+        let mut parts = vec![KeyedView::new(
+            "context-header",
+            View::from(
+                Button::new()
+                    .min_width(0.0)
+                    .resource_overrides(
+                        ResourceOverrides::new()
+                            .set("ButtonBackground", Color::transparent())
+                            .set("ButtonBackgroundPointerOver", Color::transparent())
+                            .set("ButtonBackgroundPressed", Color::transparent())
+                            .set("ButtonBackgroundDisabled", Color::transparent())
+                            .set("ButtonBorderBrush", Color::transparent())
+                            .set("ButtonBorderBrushPointerOver", Color::transparent())
+                            .set("ButtonBorderBrushPressed", Color::transparent())
+                            .set("ButtonBorderBrushDisabled", Color::transparent())
+                            .set(
+                                "ButtonPadding",
+                                th([space::S4, space::S2, space::S2, space::S2]),
+                            ),
+                    )
+                    .horizontal_alignment(HorizontalAlignment::Stretch)
+                    .horizontal_content_alignment(HorizontalAlignment::Left)
+                    .is_enabled(expandable)
+                    .automation_id("ContextExpand")
+                    .automation_name(title)
+                    .on_click(context.message(Msg::ContextToggle(key.clone())))
+                    .content(header),
+            ),
+        )];
+        if open {
+            let mut body: Vec<KeyedView> = Vec::new();
+            for (index, (entry_title, text)) in entries.iter().enumerate() {
+                if !entry_title.is_empty() {
+                    body.push(KeyedView::new(
+                        format!("entry-title-{index}"),
+                        View::from(
+                            TextBlock::new()
+                                .text(entry_title.clone())
+                                .font_size(type_ramp::CAPTION.size)
+                                .font_weight(FontWeight::SEMI_BOLD),
+                        ),
+                    ));
+                }
+                if !text.is_empty() {
+                    body.push(KeyedView::new(
+                        format!("entry-text-{index}"),
+                        View::from(
+                            TextBlock::new()
+                                .text(clip_chars(text, CONTEXT_BODY_MAX_CHARS))
+                                .font_size(type_ramp::CAPTION.size)
+                                .foreground(p.text_tertiary.clone())
+                                .text_wrapping(TextWrapping::Wrap),
+                        ),
+                    ));
+                }
+            }
+            parts.push(KeyedView::new(
+                "context-body",
+                StackPanel::new()
+                    .margin(th(DOMAIN_CARD_BODY_MARGIN))
+                    .spacing(space::S2)
+                    .keyed_children(body),
+            ));
+        }
+        StackPanel::new()
+            .horizontal_alignment(HorizontalAlignment::Stretch)
+            .margin(th([4.0, 1.0, 4.0, 1.0]))
+            .spacing(space::S2)
+            .automation_id(format!("MessageDomainCard_{CONTEXT_INJECTION_TOOL}"))
+            .keyed_children(parts)
+    }
+
+    /// [`Shell::context_injection_card`] 的数据口：详情台账里这一格的 `context_entries`
+    /// （键 = 气泡寻址键）。`None` = 台账里没有这一格（主干 `DetailState` 缺席同一档）。
+    fn context_injection_entries(&self, key: &str) -> Option<Vec<(String, String)>> {
+        let bubble = bubble_from_key(key)?;
+        let details = self
+            .details
+            .get(&DetailsKey::bubble(bubble.0, bubble.1, bubble.2))?;
+        Some(details.context_entries.clone())
+    }
+
     fn workflow_run_card(
         &self,
         bubble: &Bubble,
@@ -28624,6 +30844,137 @@ impl Shell {
             .into()
     }
 
+    // ---- 工具卡行尾 ⋯ 的复制菜单（主干 `BuildToolCopyMenu`，`ToolCards.cs:912-938`）---------
+    //
+    // 主干那张是 `copyButton.Flyout = MenuFlyout`（系统级、light-dismiss、钉在钮上方）；
+    // 分叉的替身 = 整面透明遮罩（light-dismiss）+ 贴**右下**的菜单卡，形制抄
+    // [`Shell::file_action_menu_layer`]（读不回屏幕矩形 ⇒ 贴角的备案同族）。行宿主 =
+    // 真 `Button` + `is_enabled`（⋯ 菜单同款，禁用项连回调都不挂）。
+
+    fn tool_menu_layer(&self, context: &mut ViewContext<Shell>, p: Palette) -> View {
+        let scrim: View = Border::new()
+            .grid_row(0)
+            .horizontal_alignment(HorizontalAlignment::Stretch)
+            .vertical_alignment(VerticalAlignment::Stretch)
+            .background(p.transparent.clone())
+            .on_pointer_pressed(context.callback(|_| Msg::ToolMenuClose))
+            .into();
+        Grid::new()
+            .rows([GridLength::STAR])
+            .children((scrim, self.tool_menu(context, p)))
+    }
+
+    /// 表体五项 = [`TOOL_MENU_ITEMS`] 逐字；行的启用门见 [`Shell::tool_menu_row_enabled`]，
+    /// 点行的那发在 [`Shell::run_tool_menu_pick`]（载荷**现查**气泡表与结果旁路表，
+    /// 不在开层那一刻快照 —— 主干那五发 `Func<string>` 同样是点击时求值）。
+    fn tool_menu(&self, context: &mut ViewContext<Shell>, p: Palette) -> View {
+        let Some(key) = self.tool_menu.clone() else {
+            return blank();
+        };
+        let mut rows: Vec<KeyedView> = Vec::new();
+        for (slot, (label, id)) in TOOL_MENU_ITEMS.iter().enumerate() {
+            let text = self.catalog.l(label);
+            let enabled = self.tool_menu_row_enabled(&key, slot);
+            let mut shell_row = Button::new()
+                .automation_id((*id).to_string())
+                .automation_name(text.clone())
+                .min_width(0.0)
+                .horizontal_alignment(HorizontalAlignment::Stretch)
+                .horizontal_content_alignment(HorizontalAlignment::Left)
+                .is_enabled(enabled);
+            if enabled {
+                shell_row =
+                    shell_row.on_click(context.message(Msg::ToolMenuPick(key.clone(), slot)));
+            }
+            let row: View = shell_row
+                .content(
+                    TextBlock::new()
+                        .text(text)
+                        .font_size(type_ramp::BODY.size)
+                        .text_wrapping(TextWrapping::NoWrap)
+                        .vertical_alignment(VerticalAlignment::Center),
+                )
+                .into();
+            rows.push(KeyedView::new(format!("tool-menu-{slot}"), row));
+        }
+        Border::new()
+            .grid_row(0)
+            .horizontal_alignment(HorizontalAlignment::Right)
+            .vertical_alignment(VerticalAlignment::Bottom)
+            .margin(th(pad::OVERLAY))
+            .background(p.card.clone())
+            .border_brush(p.stroke.clone())
+            .border_thickness(size::STROKE)
+            .corner_radius(radius::MEDIUM)
+            .automation_id("ToolCopyMenu")
+            .automation_name(self.catalog.l("复制参数 JSON"))
+            .content(
+                StackPanel::new()
+                    .orientation(Orientation::Vertical)
+                    .keyed_children(rows),
+            )
+            .into()
+    }
+
+    /// 「复制结果 JSON」那格的启用门（主干 `:931-933` 的
+    /// `enabled: !bubble.IsToolRunning && !string.IsNullOrEmpty(state.ResultJson)`）：
+    /// 分叉没有「在跑」的卡头闸（结果没到 = 表里没有 callId 那一格），其余半句同判。
+    fn tool_menu_row_enabled(&self, key: &str, slot: usize) -> bool {
+        if slot != 3 {
+            return true;
+        }
+        self.tool_result_json_of(key)
+            .is_some_and(|json| !json.is_empty())
+    }
+
+    /// 按气泡键取那一行的结果 JSON（⋯ 菜单第 4 槽的载荷）。
+    fn tool_result_json_of(&self, key: &str) -> Option<String> {
+        let (role, turn, seq) = bubble_from_key(key)?;
+        let row = self
+            .bubbles
+            .iter()
+            .find(|bubble| bubble.role == role && bubble.turn == turn && bubble.seq == seq)?;
+        if row.call_id.is_empty() {
+            return None;
+        }
+        Some(
+            self.tool_results
+                .iter()
+                .find(|result| result.call_id == row.call_id)?
+                .result_json
+                .clone(),
+        )
+    }
+
+    /// 点菜单那一发：复制对应载荷（主干 `item.Click → CopyTextToClipboard(payload)`；
+    /// 分叉的复制腿 = [`blade2_rs::clipboard::copy_text`]，「已复制」换字那发只在消息
+    /// 动作行那一族有，菜单这一族主干换的是**菜单项自己的文字**（瞬时层随即收起）
+    /// ⇒ 分叉只复制 + 收层，与主干的可见结果一致）。
+    fn run_tool_menu_pick(&self, key: &str, slot: usize) {
+        let Some((bubble_role, bubble_turn, bubble_seq)) = bubble_from_key(key) else {
+            return;
+        };
+        let Some(bubble) = self.bubbles.iter().find(|bubble| {
+            bubble.role == bubble_role && bubble.turn == bubble_turn && bubble.seq == bubble_seq
+        }) else {
+            return;
+        };
+        let payload = match slot {
+            // `:925-926`：FormatToolJson(ToolArgs) = PrettyJson；`:927-930` 两发同源。
+            0 | 1 => pretty_json(&bubble.args),
+            2 => compact_json(&bubble.args),
+            3 => self
+                .tool_result_json_of(key)
+                .map(|json| pretty_json(&json))
+                .unwrap_or_default(),
+            // `:934-935`：ToolPropertyPath(ToolName, ToolArgs)。
+            _ => tool_property_path(&bubble.tool_name, &bubble.args),
+        };
+        if !payload.is_empty() {
+            clipboard::copy_text(&payload);
+        }
+    }
+
     // ---- #75 工作区：右键菜单 + 四张「对话框」的渲染层 --------------------------------------
     //
     // 主干那一族的两件东西 reactor 0.100.0 都没有对应物：
@@ -28825,7 +31176,7 @@ impl Shell {
 
     /// 那四档本身：两组各一颗**禁用态**组头 + 两颗 `ToggleButton`（reactor 的原生菜单项
     /// 没有 checked 位，`RadioMenuFlyoutItem` 全 crate 零命中 ⇒ 四档全是分段钮，
-    /// 形制同 [`Shell::theme_cubes]` / [`Shell::usage_range_row]`），组间一条
+    /// 形制同 `Shell::usage_range_row` 那族分段），组间一条
     /// [`menu_flyout_separator]（主干 `MW:3329` 那枚 `MenuFlyoutSeparator`）。
     /// 表体是常量 [`NAV_VIEW_GROUPS]` + [`NAV_VIEW_ITEMS]`，这里只把它们摊开。
     fn nav_view_menu_card(&self, context: &mut ViewContext<Shell>, p: Palette) -> View {
@@ -29458,10 +31809,15 @@ impl Shell {
             "tool" if bubble.tool_name == COMPACTION_TOOL => {
                 self.compaction_card(bubble, p, context)
             }
+            // 主干 `BuildMessageDomainCard:923-927`：`context-injection`（与 `system-prompt`/
+            // default 三档）落 `BuildContextCard` ⇒ 分叉的注入行不再走 `tool_line` 灰行。
+            "tool" if bubble.tool_name == CONTEXT_INJECTION_TOOL => {
+                self.context_injection_card(bubble, p, context)
+            }
             "tool" if bubble.tool_name == WORKFLOW_RUN_TOOL => {
                 self.workflow_run_card(bubble, p, context)
             }
-            "tool" | "system" => self.tool_line(bubble, p),
+            "tool" | "system" => self.tool_line(bubble, p, context),
             "reasoning" => self.reasoning_row(bubble, p, context),
             "deliverable" => self.deliverable_card(bubble, p, context),
             _ => {
@@ -29573,6 +31929,17 @@ impl Shell {
         pending_preset_id(self.pending_agent_preset.as_ref())
     }
 
+    /// [`Shell::pending_workspace`] 的**唯一消费口**取 id：主干
+    /// `CreateSessionCoreAsync` 的 `if (_pendingWorkspace is { Id.Length: > 0 } ws)`
+    /// （`MW:4621-4624`）—— **空 id 视同未选**（回落文档目录 cwd，不是发一个空串过去把
+    /// location 两支都弄脏）。拆薄壳同 [`Shell::agent_preset_to_send`]。
+    fn pending_workspace_id(&self) -> Option<String> {
+        self.pending_workspace
+            .as_ref()
+            .map(|(id, _)| id.clone())
+            .filter(|id| !id.is_empty())
+    }
+
     /// 主干 `LoadAgentModeMenuAsync`（`MW:4816-4878`）里那次 `await`。
     /// 三道守卫逐条对着原文抄：
     /// · `_rpc is null ⇒ return`（`MW:4818-4821`）：内核没起来时**连 `Items.Clear()` 都不做**
@@ -29597,6 +31964,290 @@ impl Shell {
                 });
             Msg::AgentPresetsLoaded(outcome)
         });
+    }
+
+    /// 设置页预设卡的拉取腿（主干 `RenderPresetsSectionAsync` 开头那次
+    /// `await _rpc.CallOkAsync("agentPresets/list", new { })`，`MW:13488-13492`）：
+    /// 进 `agent-presets` 节就发（主干 `RenderSectionAsync` 每次重建该节）、不设缓存闸。
+    /// 请求体与 [`Shell::load_agent_mode_menu`] 同一发（扁平 `{}`）。
+    fn load_preset_cards(&mut self, context: &ComponentContext<Shell>) {
+        let Some(shared) = self.kernel.clone() else {
+            // 主干 `_rpc is null ⇒ return`（`MW:13482-13485`）：页停在段说明，什么都不铺。
+            self.preset_cards = None;
+            return;
+        };
+        self.preset_cards = None;
+        context.spawn_background(move |_token| {
+            let outcome = shared
+                .lock()
+                .map_err(|_| "内核状态不可用".to_string())
+                .and_then(|mut kernel| {
+                    kernel
+                        .call("agentPresets/list", json!({}))
+                        .map(|reply| parse_preset_cards(&reply))
+                });
+            Msg::PresetCardsLoaded(outcome)
+        });
+    }
+
+    /// 「插件列表」Tab 的清单腿（主干 `RenderPluginInventoryContentAsync` 开头那发，
+    /// `MW:13271`：`pluginInventory/list {}`）。失败两态都落地（主干失败横幅 = 一行说明）。
+    fn load_plugin_inventory(&mut self, context: &ComponentContext<Shell>) {
+        let Some(shared) = self.kernel.clone() else {
+            self.plugin_inventory = None;
+            return;
+        };
+        self.plugin_inventory = None;
+        context.spawn_background(move |_token| {
+            let outcome = shared
+                .lock()
+                .map_err(|_| "内核状态不可用".to_string())
+                .and_then(|mut kernel| {
+                    kernel
+                        .call("pluginInventory/list", json!({}))
+                        .map(|reply| parse_plugin_inventory(&reply))
+                });
+            Msg::PluginInventoryLoaded(outcome)
+        });
+    }
+
+    /// 提供方行卡的两发合帧腿（主干 `LoadProviderRowsAsync`，`MW:11312-11413`）：
+    /// `llm/listConfigurableProviders`（目录）+ 一发批量 `credentials/describe {refs}`。
+    /// 凭据读取失败**不阻塞列表**（主干 `catch (Exception) { }`：行卡退化为无状态点）
+    /// ⇒ 那发失败折成空对象 `{}`，解析层自然全缺席。refs = 目录行逐条的 key_ref
+    /// （快照里已点名的 apiKeyEnv 优先，否则 DeriveKeyRef；主干在拼完 rows 后取，
+    /// 同源同值），在这条腿里先算好带进闭包。
+    fn load_provider_rows(&mut self, context: &ComponentContext<Shell>) {
+        let Some(shared) = self.kernel.clone() else {
+            self.provider_rows = None;
+            return;
+        };
+        self.provider_rows = None;
+        // 快照里点名过的 apiKeyEnv（ns → env 名）：key_ref 的第一优先档。
+        let env_by_ns: Vec<(String, String)> = self
+            .settings_snapshot
+            .as_deref()
+            .map(|snap| {
+                snap.iter()
+                    .filter_map(|view| {
+                        view.field("value")
+                            .and_then(|value| value.get("apiKeyEnv"))
+                            .and_then(Value::as_str)
+                            .filter(|s| !s.is_empty())
+                            .map(|s| (view.ns.clone(), s.to_string()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        context.spawn_background(move |_token| {
+            let outcome = shared
+                .lock()
+                .map_err(|_| "内核状态不可用".to_string())
+                .and_then(|mut kernel| {
+                    let call = llm_list_configurable_providers();
+                    let providers = kernel.call(call.method, call.args)?;
+                    let entries = parse_configurable_providers(&providers)?;
+                    let mut refs: Vec<String> = Vec::new();
+                    for entry in &entries {
+                        if !entry.listed() {
+                            continue;
+                        }
+                        let key_ref = env_by_ns
+                            .iter()
+                            .find(|(ns, _)| *ns == entry.settings_ns)
+                            .map(|(_, env)| env.clone())
+                            .unwrap_or_else(|| derive_key_ref(&entry.provider));
+                        if !key_ref.is_empty() && !refs.contains(&key_ref) {
+                            refs.push(key_ref);
+                        }
+                    }
+                    let described = kernel
+                        .call("credentials/describe", json!({ "refs": refs }))
+                        .unwrap_or_else(|_| json!({}));
+                    Ok((providers, described))
+                });
+            Msg::ProviderRowsFetched(outcome)
+        });
+    }
+
+    // ---- 设置·宠物页的清单加载链（主干 `MainWindow.Pet.cs`，R2 差异 #7 的本体）----------
+    // 分叉此前只画「正在读取宠物清单…」骨架：渲染、状态格、Msg 臂、调用点都在，
+    // 独缺 `load_pets` / `pet_use` / `rescan_pet_sources` 三颗本体（工作区还带着
+    // 三处 E0599 编译红）。下面三颗逐条对主干补齐。
+
+    /// 主干 `ReloadPetLibraryAsync`（`Pet.cs:379-404`）的整段：
+    /// ① `_petStore.ScanLocal()` + `DshPetStore.ScanCodexIds()`（来源判定随重载同批现扫）；
+    /// ② `GetPetsAsync()`（GET `api/pet/pets`）—— null/空表同一句空态文案（`Pet.cs:388-398`）；
+    /// ③ `GetStateAsync()`（GET `api/pet/state`）取 `pet.id` 标「使用中」。
+    /// 分叉把 ① 摆在回执臂（[`Self::rescan_pet_sources`]，纯盘扫不进后台）——主干那两发
+    /// 就是同步 `Directory.EnumerateDirectories`，分叉的 reducer 同样可以就地扫；
+    /// ②③ 在后台连发（同一把内核锁里 GET 两次，形状照 [`Shell::load_provider_rows`]）。
+    /// 路由 404 = 主干 `PetRouteStatus.Missing` 那一档：主干把显示卡换成安装提示、清单卡
+    /// 保持原样（`RenderPetSection` `Pet.cs:246-251` 提前 return，`ReloadPetLibraryAsync`
+    /// 压根不跑）⇒ 分折这里折成 `Err`（回执臂落 `Some(Err)`，渲染口按「数据没到」画骨架，
+    /// 显示卡的提示条是主干 0.8.x 就有的另一格偏差，不在本批）。
+    fn load_pets(&mut self, context: &ComponentContext<Shell>) {
+        let Some(shared) = self.kernel.clone() else {
+            return;
+        };
+        // 进入这一节的那一发就重扫来源（主干 `ReloadPetLibraryAsync` 开头两发同批）。
+        self.rescan_pet_sources();
+        context.spawn_background(move |_token| {
+            let outcome = shared
+                .lock()
+                .map_err(|_| "内核状态不可用".to_string())
+                .and_then(|mut kernel| Self::pet_reload_outcome(&mut kernel));
+            Msg::PetsLoaded(outcome)
+        });
+    }
+
+    /// 主干 `ScanLocal` + `ScanCodexIds`（`DshPetStore.cs:69/:109`）的分叉版：
+    /// 本机 = `data_home()/pets` 下带 `pet.json` 的目录（`ScanLocal` 的 id 集）；
+    /// Codex = `CODEX_HOME`（缺省 `~/.codex`，支持 `~` 前缀展开）下的 `pets` 同规则。
+    /// 判据只用 id 集合（主干 `_petLocalIds/_petCodexIds` 是 `ToHashSet`）⇒ 这里存
+    /// `Vec<String>`、查询用 `iter().any`（表长个位数，不必引 HashSet）。
+    fn rescan_pet_sources(&mut self) {
+        let scan = |root: std::path::PathBuf| -> Vec<String> {
+            let pets = root.join("pets");
+            let Ok(entries) = std::fs::read_dir(&pets) else {
+                return Vec::new();
+            };
+            entries
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.path().join("pet.json").is_file())
+                .filter_map(|entry| entry.file_name().into_string().ok())
+                .collect()
+        };
+        self.pet_local_ids = scan(shellfiles::data_home());
+        // CODEX_HOME：空串/缺省都回落 `~/.codex`；`~` / `~/` 前缀按主干那条 switch 展开。
+        let home = std::env::var_os("USERPROFILE").map(std::path::PathBuf::from);
+        let codex_raw = std::env::var("CODEX_HOME").ok().filter(|v| !v.trim().is_empty());
+        let codex_root = match (codex_raw, home.as_ref()) {
+            (Some(raw), Some(home)) if raw == "~"
+                || raw.starts_with("~/")
+                || raw.starts_with("~\\") =>
+            {
+                home.join(&raw[2..])
+            }
+            (Some(raw), _) => std::path::PathBuf::from(raw),
+            (None, Some(home)) => home.join(".codex"),
+            (None, None) => std::path::PathBuf::from(".codex"),
+        };
+        self.pet_codex_ids = scan(codex_root);
+    }
+
+    /// 主干 `SelectPetAsync`（`Pet.cs:510-523`）：`SetPetAsync(pet.Id)`（POST
+    /// `api/pet/set-pet`，回执 `{ok:true}` 才算成）→ `if (ok) await ReloadPetLibraryAsync()`。
+    /// 两发在**同一条后台腿**里串行（同一把内核锁，形状照 [`Shell::load_pets`]）：
+    /// 切换成 ⇒ 顺手整卡重载，回执走 [`Msg::PetsLoaded`]（「使用中」标记的唯一刷新口，
+    /// 与主干 rows.Clear() 后逐行重建同观感）；切换败 ⇒ 走 [`Msg::PetUsed`] 只写一行
+    /// 日志、**不清**旧清单（主干失败那支只 `Debug.WriteLine`，UI 原样）。
+    /// 主干那句 `KickPetPoll()` 是宠物**窗口**的轮询腿，分叉没有宿主窗口（0.8.x 起的
+    /// 挂账）⇒ 不发。
+    fn pet_use(&mut self, id: &str, context: &ComponentContext<Shell>) {
+        let Some(shared) = self.kernel.clone() else {
+            return;
+        };
+        let id = id.to_string();
+        context.spawn_background(move |_token| {
+            let set = shared
+                .lock()
+                .map_err(|_| "内核状态不可用".to_string())
+                .and_then(|mut kernel| {
+                    let (status, body) = kernel
+                        .post_json_route("/api/pet/set-pet", &format!("{{\"petId\":\"{id}\"}}"))?;
+                    if status >= 400 {
+                        return Err(format!("api/pet/set-pet → HTTP {status}"));
+                    }
+                    let ok = serde_json::from_str::<Value>(&body)
+                        .ok()
+                        .and_then(|value| value.get("ok").and_then(Value::as_bool))
+                        .unwrap_or(false);
+                    if !ok {
+                        return Err("插件不认识这一只（set-pet 回执 ok != true）".to_string());
+                    }
+                    // 成功 ⇒ 同一条腿里重载（主干 `await ReloadPetLibraryAsync()` 那一发）。
+                    Self::pet_reload_outcome(&mut kernel)
+                });
+            match set {
+                Ok((pets, active)) => Msg::PetsLoaded(Ok((pets, active))),
+                Err(error) => Msg::PetUsed(Err(error)),
+            }
+        });
+    }
+
+    /// 重载链的**合流读法**（`load_pets` / `pet_use` 成功腿 / `pet_remove` 成功腿三处共用）：
+    /// GET `api/pet/pets` → 404/HTTP≥400 折 Err（主干 `PetRouteStatus.Missing` / 传输档）、
+    /// 空表直接回 `(空, None)`（主干空表连 state 都不拉，`Pet.cs:388-398`）、
+    /// 非空再 GET `api/pet/state` 取当前 id（这一发拿不到不算失败——主干
+    /// `state?.PetId == pet.Id` 对 null 全行不标）。
+    fn pet_reload_outcome(
+        kernel: &mut Kernel,
+    ) -> Result<(Vec<PetListEntry>, Option<String>), String> {
+        let (status, body) = kernel.get_route("/api/pet/pets")?;
+        if status == 404 {
+            return Err("pet 路由不存在（插件未装或未选入 bundle）".to_string());
+        }
+        if status >= 400 {
+            return Err(format!("api/pet/pets → HTTP {status}"));
+        }
+        let pets = parse_pet_list(&body);
+        if pets.is_empty() {
+            return Ok((Vec::new(), None));
+        }
+        let active = kernel
+            .get_route("/api/pet/state")
+            .ok()
+            .and_then(|(status, body)| {
+                (status == 200)
+                    .then_some(body)
+                    .and_then(|body| parse_pet_active_id(&body))
+            });
+        Ok((pets, active))
+    }
+
+    /// 主干 `DeletePetAsync`（`Pet.cs:524-545`）的两击后半 + `_petStore.Delete` 的**闸**：
+    /// 只认 `data_home()/pets` 之下、规范化后仍落在根之内的那一格（主干
+    /// `full.StartsWith(root + 分隔符)` 同判），递归删整目录；删完同一条腿里重载清单
+    /// （主干 `if (_petStore.Delete(pet.Id)) await ReloadPetLibraryAsync();`）。
+    /// 删除失败 = 只写日志（主干回 `false` 时连重载都不发，UI 原样）。
+    fn pet_remove(&mut self, id: &str, context: &ComponentContext<Shell>) {
+        let Some(shared) = self.kernel.clone() else {
+            return;
+        };
+        let id = id.to_string();
+        context.spawn_background(move |_token| {
+            // 盘删不需要内核锁；失败/成功都只经 [`Msg::PetUsed`] / [`Msg::PetsLoaded`] 回图。
+            if !Self::pet_store_delete(&id) {
+                return Msg::PetUsed(Err(format!("删除 {id} 失败（目录不存在或被占用）")));
+            }
+            let outcome = shared
+                .lock()
+                .map_err(|_| "内核状态不可用".to_string())
+                .and_then(|mut kernel| Self::pet_reload_outcome(&mut kernel));
+            Msg::PetsLoaded(outcome)
+        });
+    }
+
+    /// 主干 `DshPetStore.Delete`（`DshPetStore.cs:452-467`）的分叉版。
+    /// ⚠ 这是全文件唯一一处递归目录删除，三道闸缺一不发：① id 非空且不含路径分隔符
+    /// （比主干的 StartsWith 闸更前置的一档，挡显式注入）；② 规范化后的目标必须落在
+    /// 规范化后的 `pets` 根之内（主干同一道闸的 Rust 形）；③ 根内确实有这一格。
+    fn pet_store_delete(id: &str) -> bool {
+        if id.is_empty() || id.contains('\\') || id.contains('/') {
+            return false;
+        }
+        let root = shellfiles::data_home().join("pets");
+        let Ok(root_full) = root.canonicalize() else {
+            return false;
+        };
+        let Ok(target_full) = root.join(id).canonicalize() else {
+            return false;
+        };
+        if !target_full.starts_with(&root_full) {
+            return false;
+        }
+        std::fs::remove_dir_all(target_full).is_ok()
     }
 
     /// 台账 PC2 件②（账本 #233）：「预设目录」卡那颗 `PresetCreatorDraftButton` 的点击腿 =
@@ -29715,7 +32366,7 @@ impl Shell {
     /// 明细面板这一发**不是**自绘层，是原生 `Flyout`：见 [`Shell::mw3_context_meter_flyout`]。
     fn context_meter_cell(&self, context: &mut ViewContext<Shell>) -> Option<View> {
         let occ = self.active_occupancy()?;
-        let p = Palette::for_scheme(self.scheme);
+        let p = theme::palette(self.scheme);
         // 主干 `CM:168-170` 一发两贴：tooltip 与无障碍名是**同一枚串**。
         let aria = cm::tooltip_and_aria(&self.catalog, occ);
         let track_side = cm::RING_BOX - cm::RING_STROKE;
@@ -29951,7 +32602,7 @@ impl Shell {
     /// 于是照 `TextBlock` 画 = 一颗开不出来的死控件（本仓硬禁），这里换成**四态全透明**的
     /// `Button`（`button_ghost`，#29 定案配方），只留命中与文本；脸与串仍逐字照主干那一档。
     fn run_stats_strip_cell(&self, id: &str, text: String, body: View) -> View {
-        let p = Palette::for_scheme(self.scheme);
+        let p = theme::palette(self.scheme);
         let face: View = TextBlock::new()
             .text(text.clone())
             .font_size(type_ramp::CAPTION.size)
@@ -30077,7 +32728,7 @@ impl Shell {
     /// 主干 `MakePanelSeparator`（`RS:328-333`）：`Border{Height=1, Background=StrokeBrush}`，
     /// 读不到退**透明**（不是退白）。与 `mw3_context_panel_body` 里那枚同一刻法、同一档值。
     fn run_stats_panel_separator(&self) -> View {
-        let p = Palette::for_scheme(self.scheme);
+        let p = theme::palette(self.scheme);
         Border::new()
             .height(1.0)
             .background(p.stroke.clone())
@@ -30090,7 +32741,7 @@ impl Shell {
     /// 自绘层、零 Msg、零状态格**：点即开、点外面即收、同刻至多一张全由框架给（#57 同款实证）。
     /// 外壳那四件与 `CONTEXT_PANEL_*` 三常量同值 ⇒ 直接读它们，不起第二份数值真相。
     fn run_stats_flyout(&self, body: View) -> Flyout {
-        let p = Palette::for_scheme(self.scheme);
+        let p = theme::palette(self.scheme);
         let host: View = Border::new()
             .background(p.card.clone())
             .border_brush(p.stroke.clone())
@@ -30129,7 +32780,7 @@ impl Shell {
     /// 外壳那颗 `Border`（`CardBrush` 底 + `StrokeBrush` 1px + `CornerMedium=8` +
     /// padding `14,12,14,12`）逐字节抄 `RunStats.cs:350-365`。
     fn mw3_context_panel_body(&self, occ: cm::ContextOccupancy) -> View {
-        let p = Palette::for_scheme(self.scheme);
+        let p = theme::palette(self.scheme);
         let locale = self.catalog.locale();
         let head_cells: Vec<KeyedView> = vec![
             KeyedView::new(
@@ -30213,9 +32864,19 @@ impl Shell {
         //   形制偏差随 `ComposerAddFlyout` 落地收口）。
         // 留在带上的每一颗都在主干 composer 行有座，列序不动（选择器两颗 → 计划 chip →
         // 模型 → 上下文圈）。
+        //
+        // 列位（2026-10-27 终验清单第 2 项）：主干那行的格子是
+        // `MX:1127-1134` = [Auto + | Auto 工作区 | Auto 模式 | Auto 权限 | * 计划 | Auto 模型 |
+        // Auto 上下文 | Auto 发送]——**星型列在第 4 格（计划 chip）**，模型/上下文两枚 Auto 列
+        // 被星型列的余量推到行**右端**、紧挨发送钮。此前分叉把整带装进一颗 StackPanel 塞在
+        // 外层星格的 Left 角落 ⇒ 模型胶囊与发送钮之间隔一大段空白。对齐 = 带本身改成同构
+        // Grid（列 0-3 = 主干 col 1-4，列 4/5 = 主干 col 5/6），宿主 Border 撑满外层星格。
         let mut cells: Vec<KeyedView> = Vec::new();
         // 每一颗自己决定在不在场（`None` = 不入树 = 主干 `Visibility.Collapsed`）。
         for (key, cell) in [
+            // #56 工作区选择器 = 主干 `MX:1181-1203` 的第 1 列（+ 号之后、Agent 模式之前），
+            // 同一道 hero 闸（`MW:5112`）⇒ 排在 `agent-mode` 前面就是主干列序。
+            ("workspace", self.workspace_trigger(context)),
             ("agent-mode", self.agent_mode_trigger(context)),
             // #56 第二颗。列序照主干 `MX:1216-1259`：Agent 模式在前、权限在后。
             ("permission", self.permission_trigger(context)),
@@ -30233,15 +32894,204 @@ impl Shell {
             // 上下文第 6 列）。**不开新列**（`composer` 那三列原样，见主控锁的反向半边）。
             ("context-meter", self.context_meter_cell(context)),
         ] {
+            // 主干列号 → 带内 Grid 列号：带内没有 + 号那一格，整体左移一位；
+            // 星型列 = 主干第 4 格（计划 chip 落位 Left，吸收余量）。
+            let column = match key {
+                "workspace" => 0,
+                "agent-mode" => 1,
+                "permission" => 2,
+                "plan-chip" => 3,
+                "model" => 4,
+                "context-meter" => 5,
+                _ => 0,
+            };
             if let Some(cell) = cell {
-                cells.push(KeyedView::new(key, cell));
+                // 同名遮蔽：包装层 Border 顶替裸 View 进 keyed 槽（带锁的
+                // `KeyedView::new(key, cell)` 字面量靠它保住）。
+                // ⚠ 对齐必须钉在 Border 建造器上、`.content()` **之前**：content 一挂
+                // 返回的就是 `View`，View 上没有对齐方法（E0599，0.9.0.4 门控实测）。
+                let mut border = Border::new().grid_column(column);
+                if key == "plan-chip" {
+                    // 主干 `MX:1262`：`PlanChip` 自己 `HorizontalAlignment="Left"`——
+                    // 它坐在星型列里，不钉 Left 会被撑满整格。
+                    border = border.horizontal_alignment(HorizontalAlignment::Left);
+                }
+                cells.push(KeyedView::new(key, border.content(cell)));
             }
         }
-        StackPanel::new()
-            .orientation(Orientation::Horizontal)
-            .spacing(space::S8)
+        Grid::new()
+            .columns([
+                GridLength::Auto,
+                GridLength::Auto,
+                GridLength::Auto,
+                GridLength::STAR,
+                GridLength::Auto,
+                GridLength::Auto,
+            ])
+            // 主干 `MX:1117`：`ComposerActionRow` 的 `ColumnSpacing=Space8`——带内这六格
+            // 就是主干 col 1-6，列距同一枚令牌。
+            .column_spacing(space::S8)
             .vertical_alignment(VerticalAlignment::Center)
             .keyed_children(cells)
+            .into()
+    }
+
+    /// 主干 `WorkspacePickerButton`（`MX:1181-1203`）：`FontIcon E8B7` + `WorkspaceChipLabel`
+    /// 那颗 `TextBlock`，`AutomationId="WorkspacePickerButton"` + `Name="选择工作区"` +
+    /// tooltip「新会话将在此工作区中创建」。**只在空态在场**：`MW:5112` 与
+    /// `AgentModeButton` 同一句 `hero ? Visible : Collapsed`（分叉同判据
+    /// [`Shell::hero_state`]，不叠 `boot.showing`，理由见 [`Shell::agent_mode_trigger`]）。
+    /// 标签 = `_pendingWorkspace?.Title 非空 ? 它 : "选择工作区"`（`MW:5119`）—— 主干那句
+    /// 兜底**不过 i18n 表**（字面量），分叉照抄：选过工作区显示工作区名，没选过显示占位。
+    fn workspace_trigger(&self, context: &mut ViewContext<Shell>) -> Option<View> {
+        if !self.hero_state() {
+            return None;
+        }
+        let name = self.catalog.l("选择工作区");
+        let tooltip = self.catalog.l("新会话将在此工作区中创建");
+        let label = match self.pending_workspace.as_ref() {
+            Some((_, title)) if !title.is_empty() => title.clone(),
+            _ => "选择工作区".to_string(),
+        };
+        let button: View = Button::new()
+            // 与 `AgentModeButton` 同一批（#240）：`DropDownButton` 默认模板的描边 chrome +
+            // 右缘 chevron，摘 ghost 覆写（见那颗的注释）。
+            .min_width(0.0)
+            .vertical_alignment(VerticalAlignment::Center)
+            .horizontal_content_alignment(HorizontalAlignment::Left)
+            .automation_id("WorkspacePickerButton")
+            .automation_name(name.clone())
+            .on_click(context.message(Msg::SelectorToggle(SelectorKind::Workspace)))
+            .content(
+                // 主干 `Content` = `[Auto, *]` 两列 Grid + `Spacing=Space6`（`MX:1189-1198`）
+                // ⇒ 横向 `StackPanel{spacing=Space6}` 等价（同 `agent_mode_trigger` 的理由）。
+                StackPanel::new()
+                    .orientation(Orientation::Horizontal)
+                    .spacing(space::S6)
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .children((
+                        // `MX:1194`：`Glyph="&#xE8B7;"`（= `glyph::FOLDER`，无 x:Name、静态）。
+                        mark_size(glyph::FOLDER, size::GLYPH_BODY),
+                        TextBlock::new()
+                            .text(label)
+                            .font_size(type_ramp::BODY.size)
+                            .text_wrapping(TextWrapping::NoWrap)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            // 主干那枚 `x:Name="WorkspaceChipLabel"`（`MX:1195`）⇒ UIA 侧
+                            // 显式挂同名（同 `AgentModeLabel` 的刻法）。
+                            .automation_id("WorkspaceChipLabel"),
+                        mark_size(glyph::DROPDOWN_CHEVRON, size::GLYPH_CAPTION),
+                    )),
+            )
+            .into();
+        Some(button.tooltip(tooltip))
+    }
+
+    /// `WorkspacePickerFlyout` 的表体（主干 `UpdateComposerSelectors` 那段，`MW:5117-5152`）：
+    /// 「文档目录（默认）」单选行 + 侧栏工作区表（`self.tree.workspaces`）逐行单选 +
+    /// 分隔线 + 「新建工作区…」。表体来源就是侧栏那棵树（主干 `_workspaces` 同一份），
+    /// 不另拉 RPC；当前档 = [`Shell::pending_workspace`] 的 id 比对（`MW:5126/5138` 的
+    /// `IsChecked` 判据）。抄不动的两件与 `agent_mode_menu` 同款：单选点用 Accent 底、
+    /// `ShowAt(Top)` 贴内容面左下（偏移吃 `pad::COMPOSER_SELECTORS`）。
+    fn workspace_menu(&self, context: &mut ViewContext<Shell>, p: Palette) -> View {
+        let mut cells: Vec<KeyedView> = Vec::new();
+        // 「文档目录（默认）」= `PickWorkspace(null)` 那一行（`MW:5123-5130`）。
+        let default_label = self.catalog.l("文档目录（默认）");
+        cells.push(KeyedView::new(
+            "workspace-default",
+            Button::new()
+                .automation_id("WorkspacePickDefault")
+                .automation_name(default_label.clone())
+                .min_width(0.0)
+                .horizontal_alignment(HorizontalAlignment::Stretch)
+                .horizontal_content_alignment(HorizontalAlignment::Left)
+                .style(
+                    (self.pending_workspace.is_none())
+                        .then_some(ButtonStyle::Accent),
+                )
+                .on_click(context.message(Msg::WorkspacePick(None)))
+                .content(
+                    TextBlock::new()
+                        .text(default_label)
+                        .font_size(type_ramp::BODY.size)
+                        .text_wrapping(TextWrapping::NoWrap)
+                        .vertical_alignment(VerticalAlignment::Center),
+                ),
+        ));
+        // 工作区行（`MW:5132-5142`）：侧栏树的 (id, title) 原样进表，勾选比对 id。
+        for workspace in &self.tree.workspaces {
+            cells.push(KeyedView::new(
+                format!("workspace-{}", workspace.id),
+                Button::new()
+                    .automation_id(format!("WorkspacePick_{}", workspace.id))
+                    .automation_name(workspace.title.clone())
+                    .min_width(0.0)
+                    .horizontal_alignment(HorizontalAlignment::Stretch)
+                    .horizontal_content_alignment(HorizontalAlignment::Left)
+                    .style((self.pending_workspace.as_ref().is_some_and(
+                        |(id, _)| id == &workspace.id,
+                    ))
+                    .then_some(ButtonStyle::Accent))
+                    .on_click(context.message(Msg::WorkspacePick(Some((
+                        workspace.id.clone(),
+                        workspace.title.clone(),
+                    )))))
+                    .content(
+                        TextBlock::new()
+                            .text(workspace.title.clone())
+                            .font_size(type_ramp::BODY.size)
+                            .text_wrapping(TextWrapping::NoWrap)
+                            .vertical_alignment(VerticalAlignment::Center),
+                    ),
+            ));
+        }
+        // 分隔线 + 「新建工作区…」（`MW:5144-5152`）：字形 E710，开的是侧栏加号同一张卡
+        // （差别只有「建完即选」，见 `Msg::WorkspacePickerCreate` 那一臂）。
+        cells.push(KeyedView::new(
+            "workspace-separator",
+            Border::new().height(size::STROKE).background(p.stroke_subtle.clone()),
+        ));
+        let create_label = self.catalog.l("新建工作区…");
+        cells.push(KeyedView::new(
+            "workspace-create",
+            Button::new()
+                .automation_id("WorkspacePickCreate")
+                .automation_name(create_label.clone())
+                .min_width(0.0)
+                .horizontal_alignment(HorizontalAlignment::Stretch)
+                .horizontal_content_alignment(HorizontalAlignment::Left)
+                .on_click(context.message(Msg::WorkspacePickerCreate))
+                .content(
+                    StackPanel::new()
+                        .orientation(Orientation::Horizontal)
+                        .spacing(space::S6)
+                        .vertical_alignment(VerticalAlignment::Center)
+                        .children((
+                            mark_size(glyph::NEW_SESSION, size::GLYPH_BODY),
+                            TextBlock::new()
+                                .text(create_label)
+                                .font_size(type_ramp::BODY.size)
+                                .text_wrapping(TextWrapping::NoWrap)
+                                .vertical_alignment(VerticalAlignment::Center),
+                        )),
+                ),
+        ));
+        Border::new()
+            .grid_row(0)
+            .horizontal_alignment(HorizontalAlignment::Left)
+            .vertical_alignment(VerticalAlignment::Bottom)
+            .margin(th(pad::COMPOSER_SELECTORS))
+            .background(p.card.clone())
+            .border_brush(p.stroke.clone())
+            .border_thickness(size::STROKE)
+            .corner_radius(radius::MEDIUM)
+            .automation_id("WorkspacePickerFlyout")
+            .automation_name(self.catalog.l("选择工作区"))
+            .content(
+                StackPanel::new()
+                    .orientation(Orientation::Vertical)
+                    .keyed_children(cells),
+            )
             .into()
     }
 
@@ -30318,6 +33168,8 @@ impl Shell {
             Some(SelectorKind::Permission) => self.permission_menu(context, p),
             // #56 第三颗：同一张层、同一把单例槽 ⇒ 「同刻至多一张」继续不需要额外装置。
             Some(SelectorKind::Model) => self.model_menu(context, p),
+            // #56 工作区选择器：同一张层、同一把单例槽（第 4 张选择器层）。
+            Some(SelectorKind::Workspace) => self.workspace_menu(context, p),
             // `None` 由 `chat_page` 的判据挡在门外，这一支到不了；留着是为了 `match` 穷尽。
             None => blank(),
         };
@@ -30519,9 +33371,12 @@ impl Shell {
                                             //   [`Shell::agent_mode_trigger`] 里，见那里的逐行出处。
                                             // 列数一列不加（`[Auto, *, Auto]` 原样）：为浮层加列会把
                                             // 正文挤窄，主干那三颗本来就在中间那一格内。
+                                            // ⚠ 这一格**不钉 Left**（2026-10-27 终验清单第 2 项）：
+                                            // 带内那颗星型列要把模型/上下文两格推到右端贴发送钮，
+                                            // 宿主必须撑满外层星格（钉 Left = 带收缩成内容宽，
+                                            // 星型列永远没有余量）。
                                             Border::new()
                                                 .grid_column(1)
-                                                .horizontal_alignment(HorizontalAlignment::Left)
                                                 .content(self.composer_band(context)),
                                             // 主干 `MainWindow.xaml:1254-1266` SendButton：
                                             // 34×34、Padding 0、CornerRadius=CornerPill(24)、
@@ -30538,9 +33393,11 @@ impl Shell {
                                             // 自测跑满 12 个分区都不崩。
                                             // 而 `pill_button` 一定要挂 `resource_overrides`（四态底色/描边
                                             // 全透明，否则模板那层 4px 方块高亮会从圆底外面支出去）⇒ 这里
-                                            // 只能继续走 AccentButtonStyle 的**等值复刻**：底色仍是主题画刷
-                                            // `p.accent`（AccentFillColorDefaultBrush，跟系统强调色走，
-                                            // 不写死），悬停/按下按 generic.xaml:7631-7633 的
+                                            // 只能继续走 AccentButtonStyle 的**等值复刻**：底色 `p.accent`
+                                            // 经 [`theme::palette`] 实色化为系统强调色
+                                            // （AccentFillColorDefaultBrush 的等值物——reactor 丢
+                                            // `Brush::Theme`，主题画刷形态渲不出来；见 theme.rs accent 段），
+                                            // 悬停/按下按 generic.xaml:7631-7633 的
                                             // 「同色画刷降到 0.9 / 0.8」用 opacity 复刻，禁用换
                                             // `AccentFillColorDisabled`，反白前景四态钉死。
                                             pill_button(
@@ -30771,7 +33628,7 @@ impl Shell {
         match self.section.as_str() {
             "general" => self.settings_general(context, p),
             "personalization" => self.settings_personalization(context, p),
-            "models" => self.settings_models(p),
+            "models" => self.settings_models(context, p),
             "plugins" => self.settings_plugins(context, p),
             "skills" => self.settings_skills(p),
             "memory" => self.settings_memory(context, p),
@@ -30799,31 +33656,385 @@ impl Shell {
             "web-search" => self.sub_web_search(context, p),
             "auto-approval" => self.sub_auto_approval(context, p),
             "defaults" => self.sub_defaults(p),
-            _ => Vec::new(),
+            "wallpaper-engine" => self.sub_wallpaper_engine(p),
+            // 泛化兜底二级页（主干 `AddGenericPluginNsCard`）。⚠ 字段**编辑**通道没接：
+            // 主干每行走 `Edit(ns, field, …)` + 自动保存（对所有 ns 生效），分叉的自动保存
+            // 白名单（`SETTINGS_AUTOSAVE_FIELDS`）只收官方 (ns, field) 对，泛化 ns 改了
+            // 不落盘 ⇒ 二级页铺**只读值行**（字段名 + 快照当前值），欠账登记在报告。
+            id => id
+                .strip_prefix("generic_")
+                .map(|ns| self.sub_generic_plugin_ns(ns, p))
+                .unwrap_or_default(),
         }
     }
 
-    /// 插件配置一级页：`MakeSectionDesc` + 6 张钻取卡。
-    /// 主干上面还有一条 `SelectorBar`（插件配置 / 插件列表），reactor 的 SelectorBar 没有加条目的
-    /// API（只有 `on_selected_text_changed`），画不出 Tab 条，所以分叉只呈现默认的「插件配置」内容。
+    /// WE 二级页（主干 `AddWeWallpaperSubPage`，`MainWindow.Wallpaper.cs:67-123`）：
+    /// 卡头 + 副文 + 缩略图网格 + 状态行。
+    /// ⚠ 网格与取数腿**没有铺**：主干那一发是 `GET api/wallpaper/list` 的裸 HTTP
+    /// （`DshWallpaperClient.GetAsync` → `rpc.GetTextAsync`），分叉的内核侧没有这条
+    /// 通道（`kernel.rs::http` 私有、Cargo 面无 HTTP 客户端）⇒ 状态行恒驻主干
+    /// `WallpaperRouteStatus.Missing` 那档文案（`Wallpaper.cs:151`），欠账登记在报告。
+    fn sub_wallpaper_engine(&self, p: Palette) -> Vec<KeyedView> {
+        vec![self.settings_card(
+            "wallpaper-engine",
+            "Wallpaper Engine",
+            "点缩略图即套用；视频项显示工坊预览图，与上面导入的图片/视频二选一。",
+            vec![self.settings_line(
+                "we-status",
+                "未检测到壁纸插件。重启 Blade² 会自动重试安装；离线时这条会一直出现，连上网再试。",
+                p,
+            )],
+            p,
+        )]
+    }
+
+    /// 泛化兜底二级页（主干 `AddGenericPluginNsCard`，`SettingsExtras.cs:606-663`）：
+    /// 卡头 = ns、副文 = 主干同款说明；字段行 = schema.dict 逐属性（`refs`/`uid` 跳过），
+    /// 每行「字段名 + 快照当前值」。主干那颗是 number/string/boolean/union 表单（可编辑、
+    /// 自动保存），分叉铺只读值 —— 理由写在上面的分派注释里。
+    fn sub_generic_plugin_ns(&self, ns: &str, p: Palette) -> Vec<KeyedView> {
+        let Some(snapshot) = &self.settings_snapshot else {
+            return vec![self.settings_card(
+                ns,
+                ns,
+                "由 settings/describe 泛化渲染；字段语义以内核 schema 为准。",
+                Vec::new(),
+                p,
+            )];
+        };
+        let Some(view) = snapshot.iter().find(|view| view.ns == ns) else {
+            return vec![self.settings_card(
+                ns,
+                ns,
+                "由 settings/describe 泛化渲染；字段语义以内核 schema 为准。",
+                Vec::new(),
+                p,
+            )];
+        };
+        let Some(schema) = view.field("schema") else {
+            return vec![self.settings_card(
+                ns,
+                ns,
+                "由 settings/describe 泛化渲染；字段语义以内核 schema 为准。",
+                Vec::new(),
+                p,
+            )];
+        };
+        let rehydrated = rehydrate_schema(schema);
+        let Some(dict) = rehydrated.get("dict").and_then(Value::as_object) else {
+            return vec![self.settings_card(
+                ns,
+                ns,
+                "由 settings/describe 泛化渲染；字段语义以内核 schema 为准。",
+                Vec::new(),
+                p,
+            )];
+        };
+        let value = view.field("value").cloned().unwrap_or(Value::Null);
+        let mut rows: Vec<KeyedView> = dict
+            .iter()
+            .filter(|(key, _)| key != &"refs" && key != &"uid")
+            .map(|(field, _)| {
+                // 当前值沿 dict 属性名取（主干 NsString/NsNumber 的读法 = value 里按名取）。
+                let current = value
+                    .get(field)
+                    .map(|v| match v {
+                        Value::String(s) => s.clone(),
+                        Value::Null => String::new(),
+                        other => other.to_string(),
+                    })
+                    .unwrap_or_default();
+                KeyedView::new(
+                    format!("generic-{ns}-{field}"),
+                    Border::new().padding(th(pad::SETTINGS_ROW)).content(
+                        Grid::new()
+                            .columns([GridLength::STAR, GridLength::Auto])
+                            .column_spacing(space::S24)
+                            .children((
+                                TextBlock::new()
+                                    .text(field.clone())
+                                    .font_size(type_ramp::BODY.size)
+                                    .foreground(p.text_primary.clone()),
+                                TextBlock::new()
+                                    .text(current)
+                                    .font_size(type_ramp::CAPTION.size)
+                                    .foreground(p.text_secondary.clone())
+                                    .vertical_alignment(VerticalAlignment::Center),
+                            )),
+                    ),
+                )
+            })
+            .collect();
+        if rows.is_empty() {
+            rows.push(self.settings_line("generic-empty", "（这个命名空间没有可显示的字段）", p));
+        }
+        vec![self.settings_card(
+            ns,
+            ns,
+            "由 settings/describe 泛化渲染；字段语义以内核 schema 为准。",
+            rows,
+            p,
+        )]
+    }
+
+    /// 插件区（主干 `RenderPluginsSectionAsync`，`MW:12991-13073`）：Tab 条
+    /// （`PluginsTabBar`：插件配置 / 插件列表）+ 两个内容源。
+    /// 本刀起 Tab 条用真 `SelectorBar`（reactor 0.100 的 `SelectorBarItem` 有
+    /// `text`/`is_selected`/`Items` slot，旧注释「没有加条目的 API」已不成立）；
+    /// 泛化兜底卡（`PluginsNav_generic_*`）也在此铺出（主干 `AppendGenericPluginNsFallback`）。
     fn settings_plugins(&self, context: &mut ViewContext<Shell>, p: Palette) -> Vec<KeyedView> {
-        let mut cells = vec![KeyedView::new(
-            "section-desc",
-            Border::new()
-                .margin(th(pad::CARD_DESCRIPTION))
-                .content(self.settings_note("配置和查看本部署已安装的插件。", p)),
-        )];
+        // 段说明走共用那颗（同键 `section-desc`，顶距 8 出处见 [`Shell::settings_section_desc`]）。
+        let mut cells = vec![self.settings_section_desc("配置和查看本部署已安装的插件。", p)];
+        cells.push(self.plugins_tab_bar(context));
+        if self.plugins_tab == 1 {
+            cells.extend(self.plugins_inventory_rows(context, p));
+            return cells;
+        }
         for (id, code, title, desc) in SETTINGS_PLUGIN_CARDS {
-            cells.push(self.settings_nav_card(id, *code, title, desc, context, p));
+            cells.push(self.settings_nav_card(id, &plugin_nav_automation_id(id), *code, title, desc, context, p));
+        }
+        // T28 泛化兜底（主干 `AppendGenericPluginNsFallback`，`SettingsExtras.cs:575-601`）：
+        // describe 快照里其余 writable 插件式 ns，每张一张 nav 卡（字形 E730、id 保留 kebab ns）。
+        if let Some(snapshot) = &self.settings_snapshot {
+            for ns in generic_plugin_ns_list(snapshot) {
+                cells.push(self.settings_nav_card(
+                    &format!("generic_{ns}"),
+                    &format!("PluginsNav_generic_{ns}"),
+                    '\u{E730}',
+                    &ns,
+                    "由 settings/describe 泛化渲染的附加插件设置。",
+                    context,
+                    p,
+                ));
+            }
         }
         cells
     }
 
+    /// Tab 条（主干 `MW:12999-13031`）：`SelectorBar` + 两颗 item
+    /// （`PluginsTabConfig` / `PluginsTabInventory`），外层 `AutomationId="PluginsTabBar"`、
+    /// `Name="插件视图"`。选中变化走 `on_selected_text_changed`（text = item 文本，
+    /// 反查回下标；主干那发判 `Tag`，分叉判文本——i18n 改文案才断，风险登记）。
+    fn plugins_tab_bar(&self, context: &mut ViewContext<Shell>) -> KeyedView {
+        let labels = ["插件配置", "插件列表"];
+        let active = self.plugins_tab;
+        // `collection_slot` 的元素要走 `Into<KeyedView>`，reactor 没给 `SelectorBarItem`
+        // 单独实现 ⇒ 用 `KeyedView: From<(K, V)>` 的元组档，下标当稳定键。
+        let items: Vec<(usize, SelectorBarItem)> = labels
+            .iter()
+            .enumerate()
+            .map(|(index, label)| {
+                let name = self.catalog.l(label);
+                let item = SelectorBarItem::new()
+                    .text(name.clone())
+                    .is_selected(active == index)
+                    .automation_id(if index == 0 { "PluginsTabConfig" } else { "PluginsTabInventory" })
+                    .automation_name(name);
+                (index, item)
+            })
+            .collect();
+        let bar: View = SelectorBar::new()
+            .automation_id("PluginsTabBar")
+            .automation_name(self.catalog.l("插件视图"))
+            .on_selected_text_changed(context.callback(|text: Option<String>| {
+                Msg::PluginsTabByText(text)
+            }))
+            .collection_slot(SelectorBarSlot::Items, items)
+            .into();
+        KeyedView::new(
+            "plugins-tabs",
+            // 主干那颗的 `Margin(0, Space8, 0, Space8)`。
+            Border::new()
+                .margin(th([0.0, space::S8, 0.0, space::S8]))
+                .content(bar),
+        )
+    }
+
+    /// 「插件列表」Tab 内容（主干 `RenderPluginInventoryContentAsync` 的读侧骨架）：
+    /// 概览卡（计数行 + 过滤框 + 过滤计数 + 条目行）+ 组装行卡。
+    /// ⚠ 内嵌 360px 滚动器（主干 `MaxHeight=360` 的 ScrollViewer）没铺——列表直接平铺，
+    /// 差异登记；过滤腿是 [`Msg::InventoryFilter`]，条目行的过滤口径与主干逐字一致。
+    fn plugins_inventory_rows(&self, context: &mut ViewContext<Shell>, p: Palette) -> Vec<KeyedView> {
+        match self.plugin_inventory.as_ref() {
+            None => vec![self.settings_line("inventory-loading", "正在读取插件清单…", p)],
+            Some(Err(error)) => vec![self.settings_section_desc(
+                &self.catalog.lf("插件清单不可用：{0}", &[error.clone()]),
+                p,
+            )],
+            Some(Ok(inventory)) => {
+                // 主干那三个计数（`MW:13281-13300`）是**从 entries 现算**的，不进解析结构。
+                let active = inventory
+                    .entries
+                    .iter()
+                    .filter(|entry| entry.phase == "active")
+                    .count();
+                let failed = inventory
+                    .entries
+                    .iter()
+                    .filter(|entry| entry.phase == "failed")
+                    .count();
+                let disabled = inventory.entries.iter().filter(|entry| !entry.enabled).count();
+                let query = self.inventory_filter.to_lowercase();
+                let shown: Vec<&PluginInventoryEntry> = inventory
+                    .entries
+                    .iter()
+                    .filter(|entry| {
+                        query.is_empty()
+                            || entry.module.to_lowercase().contains(&query)
+                            || entry.entry_id.to_lowercase().contains(&query)
+                    })
+                    .collect();
+                let count_text = if query.is_empty() {
+                    if shown.is_empty() {
+                        self.catalog.l("暂无插件。")
+                    } else {
+                        self.catalog
+                            .lf("Loader 条目 {0} 个", &[shown.len().to_string()])
+                    }
+                } else {
+                    self.catalog.lf(
+                        "匹配 “{0}”：{1} / {2} 个",
+                        &[
+                            self.inventory_filter.clone(),
+                            shown.len().to_string(),
+                            inventory.entries.len().to_string(),
+                        ],
+                    )
+                };
+                let mut rows: Vec<KeyedView> = vec![
+                    self.settings_line(
+                        "inventory-summary",
+                        &self.catalog.lf(
+                            "共 {0} 个 Loader 条目（active {1}，failed {2}，未启用 {3}）。",
+                            &[
+                                inventory.entries.len().to_string(),
+                                active.to_string(),
+                                failed.to_string(),
+                                disabled.to_string(),
+                            ],
+                        ),
+                        p,
+                    ),
+                    KeyedView::new(
+                        "inventory-filter",
+                        Border::new().padding(th(pad::SETTINGS_ROW)).content(
+                            TextBox::new()
+                                .placeholder_text(self.catalog.l("搜索插件"))
+                                .text(self.inventory_filter.clone())
+                                .automation_id("PluginInventoryFilterBox")
+                                .automation_name(self.catalog.l("搜索插件"))
+                                .on_text_changed(context.callback(move |value: String| {
+                                    Msg::InventoryFilter(value)
+                                })),
+                        ),
+                    ),
+                    self.settings_line("inventory-count", &count_text, p),
+                ];
+                if shown.is_empty() && !query.is_empty() {
+                    rows.push(self.settings_line("inventory-none", "没有匹配的插件。", p));
+                }
+                for entry in &shown {
+                    let phase = if entry.phase.is_empty() {
+                        self.catalog.l("（无 fiber）")
+                    } else {
+                        entry.phase.clone()
+                    };
+                    let phase_text = match entry.phase.as_str() {
+                        "active" => self.catalog.l("运行中"),
+                        "failed" => self.catalog.l("启动失败"),
+                        "loading" => self.catalog.l("加载中"),
+                        _ => phase,
+                    };
+                    rows.push(KeyedView::new(
+                        format!("entry-{}", entry.entry_id),
+                        Border::new()
+                            .padding(th([0.0, space::S6, 0.0, space::S6]))
+                            .content(
+                                Grid::new()
+                                    .columns([GridLength::STAR, GridLength::Auto])
+                                    .column_spacing(space::S12)
+                                    .children((
+                                        StackPanel::new()
+                                            .orientation(Orientation::Vertical)
+                                            .spacing(space::S2)
+                                            .children((
+                                                TextBlock::new()
+                                                    .text(entry.module.clone())
+                                                    .font_size(type_ramp::BODY.size)
+                                                    .foreground(p.text_primary.clone())
+                                                    .text_wrapping(TextWrapping::Wrap),
+                                                TextBlock::new()
+                                                    .text(entry.entry_id.clone())
+                                                    .font_size(type_ramp::CAPTION.size)
+                                                    .foreground(p.text_tertiary.clone()),
+                                            )),
+                                        TextBlock::new()
+                                            .text(format!(
+                                                "{} · {}",
+                                                phase_text,
+                                                if entry.enabled {
+                                                    self.catalog.l("已启用")
+                                                } else {
+                                                    self.catalog.l("未启用")
+                                                }
+                                            ))
+                                            .font_size(type_ramp::CAPTION.size)
+                                            .foreground(p.text_secondary.clone())
+                                            .vertical_alignment(VerticalAlignment::Center),
+                                    )),
+                            ),
+                    ));
+                }
+                // 组装行卡（主干 `MW:13436-13474`）：每预设一组「标题 + 组装行名表」。
+                if !inventory.presets.is_empty() {
+                    let mut preset_cells: Vec<KeyedView> = Vec::new();
+                    for preset in &inventory.presets {
+                        preset_cells.push(KeyedView::new(
+                            format!("by-preset-{}", preset.id),
+                            Border::new().padding(th(pad::SETTINGS_ROW)).content(
+                                StackPanel::new()
+                                    .orientation(Orientation::Vertical)
+                                    .spacing(space::S2)
+                                    .children((
+                                        TextBlock::new()
+                                            .text(preset.id.clone())
+                                            .font_size(type_ramp::BODY.size)
+                                            .font_weight(FontWeight::SEMI_BOLD)
+                                            .foreground(p.text_primary.clone()),
+                                        TextBlock::new()
+                                            .text(if preset.names.is_empty() {
+                                                "（该预设没有组装行）".to_string()
+                                            } else {
+                                                preset.names.join("，")
+                                            })
+                                            .font_size(type_ramp::CAPTION.size)
+                                            .foreground(p.text_tertiary.clone())
+                                            .text_wrapping(TextWrapping::Wrap),
+                                    )),
+                            ),
+                        ));
+                    }
+                    rows.push(self.settings_card(
+                        "preset-rows",
+                        "Agent 预设组装行",
+                        "预设的 rows 才是模型可见插件的运行位置（Loader 条目之外的第二处清单，与内核清单一致）。",
+                        preset_cells,
+                        p,
+                    ));
+                }
+                rows
+            }
+        }
+    }
+
     /// 主干 `MakeSettingsNavCard`：卡片本身是 Button（Padding 16,12、RadiusMedium 8、CardBrush+Stroke 1px），
     /// 内容 `[Auto,*,Auto]` 列距 16 —— 字形、标题+描述（Spacing 2）、右向箭头 E76B。
+    /// `automation_id` 直传（主干那颗的 AutomationId 就是调用点逐字给的字符串，
+    /// `PluginsNav_*`/`SkinWeNavCard` 都是字面量 ⇒ 分叉不再用 `camel()` 二次造名）。
     fn settings_nav_card(
         &self,
         id: &str,
+        automation_id: &str,
         code: char,
         title: &str,
         desc: &str,
@@ -30851,7 +34062,7 @@ impl Shell {
                 .horizontal_alignment(HorizontalAlignment::Stretch)
                 .horizontal_content_alignment(HorizontalAlignment::Stretch)
                 .automation_name(self.catalog.l(title))
-                .automation_id(format!("PluginsNav_{}", camel(id)))
+                .automation_id(automation_id.to_string())
                 .on_click(context.message(Msg::OpenSub(key)))
                 .content(
                     // 模板内缩（TEMPLATE_INSET）抵回去后，卡片外观与 16,12 内边距都落在内层 Border。
@@ -31037,20 +34248,18 @@ impl Shell {
         )]
     }
 
-    /// 自动审批二级页（`AddAutoApprovalCardsAsync`，`MW:14507-14535`）：段说明 + 开关卡 +
-    /// 判定模型卡 + 「切换后会发生什么」卡，四件的顺序就是主干 `host.Children.Add` 的次序。
-    /// 判定模型那颗要异步取目录 ⇒ 进页时由 [`Msg::OpenSub`] 先问内核（主干是进页现
-    /// `await`），目录没回来之前那颗下拉是空的、不画占位骨架（主干同档：页还没建全）。
+    /// 自动审查二级页（主干 `AddAutoReviewCardsAsync`，`MW:14662-14681`）：段说明 + 开关卡 +
+    /// 「切换后会发生什么」卡，三件的顺序就是主干 `host.Children.Add` 的次序。
+    /// 0.9.0.2/0.9.0.3 起「判定模型」卡已整卡撤掉：内核 auto-review（@deepseek-ai/
+    /// dsh-experimental-auto-review）用**会话当前的提供方/模型**做判定（temperature 0），
+    /// 壳侧没有也不该有独立判定模型 ⇒ 也不再进页问模型目录（[`Msg::OpenSub`] 里那发
+    /// `asks_model_catalog` 随卡同拆）。
     fn sub_auto_approval(&self, context: &mut ViewContext<Shell>, p: Palette) -> Vec<KeyedView> {
         vec![
-            KeyedView::new(
-                "section-desc",
-                Border::new()
-                    .margin(th(pad::CARD_DESCRIPTION))
-                    .content(self.settings_note(
-                        "自动审批由内核插件 dsh-approval-gate 提供：当会话权限预设切到「自动审批」时，由判定模型预判每次写入/命令是否不可回补——安全则自动批准，涉及删除、凭据、系统配置等硬类别转人工确认。开关增删内核 profile patch 里的 auto-approve 预设，判定模型写在默认模型设置里，两者都由内核热重载即时生效。",
-                        p,
-                    )),
+            // 段说明走共用那颗（同键 `section-desc`，顶距 8 出处见 [`Shell::settings_section_desc`]）。
+            self.settings_section_desc(
+                "自动审查由内核插件 @deepseek-ai/dsh-experimental-auto-review 提供（内核标题「自动授权审查」）：当会话权限预设切到「自动审查」时，每次工具调用前由当前会话的模型预判是否授权——安全则直接放行，有风险则带理由转人工确认。开关增删内核 profile 的 bundle 清单，由内核热重载即时生效。",
+                p,
             ),
             self.settings_card(
                 "auto-approval",
@@ -31058,27 +34267,14 @@ impl Shell {
                 "",
                 vec![self.settings_row(
                     "auto-approval-enabled",
-                    "自动审批",
-                    "开启后权限模式里多出「自动审批」：判定模型预判越界请求，安全自动批准、有风险转人工。",
+                    "自动审查",
+                    "开启后权限模式里多出「自动审查」：每次工具调用前由当前会话模型预判是否授权，安全直接放行、有风险转人工。",
                     self.settings_toggle(
                         "auto-approval_enabled",
                         false,
-                        "启用自动审批",
+                        "启用自动审查",
                         context,
                     ),
-                    p,
-                )],
-                p,
-            ),
-            self.settings_card(
-                "auto-approval-model",
-                "判定模型",
-                "自动审批每次预判写入/命令是否不可回补时所用的模型，选项来自内核模型目录。",
-                vec![self.settings_row(
-                    "auto-approval-model-pick",
-                    "预判模型",
-                    "切换后新会话的默认模型也随之改变；已在会话里选过模型的会话不受影响。",
-                    self.settings_model_combo("自动审批判定模型", context),
                     p,
                 )],
                 p,
@@ -31092,7 +34288,7 @@ impl Shell {
                     Border::new()
                         .padding(th(pad::SETTINGS_ROW))
                         .content(self.settings_note(
-                            "开启：权限选择器（输入区左下角）里出现「自动审批」，新会话可选用它。\n关闭：该预设从选择器消失；正在使用它的会话回落到自定义权限，审批恢复人工确认。\n判定记录与学习状态不受影响，重新开启后继续生效。",
+                            "开启：权限选择器（输入区左下角）里出现「自动审查」，新会话可选用它。\n关闭：该预设从选择器消失；正在使用它的会话回落到完全权限，审批恢复人工确认。\n重新开启后继续生效。",
                             p,
                         )),
                 )],
@@ -31113,12 +34309,18 @@ impl Shell {
         )]
     }
 
-    /// 段说明：主干 `MakeSectionDesc`，卡片列 index 0 的 Caption/TextSecondary 行。
+    /// 段说明：主干 `MakeSectionDesc`（`MW:10308-10315`，Margin 0,0,0,4），卡片列 index 0
+    /// 的 Caption/TextSecondary 行。顶距比主干多钉 8：主干「标题行底 4 + 滚动区顶 12」的
+    /// 盒距分叉逐值同（[`pad::PAGE_HEADER`] / [`pad::PAGE_SCROLL`]），但 R5 实测同倍率
+    /// （两边标题字形都是 ~52-53 显示px 高 = 2x）下分叉标题墨底→描述墨顶 55 显示px、
+    /// 主干 71 显示px，缺的 16 显示px = 8 逻辑px 落在描述块上方（reactor 的 TextBlock
+    /// 没有 line_height 通路，标题行盒比主干矮出的一截只能在这格补齐）。故这颗
+    /// **不走** [`pad::CARD_DESCRIPTION`]（那把尺还量着卡内副标题，那一格是对齐的）。
     fn settings_section_desc(&self, text: &str, p: Palette) -> KeyedView {
         KeyedView::new(
             "section-desc",
             Border::new()
-                .margin(th(pad::CARD_DESCRIPTION))
+                .margin(th([0.0, 8.0, 0.0, 4.0]))
                 .content(self.settings_note(text, p)),
         )
     }
@@ -31324,22 +34526,31 @@ impl Shell {
                     .text(self.catalog.l(name))
                     .font_size(type_ramp::BODY.size)
                     .foreground(p.text_primary)
+                    .vertical_alignment(VerticalAlignment::Center)
                     .into();
                 let status: View = TextBlock::new()
                     .text(self.catalog.l(state))
                     .font_size(type_ramp::CAPTION.size)
                     .foreground(p.text_secondary)
-                    .grid_column(1)
                     .vertical_alignment(VerticalAlignment::Center)
                     .into();
                 KeyedView::new(
                     format!("mount-{name}"),
-                    Border::new().padding(th(pad::SETTINGS_ROW)).content(
-                        Grid::new()
-                            .columns([GridLength::STAR, GridLength::Auto])
-                            .column_spacing(space::S16)
-                            .children((label, status)),
-                    ),
+                    // 行内边距 = 主干 `AddMountStatusRows`（`xaml.cs:14574-14595`）那发
+                    // `Padding(0, Sp6, 0, Sp6)`：上下 6，不是普通设置行的上下 12
+                    // （挂载状态行取「插件列表」行列表节奏，更紧）。
+                    Border::new()
+                        .padding(th([0.0, space::S6, 0.0, space::S6]))
+                        // 主干那一行是**横向 StackPanel**：`Spacing=Sp6` + 中间一枚
+                        // `Spacer()`（Stretch Grid、MinWidth=Sp12，在横排里量到 MinWidth）
+                        // ⇒ 视觉间距 = 6+12+6 = 24，值**紧跟标签**，不是右对齐行尾。
+                        // 此前的 `[Star, Auto]` Grid 把值推到行尾（2026-10-31 R2 截图）。
+                        .content(
+                            StackPanel::new()
+                                .orientation(Orientation::Horizontal)
+                                .spacing(space::S24)
+                                .children((label, status)),
+                        ),
                 )
             })
             .collect();
@@ -31364,15 +34575,33 @@ impl Shell {
                 "memory-store",
                 "记忆存储",
                 "",
-                vec![
-                    self.settings_line("store-note", "知识图谱 JSONL（由记忆服务器自身管理，删除即清空记忆）：", p),
-                    KeyedView::new(
-                        "line-store-path",
-                        Border::new()
-                            .padding(th(pad::SETTINGS_ROW))
-                            .content(self.settings_code_text("~/.dsh-mcp-reference-memory.jsonl".into(), p)),
-                    ),
-                ],
+                // R3 复验：主干这张卡的 body 是 NewCard 的裸 StackPanel（无 Spacing，
+                // `MW:10336-10360`），说明行与路径行是**直接子级**零间距紧排
+                // （`MW:14542-14553`），行间没有分隔线、也没有 SETTINGS_ROW 的上下 12。
+                // 分叉原来两行各裹一层 12 内边距 + 中间一条通栏 divider ⇒ 路径被挤成
+                // 独立区块，还把整页撑高到「共 N 行」状态行跌出折叠线（R3 截图 vs UIA：
+                // 状态行在树内不可见）。两格收进一行、去内边距。
+                vec![KeyedView::new(
+                    "store-body",
+                    StackPanel::new()
+                        .orientation(Orientation::Vertical)
+                        .children((
+                            // 主干 `RenderMemorySection`（`MainWindow.xaml.cs:14546-14549`）：
+                            // 说明行 = CardDescriptionTextStyle（[`Shell::settings_note`] 同档）。
+                            View::from(self.settings_note(
+                                "知识图谱 JSONL（由记忆服务器自身管理，删除即清空记忆）：",
+                                p,
+                            )),
+                            // 主干 `MW:14550-14554`：这一行显示 `DshPluginBootstrap.MemoryFilePath()`
+                            // 解析后的**绝对路径**（env `MEMORY_FILE_PATH` 优先，否则 `%USERPROFILE%`
+                            // 下那份），不是 `~` 缩写 —— CodeTextStyle 小字由
+                            // [`Shell::settings_code_text`] 承担，此处只换值。
+                            View::from(self.settings_code_text(
+                                shellfiles::memory_file_path().display().to_string(),
+                                p,
+                            )),
+                        )),
+                )],
                 p,
             ),
             self.settings_card(
@@ -31382,9 +34611,10 @@ impl Shell {
                 vec![
                     KeyedView::new(
                         "line-editor",
+                        // 编辑框在主干是卡 body 的直接子级（`MW:14877`，无行内边距）——
+                        // 这里留一层透明 Border 只为挂「点到别处即收起菜单」那发指针回调。
+                        // 焦点证据（反向）：这颗是记忆文件的编辑框，Enter 不该发送。
                         Border::new()
-                            .padding(th(pad::SETTINGS_ROW))
-                            // 焦点证据（反向）：这颗是记忆文件的编辑框，Enter 不该发送。
                             .on_pointer_pressed(context.callback(|_| Msg::KeyFocus(KeyOwner::Other)))
                             .content(
                             TextBox::new()
@@ -31392,25 +34622,42 @@ impl Shell {
                                 .text_wrapping(TextWrapping::NoWrap)
                                 .min_height(size::MEMORY_MIN_HEIGHT)
                                 .max_height(size::MEMORY_MAX_HEIGHT)
-                                .placeholder_text(self.catalog.l("记忆文件内容"))
+                                // 主干 `LoadMemoryRaw`（`MainWindow.xaml.cs:14892-14918`）：
+                                // 载入即把文件原文灌进编辑框；主干那颗**没有** PlaceholderText
+                                // （「记忆文件内容」只是 AutomationProperties.Name / UIA 名）。
+                                // 受控初值 = 用户草稿优先、回落启动读盘那份，形制同上颗指令框。
+                                .text(self.field(MEMORY_CONTENT_KEY, &self.memory_loaded))
                                 .automation_id("MemoryContentEditor")
                                 .automation_name(self.catalog.l("记忆文件内容"))
                                 .on_text_changed(context.callback(move |value: String| {
-                                    Msg::Field("memory_content".to_string(), value)
+                                    Msg::Field(MEMORY_CONTENT_KEY.to_string(), value)
                                 })),
                         ),
                     ),
                     // 主干 `UpdateMemoryStateLine()`（`MainWindow.xaml.cs:14519`）：编辑框下面还有
-                    // 一条 `共 {0} 行 · {1}` 状态行，`{1}` 未落盘时是「停止输入后自动保存」、
-                    // 落盘后是「已自动保存 · {0}」，转换过文本时再补「· {1} 行文本已转为记忆实体」
-                    // （`:14510-14512`）。分叉这条只搬文案不接盘（落盘是 #70），行数停在 0。
-                    self.settings_line(
-                        "state",
-                        &self.catalog.lf(
-                            "共 {0} 行 · {1}",
-                            &["0".to_string(), self.catalog.l("停止输入后自动保存")],
-                        ),
-                        p,
+                    // 一条 `共 {0} 行 · {1}` 状态行，行数 = 草稿里**非空行**数（`:14528` 那条
+                    // `Trim().Length > 0`）；`{1}` 未落盘时是「停止输入后自动保存」。
+                    // 分叉的落盘腿是 #70 的活，行数照真值算（启动读盘那份 + 用户未存的改动）。
+                    // R3 复验：主干这行是卡 body 直接子级（`MW:14878-14884`，无行内边距、
+                    // 与编辑框零间距）⇒ 这里同样裸排（settings_line 的 12 内边距会把它
+                    // 连同上方内容一起推出折叠线）。
+                    KeyedView::new(
+                        "line-state",
+                        Border::new().content(TextBlock::new()
+                            .text(self.catalog.lf(
+                                "共 {0} 行 · {1}",
+                                &[
+                                    self.field(MEMORY_CONTENT_KEY, &self.memory_loaded)
+                                        .lines()
+                                        .filter(|line| !line.trim().is_empty())
+                                        .count()
+                                        .to_string(),
+                                    self.catalog.l("停止输入后自动保存"),
+                                ],
+                            ))
+                            .font_size(type_ramp::CAPTION.size)
+                            .foreground(p.text_secondary)
+                            .text_wrapping(TextWrapping::Wrap)),
                     ),
                 ],
                 p,
@@ -31560,6 +34807,12 @@ impl Shell {
                                 .text_wrapping(TextWrapping::Wrap)
                                 .min_height(size::INSTRUCTIONS_MIN_HEIGHT)
                                 .max_height(size::INSTRUCTIONS_MAX_HEIGHT)
+                                // 主干 `LoadInstructions`（`Personalization.cs:242-253`）：
+                                // 载入即把文件正文回灌编辑框（`_instructionsBox.Text = _instructionsDraft`）。
+                                // 分叉启动时已把 `AGENTS.md` 读进 `instructions_saved`（`shellfiles::load_instructions`，
+                                // 只当脏检基线用）；用户改过的字挂在 `fields[INSTRUCTIONS_KEY]` ⇒
+                                // 受控初值 = 草稿优先、回落已存正文，与 [`Shell::settings_text`] 同一条形制。
+                                .text(self.field(INSTRUCTIONS_KEY, &self.instructions_saved))
                                 .placeholder_text(self.catalog.l("指令内容"))
                                 .automation_id("PersonalizationInstructionsEditor")
                                 .automation_name(self.catalog.l("指令内容"))
@@ -31639,7 +34892,105 @@ impl Shell {
                 // 早已在册）；旧串「导入图片作为…」是主干加视频皮肤**之前**的那版，跟着换。
                 "导入图片或视频作为写代码时的内容区背景，用滑杆调到既能看出图、又不吃正文的浓度",
                 vec![
-                    self.settings_row("skin-image", "背景图", "png / jpg / webp / bmp", buttons, p),
+                    // 主干 `Personalization.cs:422-425`：行副标是**整串**格式提示
+                    // 「png / jpg / webp / bmp · mp4 / webm / mov（视频静音循环，与图片二选一）」
+                    // —— 分叉 i18n 表 `i18n.rs` 该键早已在册（视频皮肤那批预铺的），
+                    // 此前只搬了前半句 = 无故截半。
+                    self.settings_row(
+                        "skin-image",
+                        "背景图",
+                        "png / jpg / webp / bmp · mp4 / webm / mov（视频静音循环，与图片二选一）",
+                        buttons,
+                        p,
+                    ),
+                    // 主干 `AddWallpaperEngineRow`（`MainWindow.Wallpaper.cs:57-64`）：WE 壁纸源
+                    // 导航卡，AutomationId=`SkinWeNavCard`、字形 EB9F，点击进 WE 二级页。
+                    KeyedView::new(
+                        "nav-card-skin-we",
+                        {
+                            // 主干 `MakeSettingsNavCard`（`xaml.cs:10242-10298`）的行内形状
+                            // 已由 [`Shell::settings_nav_card` 承担；它把 `PluginsNav_` 前缀
+                            // 焊死在 automation_id 上（插件页那一族专用），WE 卡的 id 是
+                            // `SkinWeNavCard` ⇒ 这里照那颗的形状就地铺一份，不改共用件。
+                            let open: View = Button::new()
+                                .style(ButtonStyle::Subtle)
+                                // （链尾 `.into()` 落 `View`，见下方块尾。）
+                                .resource_overrides(
+                                    ResourceOverrides::new()
+                                        .set("ButtonBackground", Color::transparent())
+                                        .set("ButtonBackgroundPointerOver", Color::transparent())
+                                        .set("ButtonBackgroundPressed", Color::transparent())
+                                        .set("ButtonBorderBrush", Color::transparent())
+                                        .set("ButtonBorderBrushPointerOver", Color::transparent())
+                                        .set("ButtonBorderBrushPressed", Color::transparent())
+                                        .set("ButtonBorderBrushDisabled", Color::transparent())
+                                        .set("ButtonPadding", Thickness::uniform(0.0)),
+                                )
+                                .min_width(0.0)
+                                .horizontal_alignment(HorizontalAlignment::Stretch)
+                                .horizontal_content_alignment(HorizontalAlignment::Stretch)
+                                .automation_id("SkinWeNavCard")
+                                .automation_name(self.catalog.l("Wallpaper Engine"))
+                                .on_click(context.message(Msg::OpenSub("wallpaper-engine".into())))
+                                .content(
+                                    Grid::new()
+                                        .margin(th(TEMPLATE_INSET))
+                                        .keyed_children(vec![KeyedView::new(
+                                            "card",
+                                            Border::new()
+                                                .background(p.card.clone())
+                                                .border_brush(p.stroke.clone())
+                                                .border_thickness(th([size::STROKE; 4]))
+                                                .corner_radius(radius::MEDIUM)
+                                                .padding(th(pad::NAV_CARD))
+                                                .content(
+                                                    Grid::new()
+                                                        .columns([
+                                                            GridLength::Auto,
+                                                            GridLength::STAR,
+                                                            GridLength::Auto,
+                                                        ])
+                                                        .column_spacing(space::S16)
+                                                        .children((
+                                                            mark_center('\u{EB9F}', size::GLYPH_BODY, 0),
+                                                            StackPanel::new()
+                                                                .orientation(Orientation::Vertical)
+                                                                .spacing(space::S2)
+                                                                .vertical_alignment(
+                                                                    VerticalAlignment::Center,
+                                                                )
+                                                                .grid_column(1)
+                                                                .children((
+                                                                    TextBlock::new()
+                                                                        .text(self.catalog.l("Wallpaper Engine"))
+                                                                        .font_size(type_ramp::BODY.size)
+                                                                        .foreground(p.text_primary.clone()),
+                                                                    self.settings_note(
+                                                                        "用本机 Wallpaper Engine 订阅的壁纸做背景（视频静音循环），与上面导入的图片/视频二选一",
+                                                                        p,
+                                                                    ),
+                                                                )),
+                                                            // chevron right（E76C）：钻取方向
+                                                            // （主干 `xaml.cs:10272-10278`，同
+                                                            // settings_nav_card 那颗）。
+                                                            Border::new()
+                                                                .grid_column(2)
+                                                                .vertical_alignment(
+                                                                    VerticalAlignment::Center,
+                                                                )
+                                                                .opacity(0.72)
+                                                                .content(mark_size(
+                                                                    glyph::CHEVRON_RIGHT,
+                                                                    size::GLYPH_CAPTION,
+                                                                )),
+                                                        )),
+                                                )),
+                                        ]),
+                                )
+                                .into();
+                            open
+                        },
+                    ),
                     self.settings_row(
                         "skin-opacity",
                         "背景透明度",
@@ -31663,6 +35014,22 @@ impl Shell {
                             "背景透明度",
                             context,
                             p,
+                        ),
+                        p,
+                    ),
+                    // 主干 `Personalization.cs:458-471`：视频背景的失焦暂停开关（
+                    // `SkinVideoPauseToggle`，IsOn=`_skinVideoPauseOnBlur` 缺省开，
+                    // OnContent/OffContent=开/关）。落盘腿 = [`Msg::Toggle`] 臂里
+                    // `SKIN_VIDEO_PAUSE_KEY` 那一发 `shellfiles::save_skin_video_pause`。
+                    self.settings_row(
+                        "skin-video-pause",
+                        "失焦暂停视频",
+                        "视频背景只在窗口聚焦时播放；切到别的程序时自动暂停，回焦继续",
+                        self.settings_toggle(
+                            SKIN_VIDEO_PAUSE_KEY,
+                            true,
+                            "窗口失焦时暂停视频背景",
+                            context,
                         ),
                         p,
                     ),
@@ -31792,7 +35159,17 @@ impl Shell {
                     // 复用同一格，不另插第二行（多一行 = 主干没有的文案位）；`KeyedView` 的键沿用
                     // `repo`（→ UIA `line-repo`），它不是主干有的名字，改叫 `status` 等于自造 id。
                     self.settings_line("repo", &self.about_status_text(), p),
-                    self.settings_row("release", "GitHub Release", "", actions, p),
+                    // 主干 `About.cs:153`：`MakeRow(L("GitHub Release"), UpdateReleasesPageUrl, row)`
+                    // —— 副文那格放的是发布页 URL（`About.cs:31-33` 由 `UpdateRepo` 拼出），
+                    // 不是空串。repo 为空串时主干给 `null`（副文整格缺席）；`ABOUT_UPDATE_REPO`
+                    // 是非空常量 ⇒ 恒有 URL，不照抄那道空判（照了反而多一条死分支）。
+                    self.settings_row(
+                        "release",
+                        "GitHub Release",
+                        &format!("https://github.com/{ABOUT_UPDATE_REPO}/releases/latest"),
+                        actions,
+                        p,
+                    ),
                 ],
                 p,
             ),
@@ -31877,7 +35254,10 @@ impl Shell {
             .into();
         vec![
             self.settings_section_desc(DESC_PET, p),
-            self.settings_card(
+            // 以下四张卡全部走裸卡体：主干 Pet.cs 一张 AddDivider 都没有（逐张出处见
+            // [`Shell::settings_card_plain`] 的文档），分叉卡壳烘进去的通栏线在主干不存在
+            // ——「显示」卡那条在 R5\P-pet 两边截图直接可见（toggle 行与大小行之间）。
+            self.settings_card_plain(
                 "pet-display",
                 // #96 剩余半刀：主干这一处是单参 `L("显示")`（`MainWindow.Pet.cs:280`），EN 的
                 // **生效值**为 `Display` —— 那是 `ShellEnglish` 重复键后写覆盖的结果
@@ -31918,14 +35298,20 @@ impl Shell {
                 ],
                 p,
             ),
-            self.settings_card(
+            self.settings_card_plain(
                 "pet-library",
-                "宠物库",
-                "已收录的宠物（插件内置 + ~/.codex/pets + 本机安装的）。切换立即生效。",
-                vec![self.settings_line("placeholder", "正在读取宠物清单…", p)],
+                // R3 复验：主干这张卡**渲染出来没有卡头/描述** —— RenderPetLibraryCard
+                // 确实写了 NewCard(L(宠物库), L(已收录的…))（`Pet.cs:368-369`），
+                // 但紧跟着的 `ReloadPetLibraryAsync` 第一发就是 `rows.Children.Clear()`
+                // （`Pet.cs:382`，清的是 NewCard 返回的那面 body StackPanel）⇒ 卡头与
+                // 描述一起被清掉，重载后只剩条目行（R3\S0 实测：显示卡下缘直接接
+                // 「Arima Kana」条目行）。分叉按渲染真值收：两参传空 = 不入卡头/描述格。
+                "",
+                "",
+                self.pet_library_rows(p, context),
                 p,
             ),
-            self.settings_card(
+            self.settings_card_plain(
                 "pet-install",
                 "安装宠物",
                 "兼容 Codex 宠物包（pet.json + 图集）。拖放 zip 到下方区域，或粘贴安装命令。",
@@ -31976,7 +35362,7 @@ impl Shell {
                 ],
                 p,
             ),
-            self.settings_card(
+            self.settings_card_plain(
                 "pet-diagnostics",
                 "诊断",
                 "宠物不显示时先看这里：插件在不在、注册表报了什么、壳能不能画。",
@@ -31993,40 +35379,318 @@ impl Shell {
         ]
     }
 
-    /// 技能：`MainWindow.Skills.cs:83`。数据是本地目录扫描，分叉不扫盘 ⇒ 落到空态文案。
+    /// 宠物库卡的本体（主干 `ReloadPetLibraryAsync` + `MakePetRowAsync` 的渲染半）：
+    /// · `None` = 数据没回 ⇒ 骨架句「正在读取宠物清单…」（主干建卡时的初值同句）；
+    /// · `Ok(空)` 与 `Err` 同画空态句（`Pet.cs:388-398`「`pets is null || Count == 0` 走同一句」，
+    ///   回执臂的折档注释记了 Err 并档的理由）；
+    /// · `Ok(非空)` ⇒ 按 `DisplayName` 序数序逐行上图（主干 `OrderBy(p => p.DisplayName, Ordinal)`，
+    ///   Rust 的 `String: Ord` 就是逐字节序，同果）。
+    fn pet_library_rows(&self, p: Palette, context: &mut ViewContext<Shell>) -> Vec<KeyedView> {
+        match self.pets.as_ref() {
+            None => vec![self.settings_line("placeholder", "正在读取宠物清单…", p)],
+            // 空表与 Err 同画一句空态（主干 `pets is null || Count == 0` 同档，
+            // 回执臂的折档注释记了 Err 并档的理由）。
+            Some(Err(_)) => vec![self.settings_line(
+                "empty",
+                "一只宠物都没有。装一个：把 Codex 宠物 zip 拖到下面的安装区，或粘贴 petdex install / codex-pets add <宠物标识>。",
+                p,
+            )],
+            Some(Ok(pets)) if pets.is_empty() => vec![self.settings_line(
+                "empty",
+                "一只宠物都没有。装一个：把 Codex 宠物 zip 拖到下面的安装区，或粘贴 petdex install / codex-pets add <宠物标识>。",
+                p,
+            )],
+            Some(Ok(pets)) => {
+                let mut ordered = pets.clone();
+                ordered.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+                ordered
+                    .iter()
+                    .map(|pet| self.pet_library_row(pet, p, context))
+                    .collect()
+            }
+        }
+    }
+
+    /// 宠物库的一行（主干 `MakePetRowAsync`，`Pet.cs:407-473`）：`[Auto, *, Auto]` 三列、
+    /// 列距 S12、行内边距 0/S6/0/S6 —— 左列 56px 预览（主干先试 previews/idle.gif|png|webp，
+    /// 拿不到落**字形兜底** E76E/E9CE 28px；分叉这半没接资产路由，**恒走字形兜底**——
+    /// 主干真机截图里 5 行画的就是这枚兜底字形，面值一致）、中列三行（名 / 元信息 / 描述）、
+    /// 右列操作钮。
+    fn pet_library_row(
+        &self,
+        pet: &PetListEntry,
+        p: Palette,
+        context: &mut ViewContext<Shell>,
+    ) -> KeyedView {
+        let active = self.pet_active.as_deref() == Some(pet.id.as_str());
+        // 元信息三段（主干 `meta` 的拼装序）：使用中 → 来源 → 渲染器告警。
+        let source = if self.pet_local_ids.iter().any(|id| *id == pet.id) {
+            self.catalog.l("本机安装")
+        } else if self.pet_codex_ids.iter().any(|id| *id == pet.id) {
+            self.catalog.l("Codex 宠物")
+        } else {
+            self.catalog.l("插件内置")
+        };
+        let mut meta = vec![if active {
+            self.catalog.l("使用中")
+        } else {
+            String::new()
+        }];
+        if !source.is_empty() {
+            meta.push(source);
+        }
+        // 两类不能自绘的分开说（主干同序）：live2d 是渲染器不同，另一种是轨道数据不全
+        // （分叉的 `shell_renderable` 只按「非 live2d」判，见 kernel.rs `PetListEntry` 的文档
+        // ——所以第二臂在分叉是死臂，留形不加语义）。
+        if pet.renderer == "live2d" {
+            meta.push(self.catalog.l("Live2D（壳内不渲染）"));
+        } else if !pet.shell_renderable {
+            meta.push(self.catalog.l("图集帧数据不全，壳内不渲染"));
+        }
+        let meta_text = meta
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(" · ");
+        // 左列预览：主干 56×56 盒 + 兜底字形 28px（`LoadPetPreviewAsync` 尾段的 `FontIcon`）。
+        let preview: View = Border::new()
+            .width(56.0)
+            .height(56.0)
+            .vertical_alignment(VerticalAlignment::Center)
+            .content(mark_size(
+                if pet.shell_renderable {
+                    '\u{e76e}'
+                } else {
+                    '\u{e9ce}'
+                },
+                28.0,
+            ))
+            .into();
+        // 右列操作：使用（active ⇒ 「使用中」默认样式禁用；否则强调底）+ 本机安装的多一枚红「删除」。
+        let use_button: View = Button::new()
+            .style(if active {
+                ButtonStyle::Default
+            } else {
+                ButtonStyle::Accent
+            })
+            .min_height(size::COMPACT_BUTTON_MIN_HEIGHT)
+            .is_enabled(!active)
+            .automation_id(format!("PetUse_{}", pet.id))
+            .automation_name(self.catalog.lf("使用宠物 {0}", &[pet.display_name.clone()]))
+            .on_click(context.message(Msg::PetUse(pet.id.clone())))
+            .content(
+                TextBlock::new()
+                    .text(self.catalog.l(if active { "使用中" } else { "使用" }))
+                    .font_size(type_ramp::CAPTION.size),
+            )
+            .into();
+        let mut actions: Vec<View> = vec![use_button];
+        if self.pet_local_ids.iter().any(|id| *id == pet.id) {
+            let armed = self.pet_remove_armed.as_deref() == Some(pet.id.as_str());
+            let remove: View = Button::new()
+                .min_height(size::COMPACT_BUTTON_MIN_HEIGHT)
+                .automation_id(format!("PetRemove_{}", pet.id))
+                .automation_name(self.catalog.lf("删除宠物 {0}", &[pet.display_name.clone()]))
+                .on_click(context.message(Msg::PetRemove(pet.id.clone())))
+                .content(
+                    TextBlock::new()
+                        .text(self.catalog.l(if armed { "确认删除" } else { "删除" }))
+                        .font_size(type_ramp::CAPTION.size)
+                        .foreground(p.error),
+                )
+                .into();
+            actions.push(remove);
+        }
+        // 操作列：1 枚（使用）或 2 枚（使用 + 删除）——children 只吃定长元组 ⇒ 两支各建。
+        let actions_host: View = match actions.pop() {
+            None => StackPanel::new()
+                .grid_column(2)
+                .orientation(Orientation::Horizontal)
+                .spacing(space::S4)
+                .vertical_alignment(VerticalAlignment::Center)
+                .into(),
+            Some(second) => match actions.pop() {
+                None => StackPanel::new()
+                    .grid_column(2)
+                    .orientation(Orientation::Horizontal)
+                    .spacing(space::S4)
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .children((second,))
+                    .into(),
+                Some(first) => StackPanel::new()
+                    .grid_column(2)
+                    .orientation(Orientation::Horizontal)
+                    .spacing(space::S4)
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .children((first, second))
+                    .into(),
+            },
+        };
+        // 中列：名 / 元信息 / 描述三行，但**空描述不建那颗 TextBlock**（主干 `IsNullOrEmpty`
+        // 才不建；reactor 没有元素级 Visibility，「None = 不入树」是全仓口径）⇒ 两支各建。
+        let title = TextBlock::new()
+            .text(pet.display_name.clone())
+            .font_size(type_ramp::BODY.size)
+            .foreground(p.text_primary);
+        let meta_line = TextBlock::new()
+            .text(meta_text)
+            .font_size(type_ramp::CAPTION.size)
+            .foreground(p.text_secondary);
+        let middle: View = if pet.description.is_empty() {
+            StackPanel::new()
+                .grid_column(1)
+                .orientation(Orientation::Vertical)
+                .spacing(space::S2)
+                .vertical_alignment(VerticalAlignment::Center)
+                .children((title, meta_line))
+                .into()
+        } else {
+            StackPanel::new()
+                .grid_column(1)
+                .orientation(Orientation::Vertical)
+                .spacing(space::S2)
+                .vertical_alignment(VerticalAlignment::Center)
+                .children((
+                    title,
+                    meta_line,
+                    TextBlock::new()
+                        .text(pet.description.clone())
+                        .font_size(type_ramp::CAPTION.size)
+                        .foreground(p.text_tertiary)
+                        .text_wrapping(TextWrapping::Wrap),
+                ))
+                .into()
+        };
+        KeyedView::new(
+            format!("pet-row-{}", pet.id),
+            Border::new()
+                .padding(th([0.0, space::S6, 0.0, space::S6]))
+                .content(
+                    Grid::new()
+                        .columns([GridLength::Auto, GridLength::STAR, GridLength::Auto])
+                        .column_spacing(space::S12)
+                        .children((preview, middle, actions_host)),
+                ),
+        )
+    }
+
+    /// 技能：`MainWindow.Skills.cs:83`（RenderSkillsSectionAsync）。本刀起**真扫盘**对齐主干
+    /// `ScanSkillRoots`（`MainWindow.Skills.cs:427`）：五根（项目 100 / 项目（兼容） 200 /
+    /// 预设 300 / 用户 400 / 用户（兼容） 500）+ 概览计数行 + 不可用 hint + 每根一张卡。
+    /// 目录与文件读取全走 `std::fs`（安全读失败一律吞成空，主干 `SafeGetDirectories`/`catch` 同口径）。
     fn settings_skills(&self, p: Palette) -> Vec<KeyedView> {
-        vec![
-            self.settings_section_desc(DESC_SKILLS, p),
-            self.settings_card(
-                "skills-overview",
-                "已安装技能",
-                "按内核 @deepseek-ai/dsh-skill-filesystem 的根目录与优先级扫描，与内核看到的是同一份真相。",
-                vec![
-                    self.settings_line(
-                        "priority",
-                        "同名技能只生效优先级最高的一个：项目 > 预设 > 用户；被遮蔽的条目在列表里标注。",
-                        p,
-                    ),
-                    KeyedView::new(
-                        "line-add",
-                        Border::new()
-                            .padding(th([0.0, 8.0, 0.0, 4.0]))
-                            .content(self.settings_button(
-                                "添加技能",
-                                "添加技能",
-                                "SkillsAddButton",
-                                true,
-                            )),
-                    ),
-                    self.settings_line(
-                        "empty",
-                        "还没有安装任何技能。用上面的「添加技能」写第一个，或在项目的 .dsh/skills 目录里放一个。",
-                        p,
-                    ),
-                ],
+        // 活动会话 cwd（主干 `ActiveSessionCwd`：活动行的 cwd，无会话 = None）。
+        let cwd = self.active_row().map(|row| row.cwd.clone()).filter(|c| !c.is_empty());
+        let roots = skill_roots(
+            cwd.as_deref(),
+            &shellfiles::data_home(),
+            std::env::var("DSH_AGENTS_HOME").ok().filter(|v| !v.trim().is_empty()),
+            std::env::var_os("USERPROFILE").as_deref(),
+        );
+        let all: usize = roots.iter().map(|root| root.entries.len()).sum();
+        // 概览计数行（主干 `Skills.cs:108-114`）：
+        // `LF("共 {0} 个技能：{1}", all.Count, join("，", roots.Where(Entries>0).Select("{Label} {Count} 个")))`。
+        let details = roots
+            .iter()
+            .filter(|root| !root.entries.is_empty())
+            .map(|root| self.catalog.lf("{0} {1} 个", &[root.label.clone(), root.entries.len().to_string()]))
+            .collect::<Vec<_>>()
+            .join("，");
+        let count_text = self
+            .catalog
+            .lf("共 {0} 个技能：{1}", &[all.to_string(), details]);
+
+        let mut overview_cells: Vec<KeyedView> = vec![
+            self.settings_line("count", &count_text, p),
+            self.settings_line(
+                "priority",
+                "同名技能只生效优先级最高的一个：项目 > 预设 > 用户；被遮蔽的条目在列表里标注。",
                 p,
             ),
-        ]
+            KeyedView::new(
+                "line-add",
+                Border::new()
+                    .padding(th([0.0, 8.0, 0.0, 4.0]))
+                    // 主干 `Skills.cs:122-127`：默认按钮（深色中性底 + 细描边），不是强调底。
+                    .content(self.settings_button(
+                        "添加技能",
+                        "添加技能",
+                        "SkillsAddButton",
+                        false,
+                    )),
+            ),
+        ];
+        // 空态（主干 `:140-148`）与不可用 hint（`:149-157`，顺序 = roots 顺序）。
+        if all == 0 {
+            overview_cells.push(self.settings_line(
+                "empty",
+                "还没有安装任何技能。用上面的「添加技能」写第一个，或在项目的 .dsh/skills 目录里放一个。",
+                p,
+            ));
+        }
+        for root in roots.iter().filter(|root| !root.available && !root.unavailable_reason.is_empty()) {
+            overview_cells.push(self.settings_line("hint", &root.unavailable_reason, p));
+        }
+
+        let mut cells = vec![self.settings_section_desc(DESC_SKILLS, p), {
+            // 概览卡整体收成一个 KeyedView：主干概览卡里这些行之间**没有**分隔线
+            // （`Children.Add` 直排），settings_card 的逐行分隔线会把它们割开。
+            let card = self.settings_card("skills-overview", "已安装技能", "按内核 @deepseek-ai/dsh-skill-filesystem 的根目录与优先级扫描，与内核看到的是同一份真相。", overview_cells, p);
+            card
+        }];
+        // ---- 每个根一张卡（主干 `:160-180`：NewCard(root.Label, root.Path) + 空态/行）----
+        for root in &roots {
+            let mut rows: Vec<KeyedView> = Vec::new();
+            if root.entries.is_empty() {
+                rows.push(self.settings_line(
+                    "root-empty",
+                    // 主干 `:167`：可用根 = 「（这个目录里还没有技能）」，不可用根 = 原因文案。
+                    if root.available { "（这个目录里还没有技能）" } else { &root.unavailable_reason },
+                    p,
+                ));
+            } else {
+                for entry in &root.entries {
+                    // 行形状 = 主干 `MakeSkillRow` 的左列（名称 + 说明 + 被遮蔽标注）。
+                    // ⚠ 行内的删除按钮/启用开关（主干 `:186-260`）**没有铺**：它们的腿是
+                    // `DeleteSkillAsync`/`SkillToggle` 整条 RPC+写盘链，本刀没接 ⇒ 只铺读侧，
+                    // 欠账在报告里登记（空态部署验收面不到行内控件）。
+                    let title = if entry.shadowed {
+                        self.catalog.lf("{0}（被遮蔽）", &[entry.name.clone()])
+                    } else {
+                        entry.name.clone()
+                    };
+                    rows.push(KeyedView::new(
+                        format!("skill-{}", entry.name),
+                        Border::new()
+                            .padding(th(pad::SETTINGS_ROW))
+                            .content(
+                                StackPanel::new()
+                                    .orientation(Orientation::Vertical)
+                                    .spacing(space::S2)
+                                    .children((
+                                        TextBlock::new()
+                                            .text(title)
+                                            .font_size(type_ramp::BODY.size)
+                                            .foreground(p.text_primary.clone()),
+                                        TextBlock::new()
+                                            .text(entry.description.clone())
+                                            .font_size(type_ramp::CAPTION.size)
+                                            .foreground(p.text_secondary.clone())
+                                            .text_wrapping(TextWrapping::Wrap),
+                                    )),
+                            ),
+                    ));
+                }
+            }
+            cells.push(self.settings_card(
+                &format!("skill-root-{}", root.priority),
+                &root.label,
+                &root.path_text,
+                rows,
+                p,
+            ));
+        }
+        cells
     }
 
     /// Agent 预设：主干那一节住在 `MainWindow.xaml.cs` 的 `RenderPresetsSectionAsync`
@@ -32065,74 +35729,586 @@ impl Shell {
     /// 都落得到。判据与「为什么不直抄第三发建会话调用点」写在那颗的文档里）。
     /// 卡头与段说明一个字没动。
     fn settings_agent_presets(&self, context: &mut ViewContext<Shell>, p: Palette) -> Vec<KeyedView> {
-        // 页脚卡 = 主干 `MainWindow.xaml.cs` 里那颗 `NewCard("预设目录")`（符号锚，不写行号），
-        // 卡头无副标题（主干 `NewCard` 那一段就没有副标题这一档）。
-        // 台账 PC1S 件①：卡体内那一行「新增自定义预设」已撤 —— 它的派生路径 `agentPresets/copy`
-        // 自内核 0.1.7 起移除、主干已撤该行，卡上写死的「不可用」在主干同样只剩字典键。
-        // 台账 PC2 件②（本刀）：那一格补上主干那颗创作向导钮 ⇒ 卡体**只有这一枚**子元素。
-        // 形制 = 现成活姊妹助手 [`Shell::settings_action_button`]（同「检查更新」/「安装宠物」那两颗，
-        // `mw2_deadbuttons.rs` 的「画了就得投 Msg」口径）；主干那颗另挂一枚 ToolTip，reactor 侧
-        // 那颗助手没有 tooltip 形参 ⇒ 按「不改框架层」不补，登记为表达偏差（报告 §8）。
-        let mut cells: Vec<KeyedView> = Vec::new();
-        cells.push(KeyedView::new(
-            "creator-draft",
-            Border::new().padding(th([0.0, 4.0, 0.0, 0.0])).content(
-                self.settings_action_button(
-                    "用「创造模式」创作自定义预设",
-                    "用「创造模式」创作自定义预设",
-                    "PresetCreatorDraftButton",
-                    false,
-                    Msg::PresetCreatorDraft,
-                    context,
-                ),
-            ),
-        ));
-        vec![
-            self.settings_section_desc(DESC_AGENT_PRESETS, p),
-            self.settings_card("preset-dir", "预设目录", "", cells, p),
-        ]
+        let mut cells: Vec<KeyedView> = vec![self.settings_section_desc(DESC_AGENT_PRESETS, p)];
+        // 三档语义对齐主干（`MW:13488-13516`）：None = 那发 await 还没回（页停在段说明）；
+        // Err = 主干失败臂只铺一行错误文案、**连「预设目录」卡都不画**（主干 `return`）；
+        // Ok = 预设卡紧排列（主干 `Spacing=Sp4` 的 presetList）+ 页脚「预设目录」卡。
+        match self.preset_cards.as_ref() {
+            None => {}
+            Some(Err(error)) => {
+                cells.push(self.settings_line(
+                    "preset-load-error",
+                    &self.catalog.lf("无法加载 Agent 预设：{0}", &[error.clone()]),
+                    p,
+                ));
+                return cells;
+            }
+            Some(Ok(cards)) => {
+                let has_session = self.active.is_some();
+                for card in cards {
+                    cells.push(self.preset_card(card, has_session, context, p));
+                }
+                // 页脚卡 = 主干 `NewCard("预设目录")`（符号锚，不写行号），卡体唯一子元素 =
+                // 创作向导钮（台账 PC2 件②，形制 = [`Shell::settings_action_button`]；
+                // 主干那颗另挂一枚 ToolTip，reactor 侧那颗助手没有 tooltip 形参 ⇒
+                // 按「不改框架层」不补，登记为表达偏差（报告 §8））。
+                cells.push(self.settings_card("preset-dir", "预设目录", "", vec![KeyedView::new(
+                    "creator-draft",
+                    Border::new().padding(th([0.0, 4.0, 0.0, 0.0])).content(
+                        self.settings_action_button(
+                            "用「创造模式」创作自定义预设",
+                            "用「创造模式」创作自定义预设",
+                            "PresetCreatorDraftButton",
+                            false,
+                            Msg::PresetCreatorDraft,
+                            context,
+                        ),
+                    ),
+                )], p));
+            }
+        }
+        cells
     }
 
-    /// 模型：`RenderModelsSectionAsync`（`MainWindow.xaml.cs:9883`）。提供方清单在主干是
-    /// `llm/listConfigurableProviders` + 一次批量 `credentials/describe`（`MW:10896`、`:10933`）
-    /// 两发拼出来的 —— ⚠ 上一句注释今天写着「分叉没有这两条端点」，**是假的**（RD3 §表3 也点了这一处）：
-    /// 构造器与解析器都在 `kernel.rs` 的 RD9 表A 那一段在册（`credentials_describe` /
-    /// `llm_list_configurable_providers`），`credentials/describe` 更是已被
-    /// [`Shell::load_search_credentials`] 真发（网页搜索那张卡）。这一节**没发的原因是宿主**：
-    /// 提供方行卡不在分叉（B 档 #56/模型族）⇒ 只剩段说明与「添加提供方」占位（主干的虚线描边
-    /// reactor 也画不出来）。
-    fn settings_models(&self, p: Palette) -> Vec<KeyedView> {
-        let add: View = Border::new()
-            .background(p.card_secondary)
-            .border_brush(p.stroke)
-            .border_thickness(th([size::STROKE; 4]))
-            .corner_radius(radius::MEDIUM)
-            .min_height(44.0)
-            .padding(th(pad::CARD_COMPACT))
+    /// 设置页一张预设卡（主干 `MW:13524-13603`）：卡壳（默认项 = AccentBrush 描边）+
+    /// `[Star, Auto]` 列距 16 —— 左列标题/描述/broken/id，右列查看/当前会话使用/设为默认。
+    fn preset_card(
+        &self,
+        card: &PresetCardView,
+        has_session: bool,
+        context: &mut ViewContext<Shell>,
+        p: Palette,
+    ) -> KeyedView {
+        // 显示名认表（主干 `:13528-13531`）：内置四档认 [`AGENT_MODE_BUILTINS`] → i18n，
+        // 其余过 i18n 字典、查不到原样。trust 尾缀与默认标记拼进标题行。
+        let shown = AGENT_MODE_BUILTINS
+            .iter()
+            .find(|(bid, _)| *bid == card.id)
+            .map(|(_, name)| self.catalog.l(name))
+            .unwrap_or_else(|| self.catalog.l(&card.name));
+        let trust = if card.trust_user { "自定义" } else { "内置" };
+        let title_text = if card.broken.is_some() {
+            self.catalog.lf("{0}（加载失败）", &[shown.clone()])
+        } else if card.is_default {
+            format!("{} · {} · {}", shown, self.catalog.l(trust), self.catalog.l("默认预设"))
+        } else {
+            format!("{} · {}", shown, self.catalog.l(trust))
+        };
+        let mut left: Vec<KeyedView> = vec![KeyedView::new(
+            "title",
+            TextBlock::new()
+                .text(title_text)
+                .font_size(type_ramp::BODY.size)
+                .font_weight(FontWeight::SEMI_BOLD)
+                .foreground(p.text_primary.clone())
+                .text_wrapping(TextWrapping::Wrap),
+        )];
+        if let Some(desc) = &card.desc {
+            left.push(KeyedView::new(
+                "desc",
+                TextBlock::new()
+                    .text(desc.clone())
+                    .font_size(type_ramp::CAPTION.size)
+                    .foreground(p.text_secondary.clone())
+                    .text_wrapping(TextWrapping::Wrap),
+            ));
+        }
+        if let Some(broken) = &card.broken {
+            left.push(KeyedView::new(
+                "broken",
+                TextBlock::new()
+                    .text(broken.clone())
+                    .font_size(type_ramp::CAPTION.size)
+                    .foreground(p.info.clone())
+                    .text_wrapping(TextWrapping::Wrap),
+            ));
+        }
+        left.push(KeyedView::new(
+            "id",
+            TextBlock::new()
+                .text(format!("id: {}", card.id))
+                .font_size(type_ramp::CAPTION.size)
+                .foreground(p.text_tertiary.clone()),
+        ));
+        // 操作列：查看（永远在场）+ 当前会话使用（无活跃会话 = 点不动）+
+        // 设为默认（默认项与 broken 项不画，主干 `:13581`）。
+        let view_btn: View = Button::new()
+            .min_height(size::COMPACT_BUTTON_MIN_HEIGHT)
+            .automation_id(format!("ViewPresetComposition_{}", card.id))
+            .automation_name(self.catalog.lf("查看预设 {0} 的组装", &[shown.clone()]))
+            .on_click(context.message(Msg::PresetView(card.id.clone(), shown.clone())))
             .content(
-                StackPanel::new()
-                    .orientation(Orientation::Horizontal)
-                    .spacing(space::S6)
-                    .horizontal_alignment(HorizontalAlignment::Center)
-                    .children((
-                        // 主干 `MakeAddProviderButton`（xaml.cs:10542-10546）：E710 @ GlyphBody(14)
-                        // + 默认 BodyTextStyle（14/主文本色）的「添加提供方」，两者都垂直居中。
-                        mark_vcenter(glyph::NEW_SESSION, size::GLYPH_BODY),
-                        TextBlock::new()
-                            .text(self.catalog.l("添加提供方"))
-                            .font_size(type_ramp::BODY.size)
-                            .foreground(p.text_primary.clone())
-                            .vertical_alignment(VerticalAlignment::Center),
-                    )),
+                TextBlock::new()
+                    .text(self.catalog.l("查看"))
+                    .font_size(type_ramp::CAPTION.size),
             )
             .into();
-        vec![
-            self.settings_section_desc(DESC_MODELS, p),
-            KeyedView::new(
-                "add-provider",
-                Border::new().padding(th(pad::SETTINGS_ROW)).content(add),
+        let use_btn: View = Button::new()
+            .min_height(size::COMPACT_BUTTON_MIN_HEIGHT)
+            .is_enabled(has_session)
+            .automation_id(format!("UsePresetForSession_{}", card.id))
+            .automation_name(self.catalog.lf("当前会话使用预设 {0}", &[shown.clone()]))
+            .on_click(context.message(Msg::PresetUseForSession(card.id.clone(), shown.clone())))
+            .content(
+                TextBlock::new()
+                    .text(self.catalog.l("当前会话使用"))
+                    .font_size(type_ramp::CAPTION.size),
+            )
+            .into();
+        let mut actions: Vec<KeyedView> = vec![
+            KeyedView::new("view", view_btn),
+            KeyedView::new("use", use_btn),
+        ];
+        if !card.is_default && card.broken.is_none() {
+            let default_btn: View = Button::new()
+                .min_height(size::COMPACT_BUTTON_MIN_HEIGHT)
+                .automation_id(format!("SetDefaultPreset_{}", card.id))
+                .automation_name(self.catalog.lf("设为默认预设 {0}", &[shown.clone()]))
+                .on_click(context.message(Msg::PresetSetDefault(card.id.clone())))
+                .content(
+                    TextBlock::new()
+                        .text(self.catalog.l("设为默认"))
+                        .font_size(type_ramp::CAPTION.size),
+                )
+                .into();
+            actions.push(KeyedView::new("set-default", default_btn));
+        }
+        KeyedView::new(
+            format!("preset-{}", card.id),
+            Border::new()
+                .background(p.card.clone())
+                // 主干 `:13525`：默认项描边 = AccentBrush，其余 = StrokeBrush。
+                .border_brush(if card.is_default { p.accent.clone() } else { p.stroke.clone() })
+                .border_thickness(th([size::STROKE; 4]))
+                .corner_radius(radius::MEDIUM)
+                .padding(th(pad::CARD_COMPACT))
+                .content(
+                    Grid::new()
+                        .columns([GridLength::STAR, GridLength::Auto])
+                        .column_spacing(space::S16)
+                        .children((
+                            // 主干 `MW:13556/13600` 显式 `SetColumn(left,0)/(actions,1)`；
+                            // reactor 不按序自动分列 ⇒ 缺了这两枚就是「按钮叠文本」那颗 R2 缺陷。
+                            StackPanel::new()
+                                .grid_column(0)
+                                .orientation(Orientation::Vertical)
+                                .spacing(space::S2)
+                                .vertical_alignment(VerticalAlignment::Center)
+                                .keyed_children(left),
+                            StackPanel::new()
+                                .grid_column(1)
+                                .orientation(Orientation::Horizontal)
+                                .spacing(space::S6)
+                                .vertical_alignment(VerticalAlignment::Center)
+                                .keyed_children(actions),
+                        )),
+                ),
+        )
+    }
+
+    /// 模型页（主干 `RenderModelsSectionAsync`，`MW:11254-11307`）：段说明 + 提供方行卡
+    /// （只铺 `Configured` 的）+ 添加入口 + 「默认模型」卡。四档语义：
+    /// `None` = 内核未连/两发还没回（主干 `_rpc is null` 臂 = 说明行 + 恢复默认卡）；
+    /// `Err` = 「读取可配置提供方失败」一行 + 恢复默认卡；`Ok` = 行卡列表 + 添加 +
+    /// 恢复默认卡。编辑态（`models_editor`）内嵌在对应行卡里（主干同款）。
+    /// ⚠ 本刀的编辑/添加面板是**最小版**（只有 API 密钥一行 + 保存/取消）：主干
+    /// `MakeProviderEditorPanel`/`MakeModelsAddCard` 的地址/协议/模型目录字段与
+    /// `settings/mutate` 写腿没铺，删除腿的 ContentDialog 确认也没铺（直接执行）——
+    /// 欠账逐条登记在报告 §5。
+    fn settings_models(&self, context: &mut ViewContext<Shell>, p: Palette) -> Vec<KeyedView> {
+        let mut cells: Vec<KeyedView> = vec![self.settings_section_desc(DESC_MODELS, p)];
+        match self.provider_rows.as_ref() {
+            None => {}
+            Some(Err(error)) => {
+                cells.push(self.settings_line(
+                    "provider-load-error",
+                    &self.catalog.lf("读取可配置提供方失败：{0}", &[error.clone()]),
+                    p,
+                ));
+            }
+            Some(Ok(rows)) => {
+                // 提供方行卡收进**紧排列表**（R3 复验第 9 项）：主干
+                // `providerList = StackPanel{ Spacing = Sp4 }`（`MW:11283-11291`），
+                // 整列作为一枚子级进 SettingsHost —— 行卡间距 4，不是宿主的节间距 12。
+                // 分叉原来把行卡平铺进宿主 ⇒ 每行多出 8 DIP，行距 70 vs 主干 62。
+                let mut provider_list: Vec<KeyedView> = Vec::new();
+                for row in rows.iter().filter(|row| row.configured) {
+                    provider_list.push(self.provider_card(row, context, p));
+                }
+                if !provider_list.is_empty() {
+                    cells.push(KeyedView::new(
+                        "provider-list",
+                        StackPanel::new()
+                            .orientation(Orientation::Vertical)
+                            .spacing(space::S4)
+                            .keyed_children(provider_list),
+                    ));
+                }
+                // 添加入口（主干 `:11295-11303` 三档）：添加面板开着 = 面板卡；
+                // 行内编辑态 = 不铺添加按钮；否则 = 虚线「添加提供方」按钮。
+                match self.models_editor.as_ref() {
+                    Some((_, _, _, true)) => {
+                        cells.push(self.models_add_card(rows, context, p));
+                    }
+                    Some((_, _, _, false)) => {}
+                    None => {
+                        let addable = rows.iter().filter(|row| !row.configured).count();
+                        cells.push(KeyedView::new(
+                            "add-provider",
+                            Border::new().padding(th(pad::SETTINGS_ROW)).content(
+                                // 主干 `MakeAddProviderButton`（`MainWindow.xaml.cs:11540-11585`）
+                                // 是 Grid 双层：钮本体 Background=Transparent + BorderThickness=0，
+                                // 描边是**叠在上面**的一枚 Rectangle（RadiusX/Y=8、StrokeBrush）。
+                                // reactor 的 Button builder 没有 background/border 直设通路
+                                // （`button_ghost` 文档 §4038 的两条实测结论）⇒ 钮体四态透明走
+                                // `button_ghost`；reactor 三层都没有 StrokeDashArray 通道
+                                // （`todo_glyph` 文档已登记同一偏差）⇒ 虚线落回 1px 实线描边。
+                                Grid::new().children((
+                                    Button::new()
+                                        .resource_overrides(button_ghost(None))
+                                        .min_height(44.0)
+                                        .horizontal_alignment(HorizontalAlignment::Stretch)
+                                        .horizontal_content_alignment(HorizontalAlignment::Center)
+                                        .automation_id("AddProviderButton")
+                                        .automation_name(self.catalog.l("添加提供方"))
+                                        .is_enabled(addable > 0)
+                                        .on_click(context.message(Msg::ModelsEditorToggle(
+                                            String::new(),
+                                            String::new(),
+                                            String::new(),
+                                            true,
+                                        )))
+                                        .content(
+                                            StackPanel::new()
+                                                .orientation(Orientation::Horizontal)
+                                                .spacing(space::S6)
+                                                .children((
+                                                    mark_size(glyph::NEW_SESSION, size::GLYPH_BODY),
+                                                    TextBlock::new()
+                                                        .text(self.catalog.l("添加提供方"))
+                                                        .font_size(type_ramp::BODY.size)
+                                                        .foreground(p.text_primary.clone())
+                                                        .vertical_alignment(
+                                                            VerticalAlignment::Center,
+                                                        ),
+                                                )),
+                                        ),
+                                    // 描边层不设 Fill：WinUI 对 null Fill 的 Shape 内部不命中
+                                    // ⇒ 不挡钮的点击（主干那发还写了 IsHitTestVisible=false，
+                                    // reactor 没有 hit-test 通道，靠 null Fill 达成同一效果）。
+                                    Rectangle::new()
+                                        .stroke(p.stroke.clone())
+                                        .stroke_thickness(size::STROKE)
+                                        .radius_x(radius::MEDIUM)
+                                        .radius_y(radius::MEDIUM)
+                                        .horizontal_alignment(HorizontalAlignment::Stretch)
+                                        .vertical_alignment(VerticalAlignment::Stretch),
+                                )),
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+        // 「默认模型」卡（主干 `MakeRestoreDefaultModelCard`，`ModelExtras.cs:150-163`）。
+        cells.push(self.settings_card(
+            "default-model",
+            "默认模型",
+            "一键恢复适配器默认模型目录与内核默认模型。自定义提供方的模型列表不受影响。",
+            vec![self.settings_row(
+                "restore-default-model",
+                "恢复默认模型",
+                "将默认模型与模型目录恢复为内核默认。",
+                self.settings_action_button(
+                    "恢复默认模型",
+                    "恢复默认模型",
+                    "RestoreDefaultModelButton",
+                    false,
+                    Msg::RestoreDefaultModel,
+                    context,
+                ),
+                p,
+            )],
+            p,
+        ));
+        cells
+    }
+
+    /// 一张提供方行卡（主干 `MakeProviderCard`，`MW:11417-11518`）：卡壳 + `[Star, Auto]`
+    /// 列距 10 —— 左 = 显示名 +（自定义徽标）+（凭据状态点），右 = 编辑/删除；
+    /// error 行与内嵌编辑面板（命中时）缀在卡尾。
+    fn provider_card(
+        &self,
+        row: &ProviderRowView,
+        context: &mut ViewContext<Shell>,
+        p: Palette,
+    ) -> KeyedView {
+        let mut identity: Vec<KeyedView> = vec![KeyedView::new(
+            "name",
+            TextBlock::new()
+                .text(row.display.clone())
+                .font_size(type_ramp::BODY.size)
+                .font_weight(FontWeight::SEMI_BOLD)
+                .foreground(p.text_primary.clone())
+                .vertical_alignment(VerticalAlignment::Center),
+        )];
+        if row.declared {
+            // 「自定义」徽标（主干 `MakeProviderTag`：细描边圆角小签）。
+            identity.push(KeyedView::new(
+                "tag",
+                Border::new()
+                    .border_brush(p.stroke.clone())
+                    .border_thickness(th([size::STROKE; 4]))
+                    .corner_radius(radius::SMALL)
+                    .padding(th([6.0, 1.0, 6.0, 1.0]))
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .content(
+                        TextBlock::new()
+                            .text(self.catalog.l("自定义"))
+                            .font_size(type_ramp::CAPTION.size)
+                            .foreground(p.text_secondary.clone()),
+                    ),
+            ));
+        }
+        // 状态点：profile 点名的凭据已配置 = 绿 / 已知缺失 = 红；未点名不显示（主干 `:11445`）。
+        if let Some(state) = row.credential.as_ref().filter(|_| row.api_key_env.is_some()) {
+            identity.push(KeyedView::new(
+                "dot",
+                Ellipse::new()
+                    .width(8.0)
+                    .height(8.0)
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .fill(if state.configured { p.success.clone() } else { p.error.clone() })
+                    .automation_id(if state.configured {
+                        "ProviderKeyConfiguredDot"
+                    } else {
+                        "ProviderKeyMissingDot"
+                    })
+                    .automation_name(self.catalog.l(if state.configured {
+                        "API 密钥已配置"
+                    } else {
+                        "API 密钥缺失"
+                    })),
+            ));
+        }
+        let mut actions: Vec<KeyedView> = vec![KeyedView::new(
+            "edit",
+            Button::new()
+                .min_height(size::COMPACT_BUTTON_MIN_HEIGHT)
+                .automation_id(format!("ProviderEdit_{}", row.provider))
+                .automation_name(self.catalog.lf("编辑 {0}", &[row.display.clone()]))
+                .on_click(context.message(Msg::ModelsEditorToggle(
+                    row.provider.clone(),
+                    row.settings_ns.clone(),
+                    row.display.clone(),
+                    false,
+                )))
+                .content(
+                    TextBlock::new()
+                        .text(self.catalog.l("编辑"))
+                        .font_size(type_ramp::CAPTION.size),
+                ),
+        )];
+        if row.removable {
+            actions.push(KeyedView::new(
+                "remove",
+                Button::new()
+                    .min_height(size::COMPACT_BUTTON_MIN_HEIGHT)
+                    .automation_id(format!("ProviderRemove_{}", row.provider))
+                    .automation_name(self.catalog.lf("删除 {0}", &[row.display.clone()]))
+                    .on_click(context.message(Msg::ProviderRemove(
+                        row.key_ref.clone(),
+                        row.settings_ns.clone(),
+                        row.settings_path.clone(),
+                        row.api_key_env.as_deref() == Some(row.key_ref.as_str())
+                            && row
+                                .credential
+                                .as_ref()
+                                .is_some_and(|c| c.configured && c.writable),
+                    )))
+                    .content(
+                        TextBlock::new()
+                            .text(self.catalog.l("删除"))
+                            .font_size(type_ramp::CAPTION.size)
+                            .foreground(p.error.clone()),
+                    ),
+            ));
+        }
+        let mut body: Vec<KeyedView> = vec![KeyedView::new(
+            "head",
+            Grid::new()
+                .columns([GridLength::STAR, GridLength::Auto])
+                .column_spacing(space::S10)
+                .children((
+                    // 主干 `MW:11459/11497` 是 `Grid.SetColumn(identity, 0)` / `(actions, 1)`
+                    // 显式落列；reactor 的 Grid **不按序自动分列**（两枚子件缺省都落第 0 列），
+                    // 漏写 = 操作钮叠在名称上（2026-10-31 R2 截图的成因）。
+                    StackPanel::new()
+                        .grid_column(0)
+                        .orientation(Orientation::Horizontal)
+                        .spacing(space::S6)
+                        .vertical_alignment(VerticalAlignment::Center)
+                        .keyed_children(identity),
+                    StackPanel::new()
+                        .grid_column(1)
+                        .orientation(Orientation::Horizontal)
+                        .spacing(space::S4)
+                        .vertical_alignment(VerticalAlignment::Center)
+                        .keyed_children(actions),
+                )),
+        )];
+        if let Some(error) = &row.error {
+            body.push(KeyedView::new(
+                "error",
+                Border::new().padding(th(pad::SETTINGS_ROW)).content(
+                    TextBlock::new()
+                        .text(error.clone())
+                        .font_size(type_ramp::CAPTION.size)
+                        .foreground(p.error.clone())
+                        .text_wrapping(TextWrapping::Wrap),
+                ),
+            ));
+        }
+        // 内嵌编辑面板（最小版）：命中这一行且非 adding 态 ⇒ 分隔线 + 密钥框 + 保存/取消。
+        let editor_open = self
+            .models_editor
+            .as_ref()
+            .is_some_and(|(provider, _, _, adding)| provider == &row.provider && !(*adding));
+        if editor_open {
+            let reference = row.key_ref.clone();
+            body.push(KeyedView::new(
+                "editor",
+                Border::new().padding(th(pad::SETTINGS_ROW)).content(
+                    StackPanel::new()
+                        .orientation(Orientation::Vertical)
+                        .spacing(space::S8)
+                        .children((
+                            self.settings_password(
+                                &reference,
+                                row.credential.as_ref().is_some_and(|c| c.configured),
+                                &format!("API 密钥（{}）", row.display),
+                                context,
+                            ),
+                            StackPanel::new()
+                                .orientation(Orientation::Horizontal)
+                                .spacing(space::S8)
+                                .children((
+                                    Button::new()
+                                        .min_height(size::COMPACT_BUTTON_MIN_HEIGHT)
+                                        .on_click(context.message(Msg::ProviderSaveKey(
+                                            row.key_ref.clone(),
+                                            row.display.clone(),
+                                        )))
+                                        .content(
+                                            TextBlock::new()
+                                                .text(self.catalog.l("保存"))
+                                                .font_size(type_ramp::CAPTION.size),
+                                        ),
+                                    Button::new()
+                                        .min_height(size::COMPACT_BUTTON_MIN_HEIGHT)
+                                        .on_click(context.message(Msg::ModelsEditorClose))
+                                        .content(
+                                            TextBlock::new()
+                                                .text(self.catalog.l("取消"))
+                                                .font_size(type_ramp::CAPTION.size),
+                                        ),
+                                )),
+                        )),
+                ),
+            ));
+        }
+        KeyedView::new(
+            format!("provider-{}", row.provider),
+            Border::new()
+                .background(p.card.clone())
+                .border_brush(p.stroke.clone())
+                .border_thickness(th([size::STROKE; 4]))
+                .corner_radius(radius::MEDIUM)
+                .padding(th([space::S16, space::S12, space::S16, space::S12]))
+                .content(
+                    StackPanel::new()
+                        .orientation(Orientation::Vertical)
+                        .spacing(space::S12)
+                        .keyed_children(body),
+                ),
+        )
+    }
+
+    /// 添加面板（最小版）：addable 提供方下拉 + 密钥框 + 保存/取消。主干
+    /// `MakeModelsAddCard` 的完整表单（自定义设置地址/协议/模型目录）没铺。
+    fn models_add_card(
+        &self,
+        rows: &[ProviderRowView],
+        context: &mut ViewContext<Shell>,
+        p: Palette,
+    ) -> KeyedView {
+        let addable: Vec<&ProviderRowView> = rows
+            .iter()
+            .filter(|row| !row.settings_ns.is_empty() && !row.configured)
+            .collect();
+        let picked = self.pick(ADD_PROVIDER_PICK_KEY, 0);
+        let target = addable
+            .get(picked.min(addable.len().saturating_sub(1)))
+            .copied();
+        let mut body: Vec<KeyedView> = vec![self.settings_row(
+            "add-provider-pick",
+            "提供方",
+            "目录里还没有配置的提供方。",
+            self.settings_combo(
+                ADD_PROVIDER_PICK_KEY,
+                &addable
+                    .iter()
+                    .map(|row| row.display.as_str())
+                    .collect::<Vec<_>>(),
+                0,
+                "提供方",
+                context,
             ),
-        ]
+            p,
+        )];
+        if let Some(target) = target {
+            body.push(KeyedView::new(
+                "add-editor",
+                Border::new().padding(th(pad::SETTINGS_ROW)).content(
+                    StackPanel::new()
+                        .orientation(Orientation::Vertical)
+                        .spacing(space::S8)
+                        .children((
+                            self.settings_password(
+                                &target.key_ref,
+                                false,
+                                "API 密钥",
+                                context,
+                            ),
+                            StackPanel::new()
+                                .orientation(Orientation::Horizontal)
+                                .spacing(space::S8)
+                                .children((
+                                    Button::new()
+                                        .min_height(size::COMPACT_BUTTON_MIN_HEIGHT)
+                                        .on_click(context.message(Msg::ProviderSaveKey(
+                                            target.key_ref.clone(),
+                                            target.display.clone(),
+                                        )))
+                                        .content(
+                                            TextBlock::new()
+                                                .text(self.catalog.l("保存"))
+                                                .font_size(type_ramp::CAPTION.size),
+                                        ),
+                                    Button::new()
+                                        .min_height(size::COMPACT_BUTTON_MIN_HEIGHT)
+                                        .on_click(context.message(Msg::ModelsEditorClose))
+                                        .content(
+                                            TextBlock::new()
+                                                .text(self.catalog.l("取消"))
+                                                .font_size(type_ramp::CAPTION.size),
+                                        ),
+                                )),
+                        )),
+                ),
+            ));
+        }
+        self.settings_card("models-add", "添加提供方", "", body, p)
     }
 
     /// 使用统计 = 主干 `RenderUsageSectionAsync`（`MainWindow.xaml.cs:14935`）+ `RenderStatsKpi`
@@ -32140,13 +36316,13 @@ impl Shell {
     /// + `RenderStatsModelUsage`（:15724）+ `RenderStatsSourceNote`（:15354）。
     ///
     /// **三档语义**（判据只有 `self.usage` 这一枚 Option，与主干 `if (_rpc is null) return;` 同构）：
-    /// 1. `None` = 内核未连接，或连上了还没回数据 ⇒ 主干那一档**什么都不渲染**，界面停在
-    ///    `MainWindow.xaml` 的静态默认值上：五枚 KPI 的值行**与 hint 行都是** `—`
-    ///    （`xaml:1501/1505` 等）、来源行空串（`StatsSourceNote` 没给 `Text`）、
-    ///    三张图里**一句占位文案都不画**（`StatsModelEmptyHint` 是 Collapsed）。
+    /// 1. `None` = 内核未连接，或连上了还没回数据 ⇒ 五枚 KPI 的值行**与 hint 行都是** `—`
+    ///    （`xaml:1501/1505` 等）、来源行空串（`StatsSourceNote` 没给 `Text`）、趋势与模型卡
+    ///    **一句占位文案都不画**（`StatsModelEmptyHint` 是 Collapsed）。热力卡例外：
+    ///    主干那张卡**没有**空态文案，`values` 全 0 也铺满一窗 ⇒ 分叉喂一张同窗**零表**
+    ///    照铺（R2 对齐：此前这一臂整块空白只剩图例，与主干空态形态对不上）。
     /// 2. `Some` 但一条用量都没有 ⇒ 走主干自己的「无数据」判据：值 `—` + 那五串无数据 hint、
-    ///    热力图照铺 26 周空格（`values` 全 0 也铺，这张卡**没有**空态文案）、
-    ///    趋势与模型卡各一句 `所选时间范围内暂无用量记录`。
+    ///    热力图照铺 26 周空格、趋势与模型卡各一句 `所选时间范围内暂无用量记录`。
     /// 3. `Some` 且有数据 ⇒ 全真值。
     ///
     /// 数字一律来自 `kernel::UsageAggregate`（切片①）：这里只填模板与摆控件，不判据不算数。
@@ -32249,6 +36425,14 @@ impl Shell {
         ));
         match self.usage.as_ref() {
             None => {
+                // 第三档的热力卡：主干那张卡没有空态文案 —— `RenderStatsHeatmap` 不判空，
+                // `values` 全 0 也铺满一窗 ⇒ 这里喂一张同窗的**零表**（`heat_window` 与聚合表
+                // 同一把尺），格子 / 月标 / 图例与有数据档共用同一副铺装
+                // [`Shell::usage_heat_cells`]（R2 对齐：此前这一臂整块空白只剩图例）。
+                let (heat_start, heat_end) =
+                    blade2_rs::kernel::heat_window(self.usage_today, STATS_HEAT_WEEKS);
+                let empty_cells: Vec<(i64, i64)> =
+                    (heat_start..=heat_end).map(|day| (day, 0)).collect();
                 cells.push(self.settings_card_with_trailing(
                     "heat",
                     "Token 活动",
@@ -32265,16 +36449,29 @@ impl Shell {
                     // #143：口径三档。主干那颗 `StatsHeatMetricBar` 是 **xaml 静态件**
                     // （`RenderStatsHeatmap` 是画格子的，不碰这颗）⇒ 没数据时也在场，
                     // 与下面 `Some` 那一臂同发。
-                    Some(self.usage_heat_metric_bar(context, p)),
-                    // 第三档：主干整段渲染没跑过 ⇒ 格子一颗没有，但 `少/多` 那行是 xaml
-                    // 静态文本，还在（五颗方块没填色）。见 `usage_heat_legend`。
-                    vec![self.usage_heat_legend(false, p)],
+                    Some(self.usage_heat_metric_bar(context)),
+                    self.usage_heat_cells(&empty_cells, p),
                     p,
                 ));
                 // 时间范围那一行：主干是 xaml 静态行（`RenderUsageSectionAsync` 开头那句
                 // `if (_rpc is null) return;` 之前就摆好了）⇒ 两档都在场，不是有数据才画。
                 cells.push(self.usage_range_row(context, p));
-                cells.push(self.settings_card("trend", "每日 Token 趋势图", "", vec![], p));
+                // 主干 `MainWindow.xaml:1716`：`StatsTrendCanvas` 是 xaml **静态件**，带
+                // `Height="{ThemeResource StatsChartHeight}"`（`Tokens.xaml:90` = 220）⇒ 引导没
+                // 跑到渲染那一段时，趋势卡也保持「标题 + 220 高的空绘图区」，不是塌成一条标题。
+                // 分叉这一臂同样垫一块同高的空区（有数据的那一臂不垫：日行表自己撑高）。
+                cells.push(self.settings_card(
+                    "trend",
+                    "每日 Token 趋势图",
+                    "",
+                    vec![KeyedView::new(
+                        "trend-canvas-empty",
+                        Border::new()
+                            .height(STATS_CHART_HEIGHT)
+                            .padding(th(pad::SETTINGS_ROW)),
+                    )],
+                    p,
+                ));
                 cells.push(self.settings_card("model-usage", "模型用量", "", vec![], p));
                 cells.push(self.settings_line("source", "", p));
             }
@@ -32289,7 +36486,7 @@ impl Shell {
                     // 与上面 `None` 那一臂同一发（#121：主干 `StatsHeatCard` 没有副标题，
                     // 判据与「只清空这一个实参、不动副标题通道」的理由都写在那一臂里）。
                     "",
-                    Some(self.usage_heat_metric_bar(context, p)),
+                    Some(self.usage_heat_metric_bar(context)),
                     self.usage_heat_rows(aggregate, p),
                     p,
                 ));
@@ -32364,44 +36561,38 @@ impl Shell {
     /// SemiBold，`Typography.xaml:45`），右列 = `StatsRangeBar`（两颗 `SelectorBarItem`：
     /// `近 7 天` `Tag=7` `IsSelected=True` / `近 30 天` `Tag=30`），`AutomationId=
     /// "StatsRangeBar"` + `AutomationProperties.Name="统计时间范围"`。
-    /// 分叉没有 `SelectorBar`（[`Msg::SelectorToggle`] 那颗自绘选择器是另一种形态）⇒ 用两颗
-    /// `ToggleButton` 拼同一面分段，写法逐字照 [`Shell::theme_cubes`]：选中态**从状态派生**
-    /// （`is_checked(active == index)`）⇒ 不为 On 的天然只有一个，互斥不靠控件自己。
-    /// ⚠ 消息必须带 `bool`（[`Msg::StatsRange`]）：重按已选中的那颗，原生 `ToggleButton` 会先把
-    /// `IsChecked` 打成 false，那一发得整发吞掉（理由与守卫口径同 [`Msg::ThemePick`]）。
     /// 主干这一行是 xaml **静态行**（`RenderUsageSectionAsync` 开头 `if (_rpc is null) return;`
-    /// 之前就摆好了）⇒ 三档语义都在场，`settings_usage` 两臂各 push 一发。
-    /// 挂账（不许当通过）：`SelectorBarItem` 默认模板的 `Padding` 在 reactor 三层字节检索 0 命中
-    /// ⇒ 分段钮吃 `ToggleButton` 模板默认 `11,5,11,6`，横向余量与主干那两颗有偏差；
-    /// `STATS_RANGE_MIN_WIDTH` 只兜下沿，`近 30 天` 自然宽过它 ⇒ 两颗等宽、切换不抖。
+    /// 之前就摆好了）⇒ 三档语义都在场，`settings_usage` 两臂各 push 一发。右列那颗
+    /// `StatsRangeBar` 本刀起用真 `SelectorBar`（reactor 0.100 的 `SelectorBarItem` 有
+    /// `text`/`is_selected`，形制同插件区 Tab 条 [`Shell::plugins_tab_bar`]）：文字 tab、
+    /// 选中项带下划线，与主干同件 ⇒ 此前「Toggle 分段 + `SelectorBarItem` 模板 Padding
+    /// 检索 0 命中」那笔挂账一并注销。选中回报走 [`Msg::StatsRangeByText`]（文本由
+    /// reducer 反查），选中态仍从 `picks` 派生。
     fn usage_range_row(&self, context: &mut ViewContext<Shell>, p: Palette) -> KeyedView {
         let active = self.pick(STATS_RANGE_PICK_KEY, 0);
-        let mut segments: Vec<KeyedView> = Vec::new();
-        for (index, (label, days)) in STATS_RANGE_CHOICES.iter().copied().enumerate() {
-            let name = self.catalog.l(label);
-            segments.push(KeyedView::new(
-                format!("range-{days}"),
-                ToggleButton::new()
-                    .min_width(STATS_RANGE_MIN_WIDTH)
-                    .min_height(size::COMPACT_BUTTON_MIN_HEIGHT)
-                    .vertical_alignment(VerticalAlignment::Center)
-                    .is_checked(active == index)
-                    .on_is_checked_changed(
-                        context.callback(move |on: bool| Msg::StatsRange(index, on)),
-                    )
-                    // 主干 `AutomationId` 在**那一颗 `SelectorBar` 上**（不是两颗 item）⇒
-                    // 挂在外层 StackPanel；两颗 item 各补一枚带天数的 id 便于脚本逐颗点。
+        // `collection_slot` 的元素要走 `Into<KeyedView>`，reactor 没给 `SelectorBarItem`
+        // 单独实现 ⇒ 用 `KeyedView: From<(K, V)>` 的元组档，下标当稳定键。
+        let items: Vec<(usize, SelectorBarItem)> =
+            STATS_RANGE_CHOICES.iter().copied().enumerate().map(|(index, (label, days))| {
+                let name = self.catalog.l(label);
+                let item = SelectorBarItem::new()
+                    .text(name.clone())
+                    .is_selected(active == index)
+                    // 主干 `AutomationId` 在**那颗 `SelectorBar` 上**（不是两颗 item）⇒
+                    // 挂在 SelectorBar 本体；两颗 item 各补一枚带天数的 id 便于脚本逐颗点。
                     .automation_id(format!("StatsRangeItem_{days}"))
-                    .automation_name(name.clone())
-                    .content(
-                        TextBlock::new()
-                            .text(name)
-                            .font_size(type_ramp::BODY.size)
-                            .foreground(p.text_primary.clone())
-                            .vertical_alignment(VerticalAlignment::Center),
-                    ),
-            ));
-        }
+                    .automation_name(name);
+                (index, item)
+            })
+            .collect();
+        let bar: View = SelectorBar::new()
+            .automation_id("StatsRangeBar")
+            .automation_name(self.catalog.l("统计时间范围"))
+            .on_selected_text_changed(context.callback(|text: Option<String>| {
+                Msg::StatsRangeByText(text)
+            }))
+            .collection_slot(SelectorBarSlot::Items, items)
+            .into();
         // 左列那颗标题与卡头同一档参数（`settings_card_with_trailing` 里那颗 `heading`），
         // 只差没有卡头那套 `CARD_HEADER` 边距（主干这一行不是卡）。
         let heading: View = TextBlock::new()
@@ -32419,72 +36610,52 @@ impl Shell {
                     Grid::new()
                         .columns([GridLength::STAR, GridLength::Auto])
                         .column_spacing(space::S12)
-                        .children((
-                            heading,
-                            StackPanel::new()
-                                .orientation(Orientation::Horizontal)
-                                .spacing(space::S8)
-                                .vertical_alignment(VerticalAlignment::Center)
-                                .automation_id("StatsRangeBar")
-                                .automation_name(self.catalog.l("统计时间范围"))
-                                .keyed_children(segments),
-                        )),
+                        // 右列同样要显式钉列：`children` 不按序分列（见
+                        // [`Shell::settings_card_with_trailing`] 里那条注），不钉则
+                        // 「近 7 天/近 30 天」贴印左列标题（主干 `xaml:1680-1692` 是
+                        // `Grid.Column=1`）。
+                        .children((heading, Border::new().grid_column(1).content(bar))),
                 ),
         )
     }
 
-    /// 热力图口径那一排分段钮（主干 `StatsHeatMetricBar`，`MX:1628-1634`）：三颗
+    /// 热力图口径那颗 `SelectorBar`（主干 `StatsHeatMetricBar`，`MX:1628-1634`）：三颗
     /// `SelectorBarItem`（每日 / 每周 / 累计）挂在 **`Token 活动` 卡头右列**
     /// （`Grid{[*, Auto], ColumnSpacing=Space12}`，卡头 `TextBlock` 在左列）。
     ///
-    /// 形制逐字照 [`Shell::usage_range_row`]：`ToggleButton` 拼分段、`picks` 表供选中态、
-    /// 消息带 `bool` 吞回拨。两处唯一的差别是**落点**——那一颗是 xaml 静态行（卡外），
-    /// 这一颗在卡头右槽里（[`Shell::settings_card_with_trailing`] 的 `trailing`）。
-    /// 挂账同 `usage_range_row`（`SelectorBarItem` 模板 `Padding` 检索 0 命中 ⇒ 横向余量有偏差）。
-    fn usage_heat_metric_bar(&self, context: &mut ViewContext<Shell>, p: Palette) -> View {
+    /// 形制逐字照 [`Shell::usage_range_row`]：真 `SelectorBar`（文字 tab、选中项带下划线）、
+    /// `picks` 表供选中态、消息带文本由 reducer 反查。两处唯一的差别是**落点**——那一颗
+    /// 是 xaml 静态行（卡外），这一颗在卡头右槽里（[`Shell::settings_card_with_trailing`]
+    /// 的 `trailing`）。
+    fn usage_heat_metric_bar(&self, context: &mut ViewContext<Shell>) -> View {
         let active = self.pick(STATS_HEAT_METRIC_PICK_KEY, 0);
-        let mut segments: Vec<KeyedView> = Vec::new();
-        for (index, label) in STATS_HEAT_METRIC_CHOICES.iter().enumerate() {
-            let name = self.catalog.l(label);
-            segments.push(KeyedView::new(
-                format!("heat-metric-{index}"),
-                ToggleButton::new()
-                    .min_width(STATS_RANGE_MIN_WIDTH)
-                    .min_height(size::COMPACT_BUTTON_MIN_HEIGHT)
-                    .vertical_alignment(VerticalAlignment::Center)
-                    .is_checked(active == index)
-                    .on_is_checked_changed(
-                        context.callback(move |on: bool| Msg::StatsHeatMetric(index, on)),
-                    )
-                    // 主干 `AutomationId` 在**那一颗 `SelectorBar` 上**（不是三颗 item）⇒
-                    // 挂在外层 StackPanel；三颗 item 各补一枚带下标的 id 便于脚本逐颗点。
+        let items: Vec<(usize, SelectorBarItem)> =
+            STATS_HEAT_METRIC_CHOICES.iter().enumerate().map(|(index, label)| {
+                let name = self.catalog.l(label);
+                let item = SelectorBarItem::new()
+                    .text(name.clone())
+                    .is_selected(active == index)
+                    // 主干 `AutomationId` 在**那颗 `SelectorBar` 上**（不是三颗 item）⇒
+                    // 挂在 SelectorBar 本体；三颗 item 各补一枚带下标的 id 便于脚本逐颗点。
                     .automation_id(format!("StatsHeatMetricItem_{index}"))
-                    .automation_name(name.clone())
-                    .content(
-                        TextBlock::new()
-                            .text(name)
-                            .font_size(type_ramp::BODY.size)
-                            .foreground(p.text_primary.clone())
-                            .vertical_alignment(VerticalAlignment::Center),
-                    ),
-            ));
-        }
-        StackPanel::new()
-            .orientation(Orientation::Horizontal)
-            .spacing(space::S8)
-            .vertical_alignment(VerticalAlignment::Center)
+                    .automation_name(name);
+                (index, item)
+            })
+            .collect();
+        SelectorBar::new()
             .automation_id("StatsHeatMetricBar")
             .automation_name(self.catalog.l("Token 活动统计口径"))
-            .keyed_children(segments)
+            .on_selected_text_changed(context.callback(|text: Option<String>| {
+                Msg::StatsHeatMetricByText(text)
+            }))
+            .collection_slot(SelectorBarSlot::Items, items)
             .into()
     }
 
     /// 热力图：主干 `RenderStatsHeatmap` 的 26 周 × 7 行格子（周一…周日，列 = 周）。
-    /// 方格用 7 行横向 StackPanel 同序同尺寸拼（格 14 + 距 4 = 主干的 `step`）；月份标签那一层
-    /// 走真 `Canvas` 定位（[`Shell::usage_heat_month_labels`]，与方格吃同一对常量 ⇒ 列轴同线）。
-    /// 每格的 UIA 名与悬停 =
-    /// 主干 `:15448` 那句 `LF("{0}：{1} tokens", yyyy-MM-dd, N0)`；**值全来自聚合表**，
-    /// 一条用量都没有也照铺空格（主干就是这么处理的，它这张卡没有空态文案）。
+    /// 有数据档 = 值表从聚合表来；铺装本体在 [`Shell::usage_heat_cells`]，与第三档的
+    /// **零表**共用同一副骨架 —— 主干没有「空态少画」那回事：`values` 全 0 也铺满一窗
+    /// （这张卡没有空态文案），分叉两侧同果。
     ///
     /// 口径走 [`Shell::usage_heat_metric`]（主干 `RenderStatsHeatmap` 里那个
     /// `switch (_statsHeatMetric)`，`:15529-15545`）：切档不重取数，`values` 字典按新口径
@@ -32492,6 +36663,16 @@ impl Shell {
     /// 只差把那颗写死的 `HeatMetric::Day` 换成当前档。
     fn usage_heat_rows(&self, aggregate: &UsageAggregate, p: Palette) -> Vec<KeyedView> {
         let cells = aggregate.heat_cells(self.usage_today, STATS_HEAT_WEEKS, self.usage_heat_metric());
+        self.usage_heat_cells(&cells, p)
+    }
+
+    /// 热力铺装本体（两档共用）。方格用 7 行横向 StackPanel 同序同尺寸拼
+    /// （格 14 + 距 4 = 主干的 `step`）；月份标签那一层走真 `Canvas` 定位
+    /// （[`Shell::usage_heat_month_labels`]，与方格吃同一对常量 ⇒ 列轴同线）。
+    /// 每格的 UIA 名与悬停 =
+    /// 主干 `:15448` 那句 `LF("{0}：{1} tokens", yyyy-MM-dd, N0)`；晚于今天的格子不画
+    /// （主干 `:15429`）；`max` 与格子同源 ⇒ 切口径时档位整体重标度。
+    fn usage_heat_cells(&self, cells: &[(i64, i64)], p: Palette) -> Vec<KeyedView> {
         let max = cells.iter().map(|(_, value)| *value).max().unwrap_or(0);
         let mut rows: Vec<Vec<KeyedView>> = vec![Vec::new(); 7];
         for (offset, (day, value)) in cells.iter().enumerate() {
@@ -32536,11 +36717,32 @@ impl Shell {
                     )
                 })),
         );
-        vec![
-            grid,
-            self.usage_heat_month_labels(&p),
-            self.usage_heat_legend(true, p),
-        ]
+        let months = self.usage_heat_month_labels(&p);
+        // 卡体三层收成**一行**（R3 复验第 ⑤ 项）：主干 `StatsHeatCard` 的身体是一面
+        // `StackPanel Spacing=Space12`（`xaml:1631-1660`），格子层 / 月标 Canvas / 图例
+        // 之间**没有分隔线** —— `settings_card_with_trailing` 会给逐行插通栏 divider，
+        // 三行三线，月份轴下那一条就是它。包成一行后 divider 自然消失；层距改由
+        // `Spacing=Space12` 的等价物（S12）给，顶部再补 10 抵掉卡头 margin-bottom 2
+        // （10+2 = 主干 Spacing 12 那一档）。
+        // 网格 + 月标再包一层**水平居中**的竖排：主干那对 Canvas（宽 = 26×step）
+        // 在 `StatsHeatScroller` 里比视口窄时是**居中**摆的（R3 实测两侧留白
+        // 211/211 逐像素对称），分叉原来左贴 ⇒ 月标 7月-10月 落到格子右界之外。
+        let chart = KeyedView::new(
+            "heat-chart",
+            StackPanel::new()
+                .orientation(Orientation::Vertical)
+                .horizontal_alignment(HorizontalAlignment::Center)
+                .keyed_children(vec![grid, months]),
+        );
+        let legend = self.usage_heat_legend(p, self.usage.is_some());
+        vec![KeyedView::new(
+            "heat-body",
+            StackPanel::new()
+                .orientation(Orientation::Vertical)
+                .spacing(space::S12)
+                .margin(th([0.0, 10.0, 0.0, 0.0]))
+                .keyed_children(vec![chart, legend]),
+        )]
     }
 
     /// 热力档位图例 = 主干 `xaml:1650-1658` 那一行（`少` + 五颗 12×12 R3 + `多`，
@@ -32548,9 +36750,13 @@ impl Shell {
     /// 里**每次渲染**重刷那五颗 ⇒ 0 档 = `ChartHeatEmptyBrush`（与格子同一把尺
     /// [`heat_empty_brush`]），1..4 档 = 强调色按 [`heat_opacity`] 压不透明度
     /// （读同一把尺 ⇒ 图例与格子永不脱钩）。
-    /// `painted = false` 是第三档（内核没连上，主干整段渲染没跑过）：那五颗的 `Fill` 还停在
-    /// xaml 的「没填」⇒ 照它填透明，只留 `少/多` 两字占位（这一档连格子也不画，与主干一致）。
-    fn usage_heat_legend(&self, painted: bool, p: Palette) -> KeyedView {
+    /// R3 复验第 ④ 项：主干那五颗 `Rectangle` 在 XAML 里**没写 Fill**（`xaml:1652-1656`），
+    /// 只有 `RenderStatsAll`（聚合成功后的那一次渲染）才刷色 —— 聚合没回来时五颗透明、
+    /// 屏上只剩「少/多」两端文字。分叉原来无条件刷渐变档 ⇒ 无数据态比主干多出五颗色块。
+    /// `painted` = 聚合在册（[`Shell::usage`] 为 `Some`）；`false` = 结构在、色不刷
+    /// （与主干 XAML 初态同相，占位宽度原样保留）。
+    /// （R2 对齐：原第三档「没填透明」那一支随空格子一起退役 —— 两档都铺格子。）
+    fn usage_heat_legend(&self, p: Palette, painted: bool) -> KeyedView {
         let hint = |text: &str| {
             TextBlock::new()
                 .text(self.catalog.l(text))
@@ -32565,7 +36771,7 @@ impl Shell {
                     .height(STATS_HEAT_LEGEND)
                     .corner_radius(STATS_HEAT_RADIUS);
                 let square = if !painted {
-                    square.background(p.transparent)
+                    square
                 } else if level == 0 {
                     square.background(heat_empty_brush(self.scheme))
                 } else {
@@ -32977,7 +37183,16 @@ impl Shell {
                 Some(trailing) => Grid::new()
                     .columns([GridLength::STAR, GridLength::Auto])
                     .column_spacing(space::S12)
-                    .children((heading, trailing))
+                    // reactor 的 `children` 只发 reconciliation key、**不按序自动分列**
+                    // （`element.rs:1283 positioned()` 只造 `KeyKind::Position`）⇒ 不钉
+                    // `grid_column` 的子级全落 col 0。主干 `xaml:1633-1645` 那颗卡头右列
+                    // （SelectorBar 在 `Grid.Column=1`）在分叉因此一直贴着标题；settings_row
+                    // 那族没这毛病是因为它本来就显式 `.grid_column(1)`。这里同样钉：
+                    // 透明 `Border` 只当列定位的壳（R3 复验：每日/每周/累计贴印「Token 活动」）。
+                    .children((
+                        heading,
+                        Border::new().grid_column(1).content(trailing),
+                    ))
                     .into(),
                 None => heading,
             };
@@ -33024,6 +37239,60 @@ impl Shell {
         )
     }
 
+    /// 主干 `NewCard/NewCardIn`（`MW:10336-10360`）的**裸卡体**：行直接进卡内 StackPanel，
+    /// 行间**没有**分隔线 —— 主干的分隔线是逐张卡里**显式**的 `AddDivider(card)` 调用
+    /// （`MW:10223`，全部调用点 = 设置文件/外观/对话/终端/web-search 那几张行间），
+    /// 不是卡壳自带的。[`Shell::settings_card`] 家族把 divider 烘进了逐行之间，恰好与
+    /// 上述几张主干的显式 AddDivider 重合；但宠物那族（`MainWindow.Pet.cs` 全文无
+    /// AddDivider：显示卡 `:290/:319` 两行直排、宠物库卡 `:402` 清空后逐行 Add、
+    /// 安装卡 `:590/:610/:619` 与诊断卡 `:745+` 同）⇒ 分叉多出来的通栏线就是 R5 的
+    /// 「条目间 4 条」。这颗与 [`Shell::settings_card`] 唯一差别 = 不插 divider，
+    /// 结构（卡头/副标题/描边/内边距）逐字节同。
+    fn settings_card_plain(
+        &self,
+        key: &str,
+        header: &str,
+        subtitle: &str,
+        rows: Vec<KeyedView>,
+        p: Palette,
+    ) -> KeyedView {
+        let mut cells: Vec<KeyedView> = Vec::new();
+        if !header.is_empty() {
+            cells.push(KeyedView::new(
+                "header",
+                TextBlock::new()
+                    .text(self.catalog.l(header))
+                    .font_size(type_ramp::BODY.size)
+                    .font_weight(FontWeight::SEMI_BOLD)
+                    .foreground(p.text_primary)
+                    .margin(th(pad::CARD_HEADER)),
+            ));
+        }
+        if !subtitle.is_empty() {
+            cells.push(KeyedView::new(
+                "subtitle",
+                Border::new()
+                    .margin(th(pad::CARD_DESCRIPTION))
+                    .content(self.settings_note(subtitle, p)),
+            ));
+        }
+        cells.extend(rows);
+        KeyedView::new(
+            format!("card-{key}"),
+            Border::new()
+                .background(p.card)
+                .border_brush(p.stroke)
+                .border_thickness(th([size::STROKE; 4]))
+                .corner_radius(radius::MEDIUM)
+                .padding(th(pad::CARD_BORDER))
+                .content(
+                    StackPanel::new()
+                        .orientation(Orientation::Vertical)
+                        .keyed_children(cells),
+                ),
+        )
+    }
+
     /// 主干 `Aut(combo, "Setting_{ns}_{field}", 行标题)`：Name 落在控件上而不是标题上。
     fn settings_combo(
         &self,
@@ -33035,122 +37304,101 @@ impl Shell {
     ) -> View {
         let key = id.to_string();
         let index = self.pick(&key, fallback);
+        let labels: Vec<String> = options.iter().map(|item| self.catalog.l(item)).collect();
         ComboBox::new()
             // 主干把 `ComboBoxItem.Content` 交给 `ShellEnglish` 扫描本地化
             // （`MainWindow.Personalization.cs:65-73,113-120` 的注释）；分叉这边选项标签
             // 过 `catalog.l`，中文原文当键、en 走 `i18n::EN`。选中态与回执都按下标走
             // （`pick` / `Msg::Pick`），换显示串不会把选择弹回去。
-            .items_source(options.iter().map(|item| self.catalog.l(item)))
+            .items_source(labels)
             .selected_index(Some(index))
             .min_width(size::FIELD_MIN_WIDTH)
             .automation_id(format!("Setting_{id}"))
             .automation_name(name.to_string())
-            .on_selection_changed(
+            // 程序化回声闸：`SelectionChanged` 对编程赋值同样会触发（主干
+            // `MakeChoiceField:10697-10705` 为它装了 `ready` 闸）。回调闭包捕获的
+            // `index` = 本帧刚渲染进去的那格；回声必然带着同一个值回来 ⇒ 改投
+            // [`Msg::PickEcho`]（reducer 整发吞掉）。用户真实点选的原生下标与本帧
+            // 渲染值不同 ⇒ 原样走 [`Msg::Pick`] 登记。
+            .on_selection_changed({
+                let key = key.clone();
                 context.callback(move |value: Option<usize>| {
-                    Msg::Pick(key.clone(), value.unwrap_or(0))
-                }),
-            )
+                    let incoming = value.unwrap_or(0);
+                    if incoming == index {
+                        Msg::PickEcho
+                    } else {
+                        Msg::Pick(key.clone(), incoming)
+                    }
+                })
+            })
             .into()
     }
 
-    /// 主干 `AddAutoApprovalModelCardAsync`（`MW:14606-14690`）那颗「预判模型」下拉。
-    /// 与 [`Shell::settings_combo`] 的**唯一**差别是选项源：那颗是编译期定长的档位表，
-    /// 这颗整表由 `session/modelCatalog` 现铺（`self.model.rows`，与输入区模型选择器同一发
-    /// RPC、同一份回帧）⇒ 选中态按下标算，显示串过 `catalog.l`。
-    /// 主干那条「目录里没有当前默认模型就插一项原值」（`MW:14659-14665`：自建提供方 /
-    /// 凭据未配）在这里逐字对位——否则下拉显示空白，用户看不出现在用的是哪个。
-    fn settings_model_combo(&self, name: &str, context: &mut ViewContext<Shell>) -> View {
-        let current_provider = self.field(APPROVAL_MODEL_PROVIDER_KEY, "");
-        let current_model = self.field(APPROVAL_MODEL_MODEL_KEY, "");
-        // 摊平成一列 `(provider, id, name)`：主干 `options` 就是这个三元组，
-        // 选中回执要拿 provider 成对写（见 [`Msg::ApprovalModel]`）。
-        let mut options: Vec<(&str, &str, &str)> = self
-            .model
-            .rows
+    /// 主干 `MakeChoiceField`（`MW:10195-10240` 那族）与 `MakeThemeDropdown`（`MW:10855-10890`）
+    /// 的分叉等价物：选项 = `(内核值, 显示标签)` 成对表，**当前下标走 [`Shell::choice_index]
+    /// 的三档读法**（pending → 快照字符串折下标 → fallback）。与 `settings_combo` 的差别
+    /// 只有「当前值从哪来」—— 后者的选项表只有标签，读不出内核里存的字符串值。
+    /// 选择回执与 `settings_combo` 同走 `Msg::Pick`（下标口径，pending 那一格）。
+    fn settings_choice(
+        &self,
+        id: &str,
+        entries: &[(&str, &str)],
+        fallback: usize,
+        name: &str,
+        context: &mut ViewContext<Shell>,
+    ) -> View {
+        let key = id.to_string();
+        let values: Vec<&str> = entries.iter().map(|(value, _)| *value).collect();
+        let index = self.choice_index(&key, &values, fallback);
+        let labels: Vec<String> = entries
             .iter()
-            .map(|row| (row.provider.as_str(), row.id.as_str(), row.name.as_str()))
+            .map(|(_, label)| self.catalog.l(label))
             .collect();
-        if !current_model.is_empty() && !options.iter().any(|(_, id, _)| *id == current_model) {
-            options.insert(0, (&current_provider, &current_model, &current_model));
-        }
-        // 选中态**从设置派生**（`agent-default-model` 两格），不从控件派生 ⇒ 重绘不弹选择。
-        // 目录还没拉回来、设置里也没有默认模型 ⇒ `None`（主干 `box.SelectedItem` 同样是空）。
-        let selected = options.iter().position(|(_, id, _)| *id == current_model);
         ComboBox::new()
-            .items_source(options.iter().map(|(_, _, label)| self.catalog.l(label)))
-            .selected_index(selected)
+            .items_source(labels)
+            .selected_index(Some(index))
             .min_width(size::FIELD_MIN_WIDTH)
-            .automation_id("Setting_auto-approval_model")
-            .automation_name(self.catalog.l(name))
-            .on_selection_changed(
-                context.callback(move |value: Option<usize>| Msg::ApprovalModel(value.unwrap_or(0))),
-            )
+            .automation_id(format!("Setting_{id}"))
+            .automation_name(name.to_string())
+            // 程序化回声闸：与 [`Shell::settings_combo`] 同一条（主干 `ready` 闸的等值物，
+            // 理由见 [`Msg::PickEcho`]）。
+            .on_selection_changed({
+                let key = key.clone();
+                context.callback(move |value: Option<usize>| {
+                    let incoming = value.unwrap_or(0);
+                    if incoming == index {
+                        Msg::PickEcho
+                    } else {
+                        Msg::Pick(key.clone(), incoming)
+                    }
+                })
+            })
             .into()
     }
 
-    /// 主干 `MakeThemeCubes`（`MainWindow.xaml.cs:10411-10463`）：设置页「外观」行那三颗
-    /// 108×64 的裸 `ToggleButton`，横向 `StackPanel{Spacing=8}`。
-    /// **AI `Setting_ui-theme_preference` 挂在行容器上、不挂在任何可交互控件上**（主干
-    /// `:10424-10425` 就是钉在这个 `StackPanel` 上、`Name = 外观`）；分叉之前挂错在
-    /// `ComboBox` 上（`settings_combo` 拿 `format!("Setting_{id}")` 顺手生成的那一颗）。
-    /// 每颗 `ThemeCube_{light|dark|system}`，`Name` 走 `catalog.l`（主干 `Name = HelpText =
-    /// L(label)`，`:10446-10448`；reactor 没有 `HelpText` 通道 ⇒ 并进 `automation_name`）。
-    /// 与 `feedback_toggle` 的**唯一**写法差别：这里**不套 `TEMPLATE_INSET` 负 margin**。
-    /// 那颗是 28×28 的钮、主干写 `Padding=0`，不抵就只剩 6×17 内容区；这三颗主干自己写的就是
-    /// `Padding=(12,8,12,8)`（`:10443`），与模板默认 `11,5,11,6` 差 ≤3 DIP 且被
-    /// `MinWidth/MinHeight` 吃掉，抵了反而贴边。圆角同那颗：设不了 `CornerRadius`，
-    /// 吃模板默认 `ControlCornerRadius=4`，与主干 `RadSmall(4)` 同值。
-    fn theme_cubes(&self, context: &mut ViewContext<Shell>, p: Palette) -> View {
-        // 选中态**从状态派生**而不是从控件派生 ⇒ 三颗里为 On 的天然只有 1 个；
-        // 未选过时回落 1 = 深色，与 `apply_theme` 的 fallback、主干 `_shellPreference`
-        // 初值 `"dark"` 同值（`MainWindow.xaml.cs:2283`）。
-        let active = self.pick("ui-theme_preference", 1);
-        let mut cubes: Vec<KeyedView> = Vec::new();
-        for (index, (id, label, code)) in SETTINGS_THEME_CUBES.iter().copied().enumerate() {
-            let name = self.catalog.l(label);
-            cubes.push(KeyedView::new(
-                format!("cube-{id}"),
-                ToggleButton::new()
-                    // 主干 `MinWidth=108 MinHeight=64` + `HAlign=Stretch`
-                    // （`:10441-10444`，**DIP**；200% DPI 下 UIA 矩形 216×128 px）。
-                    .min_width(size::THEME_CUBE_MIN_WIDTH)
-                    .min_height(size::THEME_CUBE_MIN_HEIGHT)
-                    .horizontal_alignment(HorizontalAlignment::Stretch)
-                    .vertical_alignment(VerticalAlignment::Center)
-                    .is_checked(active == index)
-                    .on_is_checked_changed(context.callback(move |on: bool| {
-                        Msg::ThemePick(index, on)
-                    }))
-                    .automation_id(format!("ThemeCube_{id}"))
-                    .automation_name(name.clone())
-                    .content(
-                        // 主干内层：`StackPanel{Horizontal, Spacing=6, HAlign=Center}` =
-                        // `FontIcon FontSize=14` + `TextBlock VAlign=Center`（`:10434-10436`）。
-                        StackPanel::new()
-                            .orientation(Orientation::Horizontal)
-                            .spacing(space::S6)
-                            .horizontal_alignment(HorizontalAlignment::Center)
-                            .children((
-                                mark_size(code, size::GLYPH_BODY),
-                                TextBlock::new()
-                                    .text(name)
-                                    .vertical_alignment(VerticalAlignment::Center)
-                                    .font_size(type_ramp::BODY.size)
-                                    .foreground(p.text_primary),
-                            )),
-                    ),
-            ));
-        }
-        StackPanel::new()
-            .orientation(Orientation::Horizontal)
-            .spacing(space::S8)
-            .vertical_alignment(VerticalAlignment::Center)
-            .automation_id("Setting_ui-theme_preference")
-            .automation_name(self.catalog.l("外观"))
-            .keyed_children(cubes)
+    /// 主干 `MakeThemeDropdown`（`MW:10855-10890`）：「外观」行那颗**下拉框**
+    /// （浅色 / 深色 / 跟随系统，纯文字选项）。此前分叉画的是三颗方块
+    /// （`MakeThemeCubes`，主干已删的旧形态），视觉比对与主干对不上 ⇒ 整颗换回下拉。
+    /// 逐属性对齐：`MinWidth=FieldMinWidth(200)`、`AutomationId="Setting_ui-theme_preference"`
+    /// 挂在**这颗 ComboBox** 上（主干 `MW:10859` 就是钉在 box 上，不是行容器）、
+    /// `Name = L("外观")`；选中态 = 壳当前生效偏好（主干 `active = _shellPreference ?? current`，
+    /// 分叉 = [`Shell::choice_index`] 三档：pending → 快照 → 默认 1=深色）。选择即时换肤
+    /// （`Msg::Pick` 那臂的 `"ui-theme_preference" => apply_theme()`）并登记草稿，随自动保存
+    /// 持久化 —— 自动保存那半（settings/mutate）与其它设置行同属 #136/SET1 的未接位。
+    fn theme_dropdown(&self, context: &mut ViewContext<Shell>) -> View {
+        let entries: Vec<(&str, &str)> = SETTINGS_THEME_CUBES
+            .iter()
+            .map(|(id, label, _)| (*id, *label))
+            .collect();
+        self.settings_choice(
+            "ui-theme_preference",
+            &entries,
+            1,
+            "外观",
+            context,
+        )
     }
 
-    /// reactor 0.100 的 ToggleSwitch 没有 OnContent/OffContent setter，开关文案只能吃模板默认值。
     fn settings_toggle(
         &self,
         id: &str,
@@ -33159,23 +37407,54 @@ impl Shell {
         context: &mut ViewContext<Shell>,
     ) -> View {
         let key = id.to_string();
-        ToggleSwitch::new()
-            .is_on(self.is_on(&key, fallback))
-            .automation_id(format!("Setting_{id}"))
-            .automation_name(name.to_string())
-            .on_toggled(context.callback(move |value: bool| Msg::Toggle(key.clone(), value)))
+        let on = self.is_on(&key, fallback);
+        // 主干那颗开关走 `SettingsToggleSwitchStyle`（`Theme/Styles.xaml:209`）：模板把
+        // OnContent/OffContent presenter 放在 **Grid.Column=0（左）**、滑轨在 Column=2（右）
+        // ⇒ 屏上是「开 [switch]」。reactor 的 `ToggleSwitch` 是原生默认模板（内容 presenter
+        // 在滑轨右侧）且拿不到模板替换通路 ⇒ 状态字在分叉由**行内兄弟 TextBlock** 承担，
+        // 文案随当前态翻（主干 `OnContent=开 / OffContent=关`，`MW:14709-14710` 等四处同参）。
+        // 原生右侧那颗 presenter 也要**清空**：不设 OnContent/OffContent 槽时模板吃
+        // 本地化资源默认值（「开/关」），屏上就成了「开 [switch] 开」两侧各一颗 ——
+        // R3 复验余留。空 `TextBlock` 占位把两态内容都压成零宽（间距 12 = 主干模板中列
+        // `Width=12` 那一档）。
+        StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .spacing(space::S12)
+            .vertical_alignment(VerticalAlignment::Center)
+            .children((
+                TextBlock::new()
+                    .text(self.catalog.l(if on { "开" } else { "关" }))
+                    .font_size(type_ramp::BODY.size)
+                    .vertical_alignment(VerticalAlignment::Center),
+                ToggleSwitch::new()
+                    .is_on(on)
+                    // 主干 `Theme/Styles.xaml:209` `SettingsToggleSwitchStyle` 的三处改动之一：
+                    // 原生样式把 `MinWidth` 钉在 154、轨丸画在 154px 盒子的**左端**（模板
+                    // 「开关丸 + 12 + On/OffContent」三列在 MinWidth 撑出的富余里左对齐）⇒
+                    // 行的 Auto 列被撑到 文本+12+154，轨丸右侧多出 ~100px 空档，R5 实测
+                    // 距卡右缘 ~190 显示px（主干 ~21-35）。主干那颗样式把 `MinWidth` 归零、
+                    // HorizontalAlignment 归 Right ⇒ 盒子贴自身内容宽（轨丸 40 + 中列 12），
+                    // Auto 列贴缘。分叉没有模板替换通路，`min_width(0)` 走本机
+                    // `FrameworkElement.MinWidth` 本地值压掉样式那档 154，同果。
+                    .min_width(0.0)
+                    .automation_id(format!("Setting_{id}"))
+                    .automation_name(name.to_string())
+                    .on_toggled(context.callback(move |value: bool| Msg::Toggle(key.clone(), value)))
+                    // `slots()` 出 `View` 且无后续 builder ⇒ 只能挂在整条链的末位。
+                    .slots([
+                        SlotView::new(ToggleSwitchSlot::OnContent, TextBlock::new()),
+                        SlotView::new(ToggleSwitchSlot::OffContent, TextBlock::new()),
+                    ]),
+            ))
             .into()
     }
 
     /// 通用设置：主干 `RenderGeneralSection()` 的 7 张卡（通知/托盘/维护卡也在内）。
     fn settings_general(&self, context: &mut ViewContext<Shell>, p: Palette) -> Vec<KeyedView> {
         let mut cells: Vec<KeyedView> = Vec::new();
-        cells.push(KeyedView::new(
-            "section-desc",
-            Border::new()
-                .margin(th(pad::CARD_DESCRIPTION))
-                .content(self.settings_note("新会话的默认权限、外观与对话偏好。", p)),
-        ));
+        // 段说明走共用那颗（同键 `section-desc`）：顶距 8 的出处见
+        // [`Shell::settings_section_desc`] 的文档。
+        cells.push(self.settings_section_desc("新会话的默认权限、外观与对话偏好。", p));
         // #196 A-2：这张卡的表体在主干是**运行时目录表**，不是本地标签表。逐字出处
         // `MainWindow.xaml.cs::RenderGeneralSection`（行号 = 2026-09-29 主干现值 `:11018-11050`）：
         // ```text
@@ -33206,8 +37485,11 @@ impl Shell {
                 .iter()
                 .map(|value| permission_preset_zh(&self.catalog, value))
                 .collect();
-            let permission_items: Vec<&str> =
-                permission_labels.iter().map(|label| label.as_str()).collect();
+            let permission_entries: Vec<(&str, &str)> = permission_values
+                .iter()
+                .zip(permission_labels.iter())
+                .map(|(value, label)| (value.as_str(), label.as_str()))
+                .collect();
             cells.push(self.settings_card(
                 "permission",
                 "权限",
@@ -33216,12 +37498,14 @@ impl Shell {
                     "permission",
                     "默认权限",
                     "仅可查看 / 工作区内修改 / 完全权限",
-                    self.settings_combo(
-                        // #56 第二颗：这一格与空态那颗 `PermissionButton` **共用同一把键常量**，
-                        // 缺省档也共用 [`PERMISSION_LOCAL_DEFAULT`] ⇒ 「两条路读同一格」从注释升级成
-                        // 结构（改一处必然两半一起动，留不下第二份真相）。
+                    // 与空态那颗 `PermissionButton` **共用同一把键常量**与缺省档
+                    // [`PERMISSION_LOCAL_DEFAULT`] ⇒ 「两条路读同一格」从注释升级成结构
+                    // （改一处必然两半一起动，留不下第二份真相）。当前值走
+                    // [`Shell::choice_index`] 三档：内核存过 `workspace-write` 之类就回显它，
+                    // 不再钉死本地默认档（主干 `MakeDefaultPermissionChoiceField` 同款读法）。
+                    self.settings_choice(
                         PERMISSION_PICK_KEY,
-                        &permission_items,
+                        &permission_entries,
                         PERMISSION_LOCAL_DEFAULT,
                         "默认权限",
                         context,
@@ -33238,12 +37522,12 @@ impl Shell {
             vec![
                 self.settings_row(
                     // 行标题主干是「外观」（`MakeRow("外观", "浅色 / 深色 / 跟随系统",
-                    // MakeThemeCubes(...))`，`MainWindow.xaml.cs:10768`）；分叉原来写的「主题」
+                    // MakeThemeDropdown(...))`，`MainWindow.xaml.cs:11203-11205`）；分叉原来写的「主题」
                     // 是自创。卡头与行头同名这件事主干也一样（`NewCard("外观", ...)`）。
                     "theme",
                     "外观",
                     "浅色 / 深色 / 跟随系统",
-                    self.theme_cubes(context, p),
+                    self.theme_dropdown(context),
                     p,
                 ),
                 self.settings_row(
@@ -33265,9 +37549,12 @@ impl Shell {
                     "density",
                     "对话显示",
                     "标准显示过程内容；紧凑只保留结果",
-                    self.settings_combo(
+                    // 主干 `MakeChoiceField("ui-chat", "transcriptView", NsString(…, "compact"),
+                    // {("normal","标准"),("compact","紧凑")})`（`MW:11212-11216`）：当前值
+                    // 三档读法 ⇒ 内核存过 `normal` 就显「标准」，不再钉死默认「紧凑」。
+                    self.settings_choice(
                         "ui-chat_transcriptView",
-                        &["标准", "紧凑"],
+                        &[("normal", "标准"), ("compact", "紧凑")],
                         1,
                         "对话显示",
                         context,
@@ -33278,9 +37565,11 @@ impl Shell {
                     "busy",
                     "繁忙时的发送行为",
                     "智能体运行时 Enter 键和发送按钮的行为；Ctrl+Enter 使用另一行为",
-                    self.settings_combo(
+                    // 主干 `MakeChoiceField("ui-conversation", "busyEnter", NsString(…, "queue"),
+                    // {("queue","排队发送"),("steer","插话发送")})`（`MW:11217-11222`）。
+                    self.settings_choice(
                         "ui-conversation_busyEnter",
-                        &["排队发送", "插话发送"],
+                        &[("queue", "排队发送"), ("steer", "插话发送")],
                         0,
                         "繁忙时的发送行为",
                         context,
@@ -33431,6 +37720,10 @@ impl Shell {
 
     /// 主干 `CompactButtonStyle`：字号 12、Padding 10,4,10,4、MinHeight 32、圆角 4、垂直居中。
     /// 模板不读 ButtonPadding 资源键，只能显式设字号并用负边距抵掉默认 11,5,11,6。
+    /// 描边**不覆**（2026-10-27 终验清单第 6 项）：主干 CompactButtonStyle 只改字号/内边距/
+    /// MinHeight/圆角/对齐，边框走默认 Button 模板的 ControlElevationBorderBrush（1px 细描边，
+    /// 字号步进器 −/＋ 与「恢复本页默认」两处消费者都在屏）；此前这里把
+    /// ButtonBorderBrush(-PointerOver) 覆成透明 = 无中生有的偏差，摘掉。
     fn compact_button(
         &self,
         label: &str,
@@ -33443,12 +37736,10 @@ impl Shell {
             .min_width(0.0)
             .min_height(size::TOUCH_TARGET)
             .vertical_alignment(VerticalAlignment::Center)
-            .resource_overrides(
-                ResourceOverrides::new()
-                    .set("ControlCornerRadius", CornerRadius::uniform(radius::SMALL))
-                    .set("ButtonBorderBrush", Color::transparent())
-                    .set("ButtonBorderBrushPointerOver", Color::transparent()),
-            )
+            .resource_overrides(ResourceOverrides::new().set(
+                "ControlCornerRadius",
+                CornerRadius::uniform(radius::SMALL),
+            ))
             .automation_id(id.to_string())
             .automation_name(name.to_string())
             .on_click(context.message(message))
@@ -33744,6 +38035,17 @@ impl Shell {
     /// （首帧装载中），要么泵已停（回落海报），两种都该走静图那颗。分流的完整根因
     /// （为什么 reactor 树里长不出视频控件、为什么选 `source_data` 而不是三个命令式逃生舱）
     /// 在 `skinplay.rs` 模块头，此处只留接线。
+    ///
+    /// 底衬（2026-10-27 终验清单第 1 项）：reactor 的 `EncodedImage` 换源是
+    /// **「先 `ClearValue(Source)` 再异步 StoreAsync + SetSourceAsync」**（`native/winui/mod.rs`
+    /// 的 `SetProperty(ImageSource)` 臂 → `start_encoded_image`）——逐帧喂帧 = 逐帧清屏，
+    /// 异步解码没回来之前 `Image` 整格透明。实测（本机 2586×1671、120ms 采样 50 张，聊天页）
+    /// 约四成时间空窗：背景层在「壁纸 ⇄ 素底」之间闪，设置页截图捕到空窗就成了
+    /// 「设置页无壁纸」（主干 `ImageBrush` 一次成型永不闪，这才是两图差异的根因，
+    /// 不是设置页盖了不透明底）。治法 = 帧层底下垫一颗**永不换源**的静图底衬
+    /// （`skin_path` 的海报帧/图片，`source_file` 的属性值逐帧相同 ⇒ reconciler 判属性未变、
+    /// 不发 SetProperty ⇒ 不吃 ClearValue）：帧层空窗的那几百毫秒由它顶上——同一张图的
+    /// 另一帧，40% 透明度下肉眼无接缝。底衬与帧层同 Stretch 同对齐 ⇒ 逐像素同位。
     fn mw2_skin_backdrop(&self) -> Option<View> {
         let percent = self.number(SKIN_OPACITY_KEY, size::SKIN_OPACITY_DEFAULT);
         let image = match self.skin_video_frame.as_ref() {
@@ -33754,10 +38056,42 @@ impl Shell {
             // 「槽里什么都没有」那一档 ⇒ 整层不入树，与改前逐字同相。
             None => Image::new().source_file(self.skin_path.as_ref()?.as_path()).ok()?,
         };
+        // 显式 Stretch（两个方向）：主干 `ImageBrush` 刷 `ContentSurface.Background`
+        // 天然铺满宿主矩形（`UniformToFill` 在刷子内做居中裁切）；分叉这一层是
+        // `Image` 元素，WinUI 元素默认对齐并不保证撑满宿主（AutoSize/Left/Top 档下
+        // 会按自然尺寸落位）。钉死 Stretch 让元素矩形 = 宿主矩形。
+        let stretched = |image: Image| {
+            image
+                .stretch(Stretch::UniformToFill)
+                .horizontal_alignment(HorizontalAlignment::Stretch)
+                .vertical_alignment(VerticalAlignment::Stretch)
+        };
+        let image = stretched(image);
+        // 底衬：同一判据取 `skin_path` 的静图（海报帧/图片本体）。仅在播放腿在跑时才垫
+        // ——图片皮肤（没帧）那档单层就是它，垫第二层纯属重复。
+        let underlay: Option<View> = if self.skin_video_frame.is_some() {
+            self.skin_path
+                .as_ref()
+                .and_then(|path| Image::new().source_file(path.as_path()).ok())
+                .map(|image| stretched(image).into())
+        } else {
+            None
+        };
+        // 底衬与帧层的叠放格：显式钉 `View`。`content` 收 `impl Into<View>` ⇒ 匹配臂的
+        // 目标类型悬空，View/Element 两族画刷转换都满足时裸 `.into()` 就是 E0283
+        // （0.9.0.4 门控实测）；钉死类型后 `children` 本就返 View、`image.into()` 也唯一。
+        let layered: View = match underlay {
+            // 在播且有底衬：静图垫底，帧层压上（同 Stretch 同对齐 ⇒ 同位叠放）。
+            Some(underlay) => Grid::new().children((underlay, image)),
+            // 海报缺席（`ensure_poster` 失败）或图片皮肤：单层，与改前同形。
+            None => image.into(),
+        };
         Some(
             Border::new()
                 .opacity((percent / 100.0).clamp(0.0, 1.0))
-                .content(image.stretch(Stretch::UniformToFill))
+                .horizontal_alignment(HorizontalAlignment::Stretch)
+                .vertical_alignment(VerticalAlignment::Stretch)
+                .content(layered)
                 .into(),
         )
     }
@@ -36076,7 +40410,10 @@ mod mux_retry_tests {
             "Msg::WorkspaceBaselineTick { generation, attempt } =>",
             "Msg::SessionsRefreshed",
         );
-        let record = concat!("self.", "record_workspace_baseline_ready(attempt)");
+        let record = concat!(
+            "self.",
+            "record_workspace_baseline_ready(attempt, context)"
+        );
         assert_eq!(
             arm.matches(record).count(),
             1,
@@ -36185,9 +40522,20 @@ mod mux_retry_tests {
             ready.find("self.poll_mux(context)").unwrap() < ready.find(arm).unwrap(),
             "帧泵先转起来，轮询才等得到基线帧"
         );
+        // R1 视觉比对 §P-about 刀：收口（`end_round`）随 4、5 段搬进了基线记录口（链尾），
+        // 「上臂在收口之前」由「上臂被 booting 闸裹住」表达 —— 闸开着才上臂；收口只住在
+        // 记录口里（轮询链的下游），3→4→5→收口的次序由
+        // `boot_milestones_are_gated_and_ordered_in_the_boot_chain` 那把钉。
+        let gate = "if self.boot.booting {";
+        let arm_at = ready
+            .find(&arm)
+            .unwrap_or_else(|| panic!("引导链里没有上基线轮询的臂"));
+        let gate_at = ready[..arm_at]
+            .rfind(gate)
+            .unwrap_or_else(|| panic!("上臂点没有 booting 闸 ⇒ 断流重连也会去轮 600 次"));
         assert!(
-            ready.find(arm).unwrap() < ready.find("self.boot.end_round()").unwrap(),
-            "上臂要在这轮引导收口之前，否则 `boot.booting` 那道闸已经关了"
+            !ready[gate_at + gate.len()..arm_at].contains('}'),
+            "上臂与 booting 闸之间闸已收口 ⇒ 这轮引导收口之后才上的臂"
         );
         // 主干那条循环只住在引导链里：断流重连（`RestoreBusinessStreamsAsync`）不等基线。
         assert!(
@@ -36206,7 +40554,10 @@ mod mux_retry_tests {
         );
         // 入口那一格与续臂那一格共用同两个出口（记录 / 超时），不许另造第三份收敛。
         assert!(
-            entry.contains(concat!("self.", "record_workspace_baseline_ready(attempt)")),
+            entry.contains(concat!(
+                "self.",
+                "record_workspace_baseline_ready(attempt, context)"
+            )),
             "入口看见基线时没有落到唯一记录口 ⇒ 白轮 100ms 才出声"
         );
         assert!(
@@ -36416,7 +40767,7 @@ mod pill_tests {
     /// 0xC000027B fail-fast）⇒ 要抵的是 `12,6,12,7`，不是上一版的 `11,5,11,6`。
     /// 少抵那 1 DIP，脸就比控件自己的 UIA 矩形每边小 2 px（200% 缩放），
     /// 上一轮实测：28 DIP 的 `+` UIA 56 px / 脸 52 px。
-    /// 这一条查的是**源码本身**：五处自绘点必须统一取 `TEMPLATE_INSET`，
+    /// 这一条查的是**源码本身**：六处自绘点必须统一取 `TEMPLATE_INSET`，
     /// 谁再手写一份字面量就当场红。
     #[test]
     fn self_drawn_pills_cancel_the_template_inset_once() {
@@ -36427,12 +40778,13 @@ mod pill_tests {
             assert_eq!(TEMPLATE_INSET[side], -(PADDING[side] + 1.0));
         }
         let src = include_str!("main.rs");
-        // 五处：pill_button / nav_row / feedback_toggle / SettingsSubBack / PluginsNav_*
+        // 六处：pill_button / nav_row / feedback_toggle / SettingsSubBack / PluginsNav_*
+        // / SkinWeNavCard（皮肤导入扩面新增的 Wallpaper Engine 子页卡，与 PluginsNav 同族）
         // （探针字符串拼起来写，免得这条断言把自己也数进去）
         let probe = concat!("th(TEMPLATE_", "INSET)");
         assert_eq!(
             src.matches(probe).count(),
-            5,
+            6,
             "自绘点必须统一走 TEMPLATE_INSET，一处不多一处不少"
         );
         // 上一版那份只抵 Padding 的字面量不得复活（同样拼起来写，免得这条断言自己匹配自己）
@@ -36833,10 +41185,12 @@ mod pill_tests {
                 .find(needle)
                 .unwrap_or_else(|| panic!("MuxReady(Ok) 那一臂里找不到 {needle}"))
         };
+        // R1 视觉比对 §P-about 刀：4、5 段与 end_round 搬进基线记录口（运行序回到主干
+        // 3→4→5）⇒ 这一臂只剩「事件通道就绪」一段出声。
         assert_eq!(
             ready.matches("self.boot_milestone(").count(),
-            3,
-            "这一臂只许点亮三段（事件通道就绪 / 会话与模型就绪 / 引导完成）"
+            1,
+            "这一臂只许点亮一段（事件通道就绪）；4、5 段已搬进基线记录口"
         );
         assert!(
             at("self.control_stream = Some(control)") < at(event)
@@ -36844,22 +41198,9 @@ mod pill_tests {
             "事件通道就绪那一段落在两条流标记之后、第一次帧泵之前（主干 MX:3006 的对位）"
         );
         assert!(
-            at(sessions) < at(complete) && at(complete) < at("self.boot.end_round()"),
-            "会话与模型就绪 → 引导完成 → 收在飞窗口；引导完成挪到 end_round 之后就会被自己的闸挡住"
+            !ready.contains("self.boot.end_round()"),
+            "end_round 已随 4、5 段搬进基线记录口 ⇒ 留在本臂就是运行序回退"
         );
-        // 闸必须**贴着**出声口：紧邻上一行是 `if self.boot.booting {`。
-        // 判据在**去掉注释的那一份**上跑（`mr1_code`）—— 出声口与闸之间允许写口径注释，
-        // 拿原文比就会把「注释挡在中间」误判成「没上闸」。
-        let ready_code = mr1_code(ready);
-        for needle in [event, sessions] {
-            let at = ready_code
-                .find(needle)
-                .unwrap_or_else(|| panic!("MuxReady(Ok) 那一臂里找不到 {needle}"));
-            assert!(
-                ready_code[..at].trim_end().ends_with(gate),
-                "{needle} 没被 booting 闸裹住 ⇒ 日常断流重连的回填也会点亮里程碑"
-            );
-        }
 
         let rec = fn_slice(
             source,
@@ -36868,8 +41209,53 @@ mod pill_tests {
         );
         assert!(
             rec.contains(baseline),
-            "第 4 段没接在唯一记录口里 ⇒ 主干 0.8.3.9 那一手的对位断了"
+            "第 3 段没接在唯一记录口里 ⇒ 主干 0.8.3.9 那一手的对位断了"
         );
+        // 观测序（主干 MW:3178 → 3234 → 3253）：3 → 4 → 5，收尾在 5 之后。
+        let at_rec = |needle: &str| {
+            rec.find(needle)
+                .unwrap_or_else(|| panic!("基线记录口里找不到 {needle}"))
+        };
+        assert!(
+            at_rec(baseline) < at_rec(sessions)
+                && at_rec(sessions) < at_rec(complete)
+                && at_rec(complete) < at_rec("self.boot.end_round()"),
+            "工作区清单就绪 → 会话与模型就绪 → 引导完成 → 收在飞窗口（主干 MW:3178/3234/3253 的运行序）"
+        );
+        // 闸必须**贴着**出声口：紧邻上一行是 `if self.boot.booting {`。
+        // 判据在**去掉注释的那一份**上跑（`mr1_code`）—— 出声口与闸之间允许写口径注释，
+        // 拿原文比就会把「注释挡在中间」误判成「没上闸」。
+        let ready_code = mr1_code(ready);
+        {
+            let at = ready_code
+                .find(event)
+                .unwrap_or_else(|| panic!("MuxReady(Ok) 那一臂里找不到 {event}"));
+            assert!(
+                ready_code[..at].trim_end().ends_with(gate),
+                "{event} 没被 booting 闸裹住 ⇒ 日常断流重连的回填也会点亮里程碑"
+            );
+        }
+        let rec_code = mr1_code(rec);
+        // 闸裹住出声口：两个出声口（和收尾）必须都住在**同一道** booting 闸块里。
+        // 判「闸块」不判「紧邻上一行」：第二颗出声口的上一行是兄弟出声口，逐字贴邻对它
+        // 判不准（MR3 批的实际红法）。mr1_code 已去注释 ⇒ 闸块内只剩 12 空格缩进的出声行，
+        // 闸开括号之后首个 8 空格 `}` 就是这道闸自己的收口。
+        let gate_at = rec_code
+            .find(gate)
+            .unwrap_or_else(|| panic!("基线记录口里没有 booting 闸 ⇒ 重连回填也会点亮里程碑"));
+        let gate_end = gate_at
+            + rec_code[gate_at..]
+                .find("\n        }")
+                .unwrap_or_else(|| panic!("booting 闸没收口"));
+        for needle in [sessions, complete] {
+            let at = rec_code
+                .find(needle)
+                .unwrap_or_else(|| panic!("基线记录口里找不到 {needle}"));
+            assert!(
+                gate_at < at && at < gate_end,
+                "{needle} 没被 booting 闸裹住 ⇒ 日常断流重连的回填也会点亮里程碑"
+            );
+        }
         let tick = fn_slice(
             source,
             "Msg::WorkspaceBaselineTick { generation, attempt } =>",
@@ -36979,22 +41365,33 @@ mod pill_tests {
             !flush.contains("let text") && !flush.contains("queued_text"),
             "一旦出现快照文本就不是「按输入框当前内容」了"
         );
-        // 接线：全文件一处补发点，且落在引导链尾巴（主干 MainWindow.xaml.cs:2968）。
+        // 接线：全文件一处补发点，且住在引导链尾的**基线记录口**里（R1 视觉比对 §P-about 刀把
+        // 补发与收口一起搬进 [`Shell::record_workspace_baseline_ready`]；主干
+        // `MainWindow.xaml.cs:2968` 的对位 —— 长驻流开完/首次帧泵在 MuxReady(Ok) 臂，
+        // 补发链（基线到达 → 记录口）在它下游）。
         let code = mr1_code(source);
         let call = ["self.flush_send_queued_", "while_booting(context);"].concat();
         assert_eq!(code.matches(&call).count(), 1, "补发点全文件只许一处");
+        let rec = fn_slice(
+            source,
+            "fn record_workspace_baseline_ready(",
+            "fn workspace_baseline_timed_out(",
+        );
+        let end = ["self.boot.end_", "round();"].concat();
+        let end_at = rec.find(&end).expect("成功出口的收口也在记录口里");
+        let flush_at = rec.find(&call).expect("补发那一发在基线记录口（引导链尾）里");
+        assert!(
+            end_at < flush_at,
+            "补发排在收口之后 = 主干「引导完成之后同一时刻」（MW:3253 → 3259）"
+        );
+        // 帧泵先转：长驻流的开泵仍在 MuxReady(Ok) 臂里（补发等的那批基线帧就是它泵进来的）。
         let ready = fn_slice(source, "Msg::MuxReady(Ok((shared", "Msg::MuxReady(Err");
-        let flush_at = ready.find(&call).expect("补发那一发在 MuxReady(Ok) 臂里");
-        let open_at = ready
+        ready
             .find("self.poll_mux(context);")
             .expect("这一臂自己会 poll 流");
-        assert!(
-            flush_at > open_at,
-            "补发排在长驻流开完/首次帧泵之后 = 主干那条链的先后（:2958 → :2968）"
-        );
-        // 引导期在飞窗口也必须在这一臂里收掉，否则之后的日常断流会被判成引导失败。
-        let end = ["self.boot.end_", "round();"].concat();
-        assert!(ready.contains(&end), "成功出口收在飞窗口");
+        // 引导期在飞窗口：成功出口在记录口收、失败出口在 Err 臂收，
+        // 否则之后的日常断流会被判成引导失败。
+        assert!(rec.contains(&end), "成功出口收在飞窗口");
         let err_arm = fn_slice(source, "Msg::MuxReady(Err(error)) => {", "Msg::MuxEvents");
         assert!(err_arm.contains(&end), "失败出口同样收");
         assert!(
@@ -37218,9 +41615,17 @@ mod pill_tests {
                 .find(needle)
                 .unwrap_or_else(|| panic!("引导链里找不到 {needle}"))
         };
+        // 常驻复用（0.9.0.4）的四段硬顺序：解析出 launch（拿 `dsh_home`）→ attach 探活 →
+        // attach 失败才清扫（常驻内核的父进程是上一次的死壳，先扫就是误杀自己）→ 清扫后才
+        // 冷启（缺口 #68）→ 宿主起来才有第一发 RPC。sweep / start 都住在 attach 失败的
+        // `None` 臂里，`find` 取首现位置照样锁得住次序。
         assert!(
-            at("Launch::from_env()") < at("procguard::sweep_orphan_kernels()"),
-            "主干 :2796 的先后：先扫残留再起内核（缺口 #68）"
+            at("Launch::from_env()") < at("try_attach_resident"),
+            "attach 要读 launch.dsh_home 里的状态文件 ⇒ 解析在前"
+        );
+        assert!(
+            at("try_attach_resident") < at("procguard::sweep_orphan_kernels()"),
+            "主干 TryAttachResidentAsync 的先后：attach 到手才轮到清扫（否则常驻内核被当孤儿误杀）"
         );
         assert!(
             at("procguard::sweep_orphan_kernels()") < at("Kernel::start(&launch)"),
@@ -37345,7 +41750,7 @@ mod pill_tests {
         );
         for needle in [
             "if let Some(task) = self.boot_task.take() {",
-            "self.kernel = None;",
+            "kernel.kill_and_clear();",
             "self.invalidate_mux();",
             "self.mux_retry.reset();",
             "self.start_kernel(context);",
@@ -39875,7 +44280,14 @@ mod status_dot_tests {
             "卡又开始读壳侧第二份真相了：显隐只准从台账派生"
         );
 
-        let panel = fn_slice(source, concat!("fn ", "approval_panel("), "fn brand_mark_path");
+        // 末锚收窄到本体的下一个函数（`mw2_skin_backdrop` 的 doc 首行）：旧锚 `fn brand_mark_path`
+        // 一路盖过 `mw2_skin_backdrop` / `mw2_pet_status_text` 两颗无关函数，皮肤层补显式
+        // Stretch（对齐主干 ImageBrush 铺满语义）就会被这把锁误伤。
+        let panel = fn_slice(
+            source,
+            concat!("fn ", "approval_panel("),
+            concat!("#140 刀1：皮肤背景层", "的**唯一**入树判据"),
+        );
         for needle in [
             "ApprovalReject",
             "ApprovalAllow",
@@ -42013,21 +46425,28 @@ mod message_details_tests {
     /// #148 刀3a · [`det_copy_text`] 的两档 × 6 枚**非参数化**货架臂。
     /// 12 发等号钉三件事：① 货架内容 = 主干 `MainWindow.MessageDetails.cs` 调用点整串（本刀不引
     /// 新文案）；② zh 档**逐字节不变**（本刀唯一的硬不变式，`bt` 走 zh 前缀门 ⇒ 分叉的 zh/zh-TW
-    /// 一律原样吐回）；③ en 档 = 主干那一行 `DetText` 的英文字面（EN 消费通道**真的接上了**，
-    /// 不是只在 zh 档里空转）。白名单外的 4 枚参数化臂与 2 枚字典档**不测**（属刀3b/刀3c）。
+    /// 一律原样吐回）；③ en 档 = 主干**字典**值（dict-first：0.9.0.x 主干把六枚全收进中央字典
+    /// ⇒ `DetText` 的内联英文字面是死码，与 `schedule_panel_tests` ⑦ 同一条规则）。
+    /// 白名单外的 4 枚参数化臂不测（属刀3b/刀3c）。
     #[test]
     fn det_copy_text_gives_both_tiers_for_the_six_non_parametric_arms() {
         let zh = Catalog::load("zh", None);
         let en = Catalog::load("en", None);
-        let cases: [(&str, &str, &str); 6] = [
-            ("relay", "跨会话中继", "Session relay"),
-            ("action_loaded", "已载入", "loaded"),
-            ("action_remove", "已移除", "removed"),
-            ("action_set", "已新增", "added"),
-            ("action_other", "已更新", "updated"),
-            ("snapshot_supersedes", "取代先前的快照", "Supersedes earlier snapshots"),
+        // 第四列 = 主干字典值（`MainWindow.xaml.cs:2079/2158-2161`），en 档实际渲染吃它。
+        let cases: [(&str, &str, &str, &str); 6] = [
+            ("relay", "跨会话中继", "Session relay", "Cross-session relay"),
+            ("action_loaded", "已载入", "loaded", "Loaded"),
+            ("action_remove", "已移除", "removed", "Removed"),
+            ("action_set", "已新增", "added", "Added"),
+            ("action_other", "已更新", "updated", "Updated"),
+            (
+                "snapshot_supersedes",
+                "取代先前的快照",
+                "Supersedes earlier snapshots",
+                "Replaces the previous snapshot",
+            ),
         ];
-        for (key, trunk_zh, trunk_en) in cases {
+        for (key, trunk_zh, trunk_en, dict_en) in cases {
             let (shelf_zh, shelf_en) = blade2_rs::kernel::det_text_pair(key)
                 .unwrap_or_else(|| panic!("货架缺臂 {key}"));
             assert_eq!(shelf_zh, trunk_zh, "货架 {key} 的 zh 与主干调用点整串漂了");
@@ -42039,8 +46458,8 @@ mod message_details_tests {
             );
             assert_eq!(
                 det_copy_text(&en, shelf_zh),
-                shelf_en,
-                "en 档 {key} 不是主干那串 ⇒ EN 通道断了"
+                dict_en,
+                "en 档 {key} 不是主干字典值 ⇒ EN 通道断了"
             );
         }
     }
@@ -42175,15 +46594,15 @@ mod message_details_tests {
             det_localize_context_entries(&en, &recalled),
             vec![
                 (
-                    "Session recall · 甲".to_string(),
-                    "2 kept · 1 omitted · truncated".to_string()
+                    "Cross-session recall · 甲".to_string(),
+                    "Keeping 2 · omitting 1 · Truncated".to_string()
                 ),
                 (
-                    "Session recall · s-2".to_string(),
-                    "0 kept · 5 omitted".to_string()
+                    "Cross-session recall · s-2".to_string(),
+                    "Keeping 0 · omitting 5".to_string()
                 ),
             ],
-            "en 档不是主干那两串 ⇒ 英文界面还在露中文"
+            "en 档不是主干字典那两串 ⇒ 英文界面还在露中文"
         );
         assert!(
             !det_localize_context_entries(&en, &recalled).is_empty(),
@@ -42203,10 +46622,10 @@ mod message_details_tests {
         let en_overflow = det_localize_context_entries(&en, &overflowed);
         assert_eq!(
             en_overflow,
-            vec![("… {0} more".to_string(), "… 3 more".to_string())],
-            "en 档两枚不是主干 :466 那两串"
+            vec![("…and {0} more".to_string(), "…and 3 more".to_string())],
+            "en 档两枚不是主干字典那两串（`…还有 {{0}} 条` 的字典值，dict-first）"
         );
-        // 主干 :466 的 title 位只过 DetText、不过 DetFormat ⇒ 英文档**照旧带槽**，别当成 bug
+        // 主干 title 位只过 DetText、不过 DetFormat ⇒ 英文档**照旧带槽**，别当成 bug
         assert!(
             en_overflow[0].0.contains("{0}"),
             "title 位被填了槽 ⇒ 多做（主干那一行不格式化）"
@@ -42373,12 +46792,14 @@ mod message_details_tests {
             }],
             ..Default::default()
         };
-        // ① 挂点喂 en：期望是主干 `MessageDetails.cs:290-292` 的英文原文（写死）
+        // ① 挂点喂 en：期望是主干**字典**值（dict-first：0.9.0.x 主干把 `跨会话召回 · {0}` /
+        // `保留 {0} 条 · 省略 {1} 条` / `已截断` 三枚全收进中央字典 ⇒ `MessageDetails.cs:290-292`
+        // 的内联英文字面是死码）。
         assert_eq!(
             message_details_blocks(Some(&recalled), &en),
             vec![DetailsBlock::Context(vec![
-                ContextLine::Title("Session recall · 甲".to_string()),
-                ContextLine::Text("2 kept · 1 omitted · truncated".to_string()),
+                ContextLine::Title("Cross-session recall · 甲".to_string()),
+                ContextLine::Text("Keeping 2 · omitting 1 · Truncated".to_string()),
             ])],
             "挂点没把 en 档喂进判据函数 ⇒ EN 界面重新露中文（本钉的全部意义）"
         );
@@ -42391,7 +46812,8 @@ mod message_details_tests {
             ])],
             "zh 档经挂点被改写 ⇒ 中文界面变了（本刀的硬不变式）"
         );
-        // ③④ 目录溢出帧：title 位照旧带 `{0}`（主干 :466 只过 DetText、不过 DetFormat，非本刀之漏）
+        // ③④ 目录溢出帧：title 位照旧带 `{0}`（主干只过 DetText、不过 DetFormat，非本刀之漏）；
+        // en 档吃字典值（`…还有 {0} 条` 的 dict-first，同 ② 那颗测试的收口）。
         let overflow_title_zh = more_zh.to_string();
         let overflow_text_zh = more_zh.replace("{0}", "3");
         let overflowed = MessageDetails {
@@ -42402,10 +46824,10 @@ mod message_details_tests {
         assert_eq!(
             message_details_blocks(Some(&overflowed), &en),
             vec![DetailsBlock::Context(vec![
-                ContextLine::Title("… {0} more".to_string()),
-                ContextLine::Text("… 3 more".to_string()),
+                ContextLine::Title("…and {0} more".to_string()),
+                ContextLine::Text("…and 3 more".to_string()),
             ])],
-            "溢出帧经挂点的 en 档不是主干 :466 那两串 ⇒ 挂点绕开了判据函数"
+            "溢出帧经挂点的 en 档不是主干字典那两串 ⇒ 挂点绕开了判据函数"
         );
         assert_eq!(
             message_details_blocks(Some(&overflowed), &zh),
@@ -45617,12 +50039,19 @@ mod usage_stats_render_tests {
     }
 
     /// 接线（源码级）：热力卡那张「少 + 五颗 + 多」的档位图例。主干在 `RenderStatsAll` 里
-    /// **每次渲染**重刷那五颗 ⇒ 有数据的一档必须带图例；第三档整段渲染没跑过，那五颗还是
-    /// xaml 的「没填」（填透明），只留两字占位。
+    /// **每次渲染**重刷那五颗 ⇒ 铺装本体（[`Shell::usage_heat_cells`]，两档共用）必须带图例。
+    /// R3 复验追加三条：①卡体三层（格子/月标/图例）收成一行 —— `settings_card_with_trailing`
+    /// 的逐行 divider 在主干那张卡里不存在（`xaml:1631-1660` 是 `StackPanel Spacing=12`）；
+    /// ②格子 + 月标水平居中（主干 ScrollViewer 里窄内容居中摆，R3 实测两侧 211/211）；
+    /// ③图例五颗吃 `painted` 闸 —— 主干那五颗 `Rectangle` XAML 无 Fill，只有聚合成功后的
+    /// `RenderStatsAll` 才刷色，聚合缺席时屏上只有「少/多」两端文字。
     #[test]
     fn heat_card_paints_the_legend_row() {
         let rows = window(SOURCE, "fn usage_heat_rows(", "fn usage_heat_legend(");
-        assert!(rows.contains(concat!("usage_heat_legend(true", ", p)")), "有数据那档丢了档位图例");
+        assert!(
+            rows.contains(concat!("usage_heat_", "legend(p, self.usage.is_some())")),
+            "铺装本体丢了档位图例（图例的 painted 闸 = 聚合在册）"
+        );
         assert!(
             rows.contains(concat!("usage_heat_", "month_labels(&p)")),
             "月份标签那一层没进热力卡的返回表（主干 `StatsHeatMonthCanvas` 是方格之后的第二层）"
@@ -45631,16 +50060,28 @@ mod usage_stats_render_tests {
             !rows.contains(concat!("p.control_", "fill")),
             "格子空档又退回半透明的 ControlFill（主干是 ChartHeatEmpty 实色）"
         );
+        assert!(
+            rows.contains(concat!("\"heat-", "body\"")),
+            "卡体没收成一行：三层分开走就会被 settings_card_with_trailing 插出通栏分隔线"
+        );
+        assert!(
+            rows.contains(concat!("HorizontalAlignment::", "Center")),
+            "格子+月标没有水平居中：主干那对 Canvas 窄于视口时居中摆（月标因此落回格轴上）"
+        );
         let legend = window(SOURCE, "fn usage_heat_legend(", "fn usage_trend_rows(");
         assert!(legend.contains("(0..5)"), "图例不是五颗");
         assert!(legend.contains("heat_empty_brush(self.scheme)"), "图例第 0 颗与格子不同源");
         assert!(legend.contains("heat_opacity(level)"), "图例档位不透明度没读同一把尺");
         assert!(legend.contains(concat!("STATS_HEAT_", "LEGEND")), "图例边长没走 12 那颗常量");
         assert!(legend.contains("HorizontalAlignment::Right"), "主干那一行是右对齐");
+        assert!(
+            legend.contains(concat!("if !", "painted")),
+            "五颗色块没吃 painted 闸：聚合缺席时应与主干 XAML 初态同相（无 Fill）"
+        );
         let usage = window(SOURCE, "fn settings_usage(", "fn usage_heat_rows(");
         assert!(
-            usage.contains(concat!("usage_heat_legend(false", ", p)")),
-            "第三档连「少/多」占位都不画了：主干那两字是 xaml 静态文本"
+            usage.contains(concat!("usage_heat_cells(", "&empty_cells")),
+            "第三档不铺空格子了：主干那张卡没有空态文案，`values` 全 0 也照铺一窗"
         );
     }
 
@@ -46274,28 +50715,23 @@ mod todos_entry_subtitle_tests {
         );
     }
 
-    /// 面板那两句整话走主干那把**内联双语**通道（`Todos.cs:28 / :37` 的 `CapabilityText(zh, en)`），
-    /// 英文档**逐字**抄主干第二参；标题与关闭钮走登记表（主干 `ShellEnglish` 里有它们）。
-    /// 分叉不许长出自造文案，也不许把内联道那两串再登记回 EN 表（冒名登记 = 分叉多做）。
+    /// 面板那两句整话：0.9.0.x 主干把两枚都收进中央字典（`MainWindow.xaml.cs:2141/2142`）
+    /// ⇒ dict-first，`Todos.cs:28/:37` 的内联 en 是死码；标题与关闭钮走登记表。
+    /// 分叉不许长出自造文案。
     #[test]
     fn every_string_the_todos_card_draws_has_the_mainline_english_line() {
         let en = Catalog::load("en", None);
+        // 字典在架 ⇒ 传一枚**错的**内联 en 也必须回字典值（内联是死码）。
         assert_eq!(
-            en.bt("当前会话没有任务清单。", "No to-do list in this session."),
-            "No to-do list in this session."
+            en.bt("当前会话没有任务清单。", "WRONG"),
+            "This session has no task list."
         );
         assert_eq!(
             en.bt(
                 "任务清单来自会话 todos 投影（模型经 todo_write 更新）。此面板只读，不创建、编辑或删除任务。",
-                concat!(
-                    "The to-do list comes from the session todos projection ",
-                    "(the model updates it via todo_write). This panel is read-only."
-                )
+                "WRONG"
             ),
-            concat!(
-                "The to-do list comes from the session todos projection ",
-                "(the model updates it via todo_write). This panel is read-only."
-            )
+            "The task list comes from the session todos projection (updated by the model via todo_write). This panel is read-only and never creates, edits, or deletes tasks."
         );
         assert_eq!(en.l("关闭"), "Close", "主干 `CapabilityDialog` 的 `CloseButtonText`");
         // 反向半边：这两串主干在字典里，必须仍走登记表（另两枚走内联道，已从上两条断言移出）。
@@ -47497,7 +51933,14 @@ mod agent_mode_selector_tests {
             "先清表再判内核 ⇒ 与主干 `:4818-4822` 的次序相反"
         );
         // 失败臂：只留注释，什么都不做（内置四档在常量里、从不进这格 ⇒ 「什么都不做」就是主干行为）。
-        let failed = window(source, "Msg::AgentPresetsLoaded(Err(_)) =>", "Msg::DetailsToggle");
+        // 窗口只罩失败臂本体：尾锚钉紧邻的下一臂（`PresetCardsLoaded`，19539 一带）——
+        // 早年钉 `Msg::DetailsToggle` 时两臂还相邻，后来中间插进了设置页预设卡的五发腿，
+        // 那些臂合法地调 `self.fail(`，把尾锚留在那里就会把别人的臂误算进这条禁令。
+        let failed = window(
+            source,
+            "Msg::AgentPresetsLoaded(Err(_)) =>",
+            concat!("Msg::PresetCards", "Loaded"),
+        );
         // 这四枚 needle 都得拆串写：整串写出来就会钻进 `picking_a_row_writes_the_pending_slot…`
         // 那条「接触面 == 4 发」的计数里（`include_str!` 读的是整个文件，本 mod 也在里面）。
         for banned in [
@@ -47570,11 +52013,19 @@ mod agent_mode_selector_tests {
     /// `session/create`，且**只有协议层**拼那个键。主干那边是一条壳子
     /// `CreateSessionCoreAsync`（`MW:4614-4633`）给两条路共用 ⇒ 分叉少接一处，就是
     /// 「在这条路上挑了档、在那条路上建出来的会话却用内核默认档」这种静默偏差。
+    /// #56 工作区选择器后同一发还要带 `workspaceId`：工作区那一把的同形锁见
+    /// `workspace_pick_tests`（两入口共递 `pending_workspace_id()`）。
     #[test]
     fn both_session_entry_points_pass_the_pending_id_and_only_the_protocol_layer_spells_the_key() {
         let source = include_str!("main.rs");
         // 四枚 needle 全拆串：`include_str!` 把本 mod 也读进来，整串写出来等于让计数 grep 自己。
-        let with = concat!("create_session_with(&default_", "session_cwd(");
+        // 第一枚拆在 `workspace_id` 词内：kernel.rs 那把接线锁会数 `workspace_` + `id` 那枚
+        // deref 全串的枚数，这里若整段写出就会多计一发（注释里也不许整写）。
+        let with = concat!(
+            "create_session_in(workspace_",
+            "id.as_deref(), &default_",
+            "session_cwd("
+        );
         let deref = concat!("agent_preset.", "as_deref()");
         // 拆串要拆在**词内**：只在 needle 两头各加一枚引号字面量看着也算「拆过」，实际第二枚
         // 字面量自己就是那枚完整 needle ⇒ 计数会 grep 到自己（本轮踩过，故把这条写进注释）。
@@ -47887,10 +52338,10 @@ mod permission_selector_tests {
     /// #180（rp2b 同批小件）：主干那颗的**第七臂** `"auto"`（现测 `MW:16758`，注「内核保留的活
     /// `auto` 预设」）与 `"auto-approve"` 共用那枚 SquareSparkle。分叉缺它 ⇒ `"auto"` 落
     /// `_ => PERMISSION_DEFAULT`（`\uE72E` = Lock）⇒ 与主干**正相反**，且正好踩中主干注释明令
-    /// 「锁在自动审批下是反直觉的」那一档。
-    /// ⚠ 反向半边（**说明表今天不许有 auto 臂**）：主干 `PermissionPresetDescZh`
-    ///   （现测 `:16764-16779`）只有**四臂**、无 `"auto"` ⇒ 走 `_ => ""` 再回落 `kernelDesc`，
-    ///   分叉已忠实 ⇒ 补一句中文说明 = 多做，这一发钉的就是「没补」。
+    /// 「锁在自动审批下是反直觉」那一档。
+    /// ⚠ 说明表（0.9.0.2/0.9.0.3 现测 `MW:16983-16996`）：第四臂已从 `auto-approve` 换成
+    ///   `auto`（auto-review 用「会话当前的提供方/模型」判定，主干注释原文）⇒ `auto` 有产品
+    ///   文案、旧 `auto-approve` 档回落内核原文——两臂各钉一发。
     #[test]
     fn the_live_auto_preset_shares_the_sparkle_and_never_the_lock() {
         assert_eq!(permission_preset_glyph("auto"), glyph::PERMISSION_AUTO);
@@ -47912,8 +52363,13 @@ mod permission_selector_tests {
         let catalog = Catalog::load("zh", None);
         assert_eq!(
             permission_preset_desc_zh(&catalog, "auto", "Kernel supplied description"),
+            "每次工具调用前由当前会话模型预判是否授权：安全的直接放行，有风险的带理由转人工",
+            "0.9.0.2 起说明表第四臂就是 auto（auto-review 的实际行为），不是内核原文"
+        );
+        assert_eq!(
+            permission_preset_desc_zh(&catalog, "auto-approve", "Kernel supplied description"),
             "Kernel supplied description",
-            "说明表**没有** auto 臂 ⇒ 回落内核原文；分叉自己补一句就是主干没有的文案位"
+            "旧 auto-approve 档不在主干说明表里 ⇒ 回落内核原文（主干 `_ => \"\"` 那一支）"
         );
     }
 
@@ -47951,7 +52407,7 @@ mod permission_selector_tests {
             "只读：可浏览工作区，不能写文件或执行修改",
             "可写工作区与允许的临时目录；更广范围的重试需审批",
             "完全文件访问，不再弹出审批确认",
-            "Flash 预判写入/命令是否不可回补：安全自动批准，有风险转人工审批",
+            "每次工具调用前由当前会话模型预判是否授权：安全的直接放行，有风险的带理由转人工",
             "确认启用完全权限？",
             "我已了解风险，并愿意继续",
             "启用完全权限",
@@ -48160,7 +52616,7 @@ mod permission_selector_tests {
         for forbidden in ["settings/mutate", "spawn_background", ".call(", "execute_command"] {
             assert!(!menu.contains(forbidden), "层本体里不该有 {forbidden}：它只发 Msg");
         }
-        // 那一臂接进单例槽：`selector_layer` 里 `Permission` 只有**一**臂，且没有第三张。
+        // 那一臂接进单例槽：`selector_layer` 里 `Permission` 只有**一**臂，且没有第五张。
         let layer = window(
             source,
             concat!("fn selector_", "layer("),
@@ -48168,9 +52624,10 @@ mod permission_selector_tests {
         );
         assert_eq!(
             layer.matches(concat!("Some(SelectorKind::", "")).count(),
-            3,
-            "展开层三枝（AgentMode / Permission / Model）+ 一支 `None`：#56 的第三颗是主干 \
-             `MX:1277-1295` 的事实 ⇒ 这一把由 2 抬到 3（抬锁清单见 `tmp/mw6-report.md` §5）"
+            4,
+            "展开层四枝（AgentMode / Permission / Model / Workspace）+ 一支 `None`：#56 的\
+             第三颗抬到 3（`tmp/mw6-report.md` §5），工作区选择器（主干 `MX:1181-1203`）\
+             抬到 4"
         );
         assert!(layer.contains("permission_menu(context, p)"));
         assert!(layer.contains("match self.selectors"), "分派只认那一格");
@@ -48591,6 +53048,110 @@ fn every_layer_opening_arm_retires_the_danger_card_and_vice_versa() {
             source.matches(concat!("\"settings/des", "cribe\"")).count(),
             0,
             "端点字面量写进了 main.rs ⇒ 与 kernel.rs 的构造器形成第二处真相（本仓计数锁会双计）"
+        );
+    }
+}
+
+// ============================================================================
+// #56 工作区选择器（主干 `WorkspacePickerButton` / `WorkspacePickerFlyout`，
+// `MX:1181-1203` + `MW:5100-5181`）的配套源码锁：在场闸 / 列序 / 标签规则 /
+// 待用值消费口四件。
+#[cfg(test)]
+mod workspace_pick_tests {
+    // 本族全部是**字符串匹配**的源码锁（窗内断言的 `Msg::…` 都在字面串里）
+    // ⇒ 不吃父模块任何条目，`use super::*;` 是一枚 unused-import 警告。
+    fn window<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
+        let (_, rest) = source
+            .split_once(start)
+            .unwrap_or_else(|| panic!("源码里找不到锚点 {start}"));
+        rest.split_once(end)
+            .unwrap_or_else(|| panic!("锚点 {start} 之后找不到 {end}：窗口会一路扩到文件末尾"))
+            .0
+    }
+
+    /// 在场闸与列序：band 里 `workspace` 槽排在 `agent-mode` **前面**（主干
+    /// `MX:1123-1126` 的列序：+ → 工作区 → Agent 模式 → 权限），且触发器自己带
+    /// `hero_state` 早退（`MW:5112`，与 `AgentModeButton` 同一句）。
+    #[test]
+    fn the_workspace_cell_precedes_agent_mode_and_shares_the_hero_gate() {
+        let source = include_str!("main.rs");
+        let band = window(source, concat!("fn composer", "_band("), "fn workspace_trigger(");
+        let at = |needle: &str| band.find(needle).unwrap_or_else(|| panic!("band 里没有 {needle}"));
+        assert!(
+            at("(\"workspace\",") < at("(\"agent-mode\","),
+            "工作区槽排到 Agent 模式之后 ⇒ 与主干列序（MX:1123-1126）颠倒"
+        );
+        let trigger =
+            window(source, "fn workspace_trigger(", "fn workspace_menu(");
+        assert!(
+            trigger.contains("!self.hero_state()"),
+            "触发器缺 hero 早退 ⇒ 有会话时选择器还挂在动作行上（主干 MW:5112 收起）"
+        );
+        assert!(
+            trigger.contains("Msg::SelectorToggle(SelectorKind::Workspace)"),
+            "触发器没走选择器单例槽 ⇒ 互斥闸被绕开"
+        );
+    }
+
+    /// 标签规则（`MW:5119`）：选过显示工作区**名**，没选显示占位「选择工作区」；
+    /// 占位那一支是主干字面量（不过 i18n 表），选过的名字原样（内核给的串不过表）。
+    #[test]
+    fn the_chip_label_follows_the_pending_title_with_a_literal_fallback() {
+        let source = include_str!("main.rs");
+        let trigger = window(source, "fn workspace_trigger(", "fn workspace_menu(");
+        assert!(
+            trigger.contains("Some((_, title)) if !title.is_empty()"),
+            "标签判据不是「标题非空才显示」⇒ 空标题会把待用格显示成空胶囊"
+        );
+        assert!(
+            trigger.contains("\"选择工作区\".to_string()"),
+            "占位兜底不是主干那句字面量「选择工作区」"
+        );
+    }
+
+    /// 点行不发 RPC（`MW:5161-5163` 只写 `_pendingWorkspace`）：臂里只写待用格 + 收层，
+    /// 不许出现任何 `call(` / `spawn_background`。
+    #[test]
+    fn picking_a_row_writes_the_pending_slot_and_fires_no_rpc() {
+        let source = include_str!("main.rs");
+        let arm = window(
+            source,
+            "Msg::WorkspacePick(workspace) => {",
+            "Msg::WorkspacePickerCreate => {",
+        );
+        assert!(
+            arm.contains("self.pending_workspace = workspace;"),
+            "点行没落到待用格那一格"
+        );
+        assert!(
+            arm.contains("self.selectors = None;"),
+            "点行没收层（主干 flyout 点完自动关）"
+        );
+        assert!(
+            !arm.contains("call(") && !arm.contains("spawn_background"),
+            "点行发了 RPC ⇒ 违反主干「选工作区零 RPC」那条（MW:5161-5163）"
+        );
+    }
+
+    /// 待用值的消费口：两处建会话入口都递 `pending_workspace_id()`（与
+    /// `agent_preset_to_send` 同一形状），且薄壳自己带「空 id 视同未选」那道过滤。
+    #[test]
+    fn both_session_entry_points_pass_the_pending_workspace_id() {
+        let source = include_str!("main.rs");
+        // needle 拆串（本 mod 住在 main.rs 里，整写就会数进自己）。
+        assert_eq!(
+            source.matches(concat!("self.", "pending_workspace_id()")).count(),
+            2,
+            "两处建会话入口都要递待用工作区（少一处 = 选了工作区、新会话仍落文档目录）"
+        );
+        let shell = window(
+            source,
+            "fn pending_workspace_id(",
+            "fn load_agent_mode_menu(",
+        );
+        assert!(
+            shell.contains(".filter(|id| !id.is_empty())"),
+            "薄壳没过滤空 id ⇒ 空串会被当成真工作区发出去"
         );
     }
 }
@@ -49241,8 +53802,11 @@ mod kw1_step_arm_lock_tests {
         }
     }
 
-    /// 判据四（接线骨架）：两张台账各声明一次、各初始化一次，
-    /// 并在两个「换会话」点上**成对**清掉旧会话那一格（主干按 sid 分表）。
+    /// 判据四（接线骨架）：两张台账各声明一次、各初始化一次；换会话的两个点上，
+    /// **家 A 清「要打开的那条」**（主干 `ResetRunStats`/`ResetContextMeter` 摘
+    /// `_activeSessionId`，而每个 `OpenSessionAsync` 调用点都先写新 sid ⇒ 清错方向历史
+    /// 就叠在旧账上，R2 实测步数/token 恰好两倍）、**家 B 清「离开的那条」**（seq 去重
+    /// 账本，清谁都不翻倍，沿旧例）。两颗门 = `Msg::Select` / `Msg::Branched`。
     #[test]
     fn both_ledgers_are_held_seeded_and_dropped_on_both_switch_points() {
         let source = kw1_source();
@@ -49266,15 +53830,24 @@ mod kw1_step_arm_lock_tests {
         ] {
             assert_eq!(source.matches(needle).count(), 1, "{why}");
         }
-        for needle in [
-            concat!("self.run_", "stats.forget(left);"),
-            concat!("self.trajectory_", "steps.forget(left);"),
-        ] {
-            assert_eq!(
-                source.matches(needle).count(),
+        for (needle, count, why) in [
+            (
+                concat!("self.run_", "stats.forget(&id);"),
+                1,
+                "选中的清闸丢了 ⇒ 家 A 不清新 sid，历史回放就翻倍",
+            ),
+            (
+                concat!("self.run_", "stats.forget(&child);"),
+                1,
+                "分叉完的清闸丢了 ⇒ 子会话回看时历史回放叠在旧账上",
+            ),
+            (
+                concat!("self.trajectory_", "steps.forget(left);"),
                 2,
-                "换会话的两颗门（选中 / 分支完）只清了一张表 ⇒ 上一个会话的步数留给下一个"
-            );
+                "换会话的两颗门（选中 / 分支完）只清了一张表 ⇒ 家 B 沿旧例清离开的那条",
+            ),
+        ] {
+            assert_eq!(source.matches(needle).count(), count, "{why}");
         }
     }
 
@@ -50439,7 +55012,7 @@ mod goal_bar_tests {
         }
         // 条上另外三枚 A 道串：钮名 / 提示那行 / 本体 Name 的前缀。
         assert_eq!(en.l("管理"), "Manage");
-        assert_eq!(en.l("管理目标"), "Manage goal");
+        assert_eq!(en.l("管理目标"), "Manage targets");
         assert_eq!(en.l("目标"), "Goal");
         let hint_zh = concat!(
             "当前目标进行中。可输入 edit 修改 / pause 暂停 / resume 继",
@@ -51384,6 +55957,46 @@ mod mw6_model_plan_tests {
         assert_eq!(fresh.selected_provider, "");
     }
 
+    /// 内核跟随那一段的取数口（主干 `ApplyModelSelectionProjection` 的取数段，
+    /// `MW:14016-14022`）：只认 `{next:{model,…}}` 且 `model` 非空那一型，其余一律
+    /// `None` = 壳侧一概不动。`provider`/`reasoningEffort` 缺键按空串（主干 `Str` 兜底）。
+    #[test]
+    fn model_selection_next_takes_only_a_nonempty_next_model() {
+        let full = model_selection_next(&json!({
+            "lastUsed": {"model": "old", "provider": "p", "reasoningEffort": "low"},
+            "next": {"model": "mimo-26", "provider": "p-x", "reasoningEffort": "high"}
+        }));
+        assert_eq!(
+            full,
+            Some(ModelSelectionNext {
+                model: "mimo-26".to_string(),
+                provider: "p-x".to_string(),
+                effort: "high".to_string(),
+            }),
+            "lastUsed 在场也不影响取数（它只喂「上次使用」行）"
+        );
+        assert_eq!(model_selection_next(&json!({})), None, "next 缺席 ⇒ None");
+        assert_eq!(
+            model_selection_next(&json!({"next": {"model": ""}})),
+            None,
+            "空 model ⇒ 主干那条 early return"
+        );
+        assert_eq!(
+            model_selection_next(&json!({"next": {"provider": "p"}})),
+            None,
+            "next 缺 model 键 ⇒ 同空"
+        );
+        // 缺 provider / reasoningEffort 的两枚兜底
+        assert_eq!(
+            model_selection_next(&json!({"next": {"model": "m"}})),
+            Some(ModelSelectionNext {
+                model: "m".to_string(),
+                provider: String::new(),
+                effort: String::new(),
+            })
+        );
+    }
+
     // ---------------- ③ 纯函数：三枚 UIA 名 + 两枚可见文案 ----------------
 
     /// 触发器的无障碍名占位符是**空格**不是全角冒号（主干 `MW:13592` 与 `访问模式，当前：{0}`
@@ -51715,15 +56328,17 @@ mod mw6_model_plan_tests {
         assert!(peek.contains("self.active.as_deref()?"));
     }
 
-    /// 抬锁备案：`selector_layer` 现在**三**枝（AgentMode / Permission / Model）+ `None`。
-    /// 主干 `MX:1216-1295` 的动作行就是三颗触发器 ⇒ 第三枝是主干事实，不是范围蔓延。
-    /// 本把只测「三枝且分派只认那一格」，权限那张刀的计数闸同步抬到 3（见其错误信息）。
+    /// 抬锁备案：`selector_layer` 现在**四**枝（AgentMode / Permission / Model / Workspace）
+    /// + `None`。主干 `MX:1123-1295` 的动作行就是四颗触发器（+ 号之后：工作区 → Agent 模式 →
+    /// 权限 → 模型）⇒ 第四枝是主干事实，不是范围蔓延。本把只测「四枝且分派只认那一格」，
+    /// 权限那张刀的计数闸同步抬到 4（见其错误信息）。
     #[test]
     fn the_layer_now_has_three_branches_and_only_one_owner() {
         let source = include_str!("main.rs");
         let layer = window(source, concat!("fn selector_", "layer("), concat!("fn agent_mode_", "menu("));
-        assert_eq!(layer.matches(concat!("Some(SelectorKind::", "")).count(), 3);
+        assert_eq!(layer.matches(concat!("Some(SelectorKind::", "")).count(), 4);
         assert!(layer.contains("model_menu(context, p)"));
+        assert!(layer.contains("workspace_menu(context, p)"));
         assert!(layer.contains("match self.selectors"), "分派只认那一格");
     }
 }
@@ -51904,7 +56519,13 @@ mod mr3_oneway_rpc_tests {
         let source = include_str!("main.rs");
         let arm = window(source, "Msg::Section(id) =>", "Msg::UsageLiveTick");
         println!("Section 臂真实行数 = {}", arm.lines().count());
-        assert!((8..=40).contains(&arm.lines().count()), "Section 臂锚漂了");
+        // 上限跟着臂的真实体量走（今测臂 44 行 / 窗 45）：比起初版多出的 21 行**全是臂内**新增
+        // 的进节腿 —— agent-presets（主干 `RenderPresetsSectionAsync`，`MW:13491`）/ plugins
+        // （`MW:13033`）/ models（`MW:11270`）/ pet（`MainWindow.Pet.cs:232-255`），每条 =
+        // 注释 + 3 行 `if`。两枚锚之间**没有**新插臂（`Msg::UsageLiveTick` 仍是紧邻的下一臂）
+        // ⇒ 尾锚无处可挪、换锚反而丢形，40→**48** 按实测放宽；真漂（窗卷进后续臂，一臂就
+        // ~9 行、卷到 UsageStats 再 +30）依旧远超 48，下限 8 照旧挡起点锚塌掉。
+        assert!((8..=48).contains(&arm.lines().count()), "Section 臂锚漂了");
         assert!(
             arm.contains(concat!("self.", "ensure_settings_snapshot(context)")),
             "换分区没去拉快照 ⇒ 三档读法的 ② 档永远不可达"
@@ -52025,6 +56646,10 @@ mod mr3_oneway_rpc_tests {
     /// 自内核 0.1.7 起移除），被撤那格写死的「不可用」在主干同样只剩 `ShellEnglish` 字典键 ⇒ 分叉
     /// 照画属保真度残留。同一枚行键的针法**从正向断言翻成零计数禁物**（下面那颗 `assert_eq!`），
     /// 卡头那两根针（卡在、副标题为空）原样留着 ⇒ 「撤行」与「没摘过头」两头都有闸。
+    /// MR3 批（预设目录卡五发腿）把这一段重写：Err 臂铺一行**段级**错误文案、Ok 臂铺预设卡紧排列，
+    /// 并在两锚之间插进了 [`Shell::preset_card`] helper ⇒ 窗口尾锚从 `fn settings_models(` 改钉
+    /// 紧邻的 `fn preset_card(`；「卡体无说明行」那半也收窄到**卡头之后的卡体构造**（Err 臂那行
+    /// 段级错误文案不住在卡体里，不归这半管），另加一枚正向针钉住卡体唯一子元素（创作向导钮）。
     #[test]
     fn b3_the_preset_dir_capability_host_leg_stays_cut() {
         let source = include_str!("main.rs");
@@ -52045,16 +56670,30 @@ mod mr3_oneway_rpc_tests {
         let card = window(
             source,
             concat!("fn settings_agent_presets(&", "self"),
-            concat!("fn settings_models(&", "self"),
+            concat!("fn preset_", "card("),
         );
         println!("B3 之后预设目录卡真实行数 = {}", card.lines().count());
         assert!(
             (10..=70).contains(&card.lines().count()),
-            "预设目录卡窗口锚漂了（摘完宿主腿之后这一窗仍该是那一颗函数本体）"
+            "预设目录卡窗口锚漂了（尾锚已改钉紧邻的 `fn preset_card(`，这一窗仍该是那一颗函数本体）"
         );
         assert!(
-            card.contains(concat!("preset-dir\", ", "\"预设目录\", \"\", cells")),
+            card.contains(concat!("preset-dir\", ", "\"预设目录\", \"\"")),
             "卡头副标题那一档不许回来（主干 `NewCard(\"预设目录\")` 就没有副标题）"
+        );
+        // 卡体 = 卡头之后那段构造（Ok 臂里那颗 `settings_card` 的实参）。
+        let card_body = window(
+            &card,
+            concat!("preset-dir\", ", "\"预设目录\", \"\""),
+            concat!("cells\n    ", "}"),
+        );
+        assert!(
+            !card_body.contains(concat!("settings_", "line(")),
+            "预设目录卡体里长出说明行那一档 = B3 摘掉的那行正在长回来"
+        );
+        assert!(
+            card_body.contains(concat!("\"creator-", "draft\"")),
+            "卡体唯一子元素 = 创作向导钮（主干 `MakeCreatorDraftButton()` 那一颗）"
         );
         // PC1S 件① 的**反向锁**（本刀新立，替掉原先那条正向断言）：那一行不许长回来。
         // 口径 = **整份源码裸串计数 == 0**（产品码 + 本 mod + 全部注释一起数，**不过** `code_only`）。
@@ -52068,10 +56707,6 @@ mod mr3_oneway_rpc_tests {
             0,
             "「新增自定义预设」那一行已随主干撤（派生路径 `agentPresets/copy` 自内核 0.1.7 起移除），\
              卡体现今为空是等第②件接主干那颗 `MakeCreatorDraftButton` ⇒ 这一行不许长回来"
-        );
-        assert!(
-            !card.contains(concat!("settings_", "line(")),
-            "卡体内又长出说明行那一档 = B3 摘掉的那行正在长回来"
         );
     }
 }
@@ -53503,24 +58138,25 @@ mod schedule_panel_tests {
         assert_eq!(card.matches("TextWrapping::Wrap").count(), 5, "五枚 Wrap 少一枚");
     }
 
-    /// ⑦ 复制通道（D-9 / spec §2.0 那条坑）：**字典先赢、内联 en 是死码**，而 #3/#4 两枚
-    /// 字典没收录 ⇒ 它们的内联 en 才是生效值。EN 表**零改动**（禁把这两枚补进表里）。
-    /// 变异证明：往 `src/i18n.rs` 加一枚 `("当前会话没有计划。", …)` ⇒ 本把立刻红（表面试那一发）。
+    /// ⑦ 复制通道（D-9 / spec §2.0 那条坑）：**字典先赢、内联 en 是死码**。0.9.0.x 主干
+    /// 字典把原先没收的两枚（`MainWindow.xaml.cs:2139/2140`：计划为只读清单 / 当前会话没有
+    /// 计划。）收编 ⇒ 这两枚从「内联 en 生效」翻成「字典生效」，EN 表随之进架
+    /// （旧的「表里不许有」禁令随之作废——那是以「主干字典没收」为前提的锁）。
     #[test]
     fn the_copy_channels_match_the_trunk_dict_first_rule() {
-        let lib = include_str!("i18n.rs");
-        for key in ["当前会话没有计划", "计划为只读清单"] {
-            assert!(
-                !lib.contains(key),
-                "分叉 EN 表里冒出主干也没有的键 {key} ⇒ 把主干「内联 en 生效」改成「字典生效」= 造档"
-            );
-        }
         let en = Catalog::load("en", None);
         let zh = Catalog::load("zh", None);
-        // #3 / #4：字典没收 ⇒ 内联 en 生效（活码）。
+        // #3 / #4：字典已收编 ⇒ 传一枚**错的**内联 en 也必须回字典值（内联是死码）。
         assert_eq!(
-            en.bt("当前会话没有计划。", "No schedules in this session."),
-            "No schedules in this session."
+            en.bt("当前会话没有计划。", "WRONG"),
+            "This session has no plans."
+        );
+        assert_eq!(
+            en.bt(
+                "计划为只读清单（数据来自会话投影 schedule）。此入口不创建、编辑或删除计划，也不调用 schedules RPC。",
+                "WRONG"
+            ),
+            "Plans are a read-only list (data from the session schedule projection). This entry point never creates, edits, or deletes plans, and never calls the schedules RPC."
         );
         // #1 / #5：字典在架 ⇒ 传一枚**错的**内联 en 也必须回字典值（内联是死码）。
         assert_eq!(en.bt("计划（只读）", "WRONG"), "Schedules (read-only)");
@@ -54054,6 +58690,11 @@ mod error_dialog_tests {
         // raw 口径今测 42（本窗之外那几发是各 mod 的锚串与注释的历史账，本刀不并、也不据此判绿）。
         // 批 SM1（会话行 ⋯ 菜单）那张入 Esc 档 ⇒ 本窗 17→**18**（第十九级，与工作区那颗 ⋯ 同档）。
         // 批 NV1（侧栏「视图选项」菜单）那张入 Esc 档 ⇒ 本窗 18→**19**（第二十级，同档）。
+        // 工具卡行尾 ⋯ 复制菜单那张（主干 `BuildToolCopyMenu`，`ToolCards.cs:912-938`；层格
+        // `KeyedView::new("tool-menu", …)`，形制 = ⋯ 菜单族：行无高亮态 ⇒ ↑↓ / Enter 吞、Esc
+        // 收层，开层点 = 工具卡行尾那颗 `ToolCopyJson` 钮，`ToolCards.cs:195-210`）入 Esc 档 ⇒
+        // 本窗实测 20→**21**（第二十一级；上面几行「本窗 N」流水比同刻实测少一发，是更早的
+        // 收编批没回写本流水的历史账，以实测为准）。
         // 窗：本卡那一发之后（`close` 那枚锚被 split_once 吃进左段）到浮层自己的兜底臂之前。
         let esc_tier = window(
             &code,
@@ -54062,12 +58703,13 @@ mod error_dialog_tests {
         );
         assert_eq!(
             esc_tier.matches(concat!("Msg::PaletteClose i", "f ")).count(),
-            20,
-            "Esc 档的枚数漂了：每张可 Esc 的层各一发（本卡之外 20 发，批 SFB1 会话反馈那张是第十三级、\
+            21,
+            "Esc 档的枚数漂了：每张可 Esc 的层各一发（本卡之外 21 发，批 SFB1 会话反馈那张是第十三级、\
              批 SKP1 技能选择器那张是第十四级、批 CD1 Cordis 面板那张是第十五级 ⇒ SFB2 报告 §2 第 2 把，\
              批 CB1 族 A 第二发那张是第十六级，批 RP2C @ 引用浮层那张是第十七级，\
              #240「+」flyout 那张是第十八级，批 SM1 会话行 ⋯ 菜单那张是第十九级，\
-             批 NV1 侧栏「视图选项」菜单那张是第二十级），多一枚少一枚都是形制变了"
+             批 NV1 侧栏「视图选项」菜单那张是第二十级，\
+             工具卡行尾 ⋯ 复制菜单那张是第二十一级），多一枚少一枚都是形制变了"
         );
     }
 
@@ -54111,6 +58753,8 @@ mod error_dialog_tests {
     /// ⑧ 火口**逐臂白名单**（正半 + 反半，两半都要在）：批 ERR1 只授权一枚（`Msg::GoalPanelToggle`
     /// 臂），批 ERR2（#161 扩面）按 SKP2 §4.3 的主干证据（入口 wrapper `CP:73-79` 对**每一发**
     /// throw 都 `await ShowErrorAsync(ex.Message)`）把另外 6 发有肉的接进同一颗通道 ⇒ 表长 **7**。
+    /// 批 MR3（预设目录卡五发腿）又把设置页预设族的 6 发 `ShowErrorAsync` 接进来 ⇒ 表长 **18**、
+    /// 枚数 **19**（`self.error_dialog` 直写不许复活 —— 写口仍只有 [`Msg::ErrorDialog`] 那一颗）。
     /// 反半 = 总数硬闸：`Msg::ErrorDialog(` 的枚数 = 表长 + 火臂那一枚 = **8**（批 ERR3 把 cordis 那
     /// 三枚接进来 ⇒ 表长 7 → 10、枚数 8 → 11；闸本身是指向 `WIRED_TRIGGERS.len() + 1` 的派生式，
     /// 一硬数字都没写）；多一枚而没登表 = 红
@@ -54131,7 +58775,7 @@ mod error_dialog_tests {
     /// `Msg::SchedulePanelToggle` 之间插进 cordis 那一排臂 ⇒ 窗从 34 行涨到 105 行、圈进邻臂合法的
     /// `DIAG:` = 假红）。总数闸仍是指向 `WIRED_TRIGGERS.len() + 1` 的**派生式**（11 = 10 + 1）⇒ 表长
     /// 一改它就自己抬，本刀一个硬数字都没写进去。
-    const WIRED_TRIGGERS: [(&str, &str, &str); 12] = [
+    const WIRED_TRIGGERS: [(&str, &str, &str); 18] = [
         (
             "Msg::GoalPanelToggle => {",
             "Msg::GoalPanelClose",
@@ -54214,6 +58858,40 @@ mod error_dialog_tests {
             "Msg::RailHover(index) => {",
             "write.error_key()",
         ),
+        // ---- 批 MR3（设置页预设目录卡五发腿）六行：主干 `SettingsExtras.cs` 一族 / `MW:13583-13641`
+        //      的失败与回执各发全是 `ShowErrorAsync`（那一颗唯一闸口）⇒ 分叉六臂一律经
+        //      `self.update(Msg::ErrorDialog(..), context)` 接进同一颗通道，文案逐字不动。
+        //      起锚 = 本臂臂首、止锚 = 紧邻下一臂（臂边界收刀把窗收到只罩本臂）。
+        (
+            "Msg::PresetViewLoaded(Ok((title, content))) => {",
+            "Msg::PresetViewLoaded(Err(error)) => {",
+            "组装（agent.cordis.yml）· {0}",
+        ),
+        (
+            "Msg::PresetViewLoaded(Err(error)) => {",
+            "Msg::PresetUseForSession(id, name) => {",
+            "无法读取预设组装：{0}",
+        ),
+        (
+            "Msg::PresetUseForSession(id, name) => {",
+            "Msg::PresetUseForSessionDone(name, Ok(applied)) => {",
+            "请先在左侧选择一个会话",
+        ),
+        (
+            "Msg::PresetUseForSessionDone(name, Ok(applied)) => {",
+            "Msg::PresetUseForSessionDone(name, Err(error)) => {",
+            "会话已切换到预设「{0}」（内核回执：{1}）。",
+        ),
+        (
+            "Msg::PresetUseForSessionDone(name, Err(error)) => {",
+            "Msg::PresetSetDefault(id) => {",
+            "切换预设失败：{0}",
+        ),
+        (
+            "Msg::PresetSetDefaultDone(Err(error)) => {",
+            "Msg::PluginsTabByText(text) => {",
+            "设为默认失败：{0}",
+        ),
     ];
 
     #[test]
@@ -54252,7 +58930,7 @@ mod error_dialog_tests {
         assert_eq!(
             code.matches(wired).count(),
             WIRED_TRIGGERS.len() + 1,
-            "枚数 = 表长 + 火臂一枚（今天 13 = 12 + 1，#240 皮肤导入 helper 入表、批 SM1 会话行 ⋯ 回执臂入表）：多一枚 = 没登表的扩面，少一枚 = 登了表没接线"
+            "枚数 = 表长 + 火臂一枚（今天 19 = 18 + 1，#240 皮肤导入 helper 入表、批 SM1 会话行 ⋯ 回执臂入表、批 MR3 预设目录卡六发入表）：多一枚 = 没登表的扩面，少一枚 = 登了表没接线"
         );
         // 禁针（简报 §2-1 第三枚 = 一个字都不许动的那一发）：`Msg::SkillPickerPick` 的守卫 ② 是主干
         // `CP:420-424` 的**手写 `if`** ⇒ 面板保持开着、只把 `error.Text` 写上，**不 throw、不弹框**。
@@ -58156,9 +62834,10 @@ mod permission_catalog_p3_tests {
         assert!(face.contains(concat!("let rows = permission_session_rows(catalog, options, Some(", "current))")));
         assert!(face.contains(concat!("let permissions = self.control.", "projections(session)?")));
         assert!(face.contains(concat!("let current = permissions.", "current_value.as_deref()?")));
-        // 空态：表体 = `default_preset_values(...)`。
+        // 空态：表体 = `default_preset_values(...)`（0.9.0.2 起那张表尾可多一行 live `auto`，
+        // 渲染与回写仍共吃这一颗函数，故这里只锁「同一来源」不锁枚数）。
         assert!(face.contains(concat!("rows: permission_default_", "rows(")));
-        assert!(face.contains(concat!("&default_preset_values(self.", "permission_catalog.as_ref())")));
+        assert!(face.contains(concat!("let values = default_preset_values(self.", "permission_catalog.as_ref())")));
 
         // 回写侧共吃同一颗：`default_preset_row` 是渲染与写格子的唯一入口。
         let row = win(
@@ -58640,13 +63319,8 @@ mod sl1_autosave_pipeline_tests {
         // 第四臂 = #140 B-2a 补的那条开关腿。止锚同样**词内拆串**：那枚 Note 臂的锚是
         // `shell_json_has_four_triggers` 里托盘那支的止锚，全文件（注释也算）只许一枚。
         let toggle = span("Msg::Toggle(key, on) => {", concat!("Msg::Note(te", "xt) =>"));
-        // 第五臂 = 自动审批「判定模型」那颗下拉（`Msg::ApprovalModel`）：主干那两发
-        // `Edit` 之后同样紧跟 `ScheduleSettingsAutoSave()`，所以它也是排程臂的一员。
-        // 止锚 `Msg::SkinImportPick =>` 在全文件（注释也算）只一枚 ⇒ 不拆词。
-        let approval = span(
-            concat!("Msg::ApprovalModel(", "index) =>"),
-            "Msg::SkinImportPick =>",
-        );
+        // （原第五臂 = 自动审批「判定模型」那颗下拉 `Msg::ApprovalModel`，已随 0.9.0.3
+        // 拆卡整臂摘掉 ⇒ 排程臂回到四枚。）
         // 顺序半边（Toggle 臂的 `set_on` 是无条件的，唤行只许跟在它之后）—— 取在 `toggle`
         // 被下面的数组移走之前。
         let written = toggle
@@ -58664,20 +63338,19 @@ mod sl1_autosave_pipeline_tests {
             ("Field", field),
             ("Number", number),
             ("Toggle", toggle),
-            ("ApprovalModel", approval),
         ] {
             assert!(
                 arm.contains(concat!("self.request_settings_", "autosave(context);")),
                 "{name} 臂没排自动保存 ⇒ 整条流水线不可达（主干每一发 Edit/登记 之后都紧跟 ScheduleSettingsAutoSave）"
             );
         }
-        // 全局枚数 = 6：五臂各一行 + [`Shell::flush_settings_autosave`] 的重武装那一行。
+        // 全局枚数 = 5：四臂各一行 + [`Shell::flush_settings_autosave`] 的重武装那一行。
         assert_eq!(
             code_only(&product_code())
                 .matches(concat!("self.request_settings_", "autosave(context);"))
                 .count(),
-            6,
-            "唤防抖的枚数漂了（五臂 + 到点重武装 = 6）"
+            5,
+            "唤防抖的枚数漂了（四臂 + 到点重武装 = 5）"
         );
     }
 
@@ -59928,10 +64601,10 @@ mod session_menu_tests {
 // `Tag=7` `IsSelected=True` / `近 30 天` `Tag=30`）+ `OnStatsRangeChanged`
 // （`MainWindow.xaml.cs:15152-1564`：写 `_statsRangeDays` 再重渲染趋势图与模型用量两张卡）。
 // 此前分叉把档位钉死在常量 7 天（`:14212` 的默认值）⇒ 那两颗在主干等于没有。
-// 这批用两颗 `ToggleButton` 补上，锁五件事：
+// 现在渲染侧走真 `SelectorBar`（文字 tab、选中项带下划线），锁五件事：
 // ① 档位与文案只有一处真相（`STATS_RANGE_CHOICES`，读侧只走 `picks` 那一格）；
-// ② 选中态从状态派生（两颗 `ToggleButton` 谁都能同时 On，这是「同刻至多一个档」的唯一保证）；
-// ③ `IsChecked=false` 那颗回弹整发吞掉；
+// ② 选中态从状态派生（`is_selected` 仍从 `picks` 读出，与主干单选语义同款）；
+// ③ 文本反查不到 = 整发吞掉（主干 `Tag` 反查不到不动的那一判）；
 // ④ 行位夹在热力卡与趋势图之间、两档语义都在场；
 // ⑤ 四串文案全是 i18n 键（本仓定案的复发缺陷类：英文界面露中文）。
 //
@@ -60001,77 +64674,78 @@ mod stats_range_tests {
 
     // ---------------- ② 选中态从状态派生 --------------------------------------
 
-    /// `is_checked(active == index)`：不为 On 的天然只有一个。主干那边靠 `SelectorBar`
-    /// 自己的单选语义，分叉两颗 `ToggleButton` 谁都能同时 On ⇒ 这条是那颗分段唯一的互斥保证。
-    /// 变异：把 `is_checked(active == index)` 换成 `is_checked(false)` ⇒ 本条翻红；
-    /// 把 `let active = self.pick(...)` 换成读控件 ⇒ 第一条翻红。
+    /// `is_selected(active == index)`：不为选中的天然只有一个（主干那颗 `SelectorBar` 的
+    /// 单选语义同款）。变异：把 `is_selected(active == index)` 换成 `is_selected(false)` ⇒
+    /// 本条翻红；把 `let active = self.pick(...)` 换成读控件 ⇒ 第一条翻红。
     #[test]
     fn the_selection_is_derived_from_state_not_from_the_widget() {
         let source = include_str!("main.rs");
         // 右界钉在**下一个函数**（#143 起那颗姊妹颗 `usage_heat_metric_bar` 就排在后头）——
-        // 窗口只许盖住 `usage_range_row` 一颗，否则两颗分段的 `is_checked` 会被数到一起去。
+        // 窗口只许盖住 `usage_range_row` 一颗，否则两颗 `SelectorBar` 的 `is_selected`
+        // 会被数到一起去。
         let row = window(source, "fn usage_range_row(", "fn usage_heat_metric_bar(");
         assert!(
             row.contains("let active = self.pick(STATS_RANGE_PICK_KEY, 0);"),
-            "选中态不再读 picks 那一格（改成控件自持 ⇒ 两颗能同时 On）"
+            "选中态不再读 picks 那一格（改成控件自持 ⇒ 重渲染会弹回）"
         );
         assert!(
-            row.contains(".is_checked(active == index)"),
+            row.contains(".is_selected(active == index)"),
             "选中态不是从 active 派生的"
         );
         assert_eq!(
-            row.matches(".is_checked(").count(),
+            row.matches(".is_selected(").count(),
             1,
-            "分段钮的 is_checked 不止一发（有那颗没接状态）"
+            "SelectorBarItem 的 is_selected 不止一发（有那颗没接状态）"
         );
     }
 
-    /// 消息形状带 `bool`，且只有两发（视图回调 + reducer 臂）。少了 `bool` 就没法分辨
-    /// 「点我」与「我的回弹」—— 这正是下面那条要吞掉的那一发。
-    /// 变异：把 `StatsRange(usize, bool)` 改成 `StatsRange(usize)` ⇒ 第一条翻红。
+    /// 消息带**选中 item 的文本**，且只有两发（视图回调 + reducer 臂）。
+    /// 变异：把 `StatsRangeByText(Option<String>)` 改回下标载荷 ⇒ 首条翻红。
     #[test]
-    fn the_message_carries_the_native_flag_and_nowhere_else() {
+    fn the_message_carries_the_selected_text_and_nowhere_else() {
         let code = code_only(include_str!("main.rs"));
-        // 窗口从姊妹颗（`ThemePick`）起、到下一个变种（`Note`）止 ⇒ 罩住本变种那一行。
-        let decl = window(code.as_str(), "ThemePick(usize, bool),", "Note(String),");
+        // 窗口从上一颗变种（`Toggle`）起到 `Note` 止：本仓 `window` 起锚**不含**锚串本身
+        // ⇒ 起点必须取在被罩的那一行**之前**。
+        let decl = window(code.as_str(), "Toggle(String, bool),", "Note(String),");
         assert!(
-            decl.contains("StatsRange(usize, bool)"),
-            "时间范围那颗消息不再带原生 IsChecked"
+            decl.contains("StatsRangeByText(Option<String>)"),
+            "时间范围那颗消息不再带选中文本"
         );
         assert_eq!(
-            code.matches(concat!("Msg::StatsRange(", "index, on)"))
+            code.matches(concat!("Msg::StatsRange", "ByText(text)"))
                 .count(),
             2,
             "这一发的发射点不是恰好两处（视图回调 + reducer 臂）"
         );
     }
 
-    /// 重按已选中的那颗：原生 `ToggleButton` 会先把 `IsChecked` 打成 false ⇒ 那一发必须
-    /// **整发吞掉**（不写格、不重渲染）。少了 `if on` 这道守卫，选中态会被自己的回落冲掉，
-    /// 还来回抖两帧。理由与守卫口径同 [`Msg::ThemePick`]。
-    /// 变异：把 `if on {` 删掉 ⇒ 第一条翻红；给回弹补一个 else 分支 ⇒ 末条翻红。
+    /// 主干 `OnStatsRangeChanged`：`Tag` 反查不到 = 整个不动 ⇒ 文本对不上档位表也不写格
+    /// （脏文本打进档位 = 读侧那把 `.min` 被当常规路径用）。写完不触发副作用：
+    /// 趋势图/模型用量都在 `settings_usage` 里现算，声明式重渲染自己会带上新档位。
+    /// 变异：删掉 `if let Some(next)` ⇒ 首条翻红；补一个 else 分支 ⇒ 末条翻红。
     #[test]
-    fn the_off_tick_is_swallowed_whole() {
+    fn the_unknown_text_is_dropped_whole() {
         let code = code_only(include_str!("main.rs"));
         let arm = window(
             code.as_str(),
-            concat!("Msg::StatsRange(", "index, on) => {"),
+            concat!("Msg::StatsRange", "ByText(text) => {"),
             "Msg::Toggle(key, on)",
         );
-        assert!(arm.contains("if on {"), "那颗 `IsChecked=false` 的回弹没被吞掉");
+        assert!(
+            arm.contains("if let Some(next) = next {"),
+            "文本反查不到那一发没被吞掉"
+        );
         assert!(
             arm.contains(concat!(
                 "self.set_pick(STATS_RANGE_",
-                "PICK_KEY, index);"
+                "PICK_KEY, next);"
             )),
             "选档没落到 picks 那一格"
         );
         assert!(
             !arm.contains("else"),
-            "回弹那一发被接了分支（接了就是把选中态往 Off 推）"
+            "反查不到的那一发被接了分支（接了就是给脏文本开口子）"
         );
-        // 写完不显式触发任何事：趋势图/模型用量都在 `settings_usage` 里现算，
-        // 声明式重渲染自己会带上新档位（主干那两次手动重渲染的等价物）。
         assert!(
             !arm.contains("apply_") && !arm.contains("reload"),
             "这一臂多出了副作用：主干只重渲染，分叉是声明式现算"
@@ -61159,9 +65833,10 @@ mod subagent_header_tests {
     }
 }
 
-/// 自动审批二级页「判定模型」卡（主干 `AddAutoApprovalModelCardAsync`，`MW:14602-14690`）。
-/// 本族锁四件事：卡在二级页里的**位置**、选中回执**成对写**两格、当前值读的是**默认模型
-/// 设置**（不是输入区那次会话内选择）、进页**问内核**取目录。
+/// 自动审查二级页（主干 `AddAutoReviewCardsAsync`，`MW:14662-14681`；0.9.0.2/0.9.0.3 起
+/// 原「判定模型」卡已随 dsh-approval-gate → auto-review 的换挂整卡撤掉）。本族锁三件事：
+/// 卡序（段说明 → 开关卡 → 后果卡，中间不再有判定模型卡）、进页**不问**内核模型目录、
+/// 本族界面串全过 i18n 表。
 #[cfg(test)]
 mod approval_model_tests {
     use super::*;
@@ -61176,185 +65851,72 @@ mod approval_model_tests {
             .0
     }
 
-    /// 四件的顺序 = 主干 `AddAutoApprovalCardsAsync` 里四次 `Add` 的次序：段说明 →
-    /// 开关卡 → 判定模型卡 → 「切换后会发生什么」。判定模型插在开关与后果卡之间，
-    /// 用户先看见「开不开」、再看见「谁来判」、最后才是「关了会怎样」。
-    /// 变异：把判定模型卡挪到后果卡后面 ⇒ 末条翻红。
+    /// 三件的顺序 = 主干 `AddAutoReviewCardsAsync` 里三次 `Add` 的次序：段说明 → 开关卡 →
+    /// 「切换后会发生什么」。判定模型卡（`auto-approval-model`）已随 0.9.0.3 拆卡整卡
+    /// 消失——auto-review 用会话自己的模型判定，壳侧没有也不该有独立判定模型。
+    /// 变异：把拆掉的卡加回来（或换了 id）⇒ 末两条翻红。
     #[test]
-    fn the_judging_model_card_sits_between_the_toggle_and_the_consequence_card() {
+    fn the_judging_model_card_is_gone_and_the_three_cards_keep_their_order() {
         let code = code_only(include_str!("main.rs"));
         let page = window(code.as_str(), "fn sub_auto_approval(", "fn sub_defaults(");
         let toggle = page.find("\"auto-approval\",").expect("开关卡没了");
-        let model = page.find("\"auto-approval-model\",").expect("判定模型卡没了");
         let what = page.find("\"auto-approval-what\",").expect("后果卡没了");
         assert!(
-            toggle < model,
-            "判定模型卡排到了开关卡前面（主干是先开页、后出模型卡）"
+            toggle < what,
+            "开关卡排到了后果卡后面 ⇒ 用户先看到「关了会怎样」才看到「开不开」"
         );
         assert!(
-            model < what,
-            "判定模型卡排到了后果卡后面 ⇒ 用户先看到「关了会怎样」才看到「谁来判」"
+            !page.contains("\"auto-approval-model\","),
+            "判定模型卡（auto-approval-model）回到了子页——主干 0.9.0.3 已无此卡"
         );
         assert!(
-            page.contains("\"预判模型\","),
-            "卡里那一行的标题不是「预判模型」（主干 `MakeRow` 的第一参）"
+            !page.contains("settings_model_combo"),
+            "判定模型下拉的等价件还在被引用"
         );
     }
 
-    /// 落点判据：provider 与 model **成对**写。内核 dsh-approval-gate 没有自己的模型配置项，
-    /// 判定时读 `agentDefaultModel.currentSelection()` —— 两个字段都读，只写一个就落到
-    /// 「新 model + 旧 provider」的错配组合上（主干 `MW:14681-14685` 的原注释）。
-    /// 变异：把臂里任一发 `set_pair` 摘掉 ⇒ 对应那条翻红。
+    /// 进页**不问**内核模型目录：那张问目录的腿原是判定模型下拉的（主干
+    /// `AddAutoApprovalModelCardAsync` 进页第一发 `session/modelCatalog`），0.9.0.3 拆卡后
+    /// 主干子页零 RPC ⇒ 分叉同拆。变异：把 `load_model_catalog` 加回 `Msg::OpenSub` ⇒ 翻红。
     #[test]
-    fn the_pick_writes_provider_and_model_as_one_pair() {
-        let code = code_only(include_str!("main.rs"));
-        let arm = window(
-            code.as_str(),
-            concat!("Msg::ApprovalModel(", "index) => {"),
-            "Msg::SkinImportPick =>",
-        );
-        assert!(
-            arm.contains(concat!("APPROVAL_MODEL_", "PROVIDER_KEY.to_string()")),
-            "没写 provider 那一格 ⇒ 会落到「新 model + 旧 provider」的错配组合"
-        );
-        assert!(
-            arm.contains(concat!("APPROVAL_MODEL_", "MODEL_KEY.to_string()")),
-            "没写 model 那一格 ⇒ 切了等于没切"
-        );
-        // 两格的**写点**各只有一处：另起一处单写就是第二份真相（回显闸与选中态都只是读）。
-        for (field, needle) in [
-            ("provider", concat!("APPROVAL_MODEL_", "PROVIDER_KEY.to_string()")),
-            ("model", concat!("APPROVAL_MODEL_", "MODEL_KEY.to_string()")),
-        ] {
-            assert_eq!(
-                code.matches(needle).count(),
-                1,
-                "{field} 那一格的写点不止一处（或一处都没有）"
-            );
-        }
-        // 成对且 provider 在前：主干两发 `Edit` 就是这个次序（`:14683` 先 provider）。
-        let provider = arm
-            .find(concat!("APPROVAL_MODEL_", "PROVIDER_KEY.to_string()"))
-            .expect("上面已断言过");
-        let model = arm
-            .find(concat!("APPROVAL_MODEL_", "MODEL_KEY.to_string()"))
-            .expect("上面已断言过");
-        assert!(
-            provider < model,
-            "写序翻了：model 写在 provider 前面（主干是先 provider 后 model）"
-        );
-        // 回显闸：值没变就不写、不排 autosave（视图每轮按这两格重算 `selected_index`）。
-        assert!(
-            arm.contains(concat!(
-                "if self.field(APPROVAL_MODEL_",
-                "MODEL_KEY, \"\") != row.id {"
-            )),
-            "回显闸没了 ⇒ 原生把选中回拨回来也会白排一次 autosave"
-        );
-        // 一次选中只排一次程（主干两发 `Edit` 各跟一发 `ScheduleSettingsAutoSave`，
-        // 分叉那枚自带「至多一枚在飞」闸 ⇒ 臂里只写一行）。
-        assert_eq!(
-            arm.matches(concat!("self.request_settings_", "autosave(context);"))
-                .count(),
-            1,
-            "一次选中排了不止一发程（或一发都没排）"
-        );
-    }
-
-    /// 当前值读的是**内核设置**里的默认模型两格，不是输入区模型选择器那次会话内选择
-    /// （主干 `NsString("agent-default-model", …)`，`MW:14657-14658`）—— 两者落的是同一个
-    /// 设置，但会话内选过模型的会话另有自己那份，不在这颗下拉的管辖内。
-    /// 变异：把 `self.field(APPROVAL_MODEL_…)` 换成 `self.model.selected_id` ⇒ 末条翻红。
-    #[test]
-    fn the_combo_reads_the_default_model_setting_not_the_chat_selection() {
-        let code = code_only(include_str!("main.rs"));
-        let combo = window(
-            code.as_str(),
-            "fn settings_model_combo(",
-            "fn settings_divider(",
-        );
-        assert!(
-            combo.contains(concat!("self.field(APPROVAL_MODEL_", "PROVIDER_KEY, \"\")")),
-            "没读默认模型的 provider 那一格"
-        );
-        assert!(
-            combo.contains(concat!("self.field(APPROVAL_MODEL_", "MODEL_KEY, \"\")")),
-            "没读默认模型的 model 那一格"
-        );
-        assert!(
-            !combo.contains("self.model.selected_id"),
-            "选中态读成了会话内选择（`selected_id`）——那是另一份真相"
-        );
-        // 主干那条「目录里没有当前默认模型就插一项原值」（`MW:14659-14665`）：
-        // 自建提供方 / 凭据未配时目录里查不到，不插就会出现一个空白的下拉。
-        assert!(
-            combo.contains(concat!("if !current_model.is_empty() && !options.", "iter()")),
-            "目录里没有当前默认模型时没补那一项原值 ⇒ 下拉会显示空白"
-        );
-        // 选中态从设置派生、不从控件派生 ⇒ 重绘不会把选择弹回去。
-        assert!(
-            combo.contains(concat!(".selected_index(", "selected)")),
-            "选中态不是从设置现算的"
-        );
-    }
-
-    /// 进页问内核：目录整表由 `session/modelCatalog` 铺，所以自动审批是**第二张**问内核的
-    /// 二级页（第一张是网页搜索的密钥表）。漏这一发 ⇒ 下拉永远是空的。
-    /// 变异：把 `if asks_model_catalog` 那一支摘掉 ⇒ 末条翻红。
-    #[test]
-    fn the_sub_page_asks_the_kernel_for_the_catalog() {
+    fn the_sub_page_does_not_ask_the_kernel_for_the_catalog() {
         let code = code_only(include_str!("main.rs"));
         let arm = window(code.as_str(), "Msg::OpenSub(id) => {", "Msg::CloseSub =>");
         assert!(
-            arm.contains("let asks_model_catalog = id == \"auto-approval\";"),
-            "没判「这一张卡要问目录」"
-        );
-        assert!(
-            arm.contains("if asks_model_catalog {"),
-            "判了却没发 ⇒ 下拉永远是空的"
-        );
-        // 与网页搜索那张**同形**：都是进页现问、都不留上一次的旧状态。
-        assert!(
-            arm.contains("self.load_model_catalog(context);"),
-            "没走 `load_model_catalog` 那一发（另起一发 RPC = 两份真相）"
+            !arm.contains("load_model_catalog"),
+            "拆卡之后这张二级页不该再问模型目录（多发一发 RPC = 两份真相）"
         );
     }
 
-    /// 两格要真能落盘：白名单里没有的 ns/field，`settings_autosave_groups` 组不出包，
-    /// 写了也只活在内存里、退出即丢（主干是靠 `settings/mutate` 落的内核设置）。
-    /// 变异：把白名单里任一支摘掉 ⇒ 末条翻红。
+    /// 白名单里不再有那两格：`agent-default-model` 的 provider/model 已无写点，留在
+    /// `SETTINGS_AUTOSAVE_FIELDS` 里就是死条目（真有谁写这两格，还会假模假样落盘）。
     #[test]
-    fn the_two_default_model_fields_are_in_the_autosave_whitelist() {
+    fn the_two_default_model_fields_left_the_autosave_whitelist() {
         assert_eq!(
             settings_autosave_cell("agent-default-model_provider"),
-            Some(("agent-default-model", "provider")),
-            "provider 那一格进不了 autosave 白名单 ⇒ 切了退出即丢"
+            None,
+            "provider 那格还在 autosave 白名单里 ⇒ 判定模型卡的残腿"
         );
         assert_eq!(
             settings_autosave_cell("agent-default-model_model"),
-            Some(("agent-default-model", "model")),
-            "model 那一格进不了 autosave 白名单 ⇒ 切了退出即丢"
-        );
-        // 键名按**第一发** `_` 切 ⇒ ns 自己带连字符才对；写成 `agent_default_model_…`
-        // 会切出一个不存在的 ns，白名单里查不到。
-        assert_eq!(
-            settings_autosave_cell("agent_default_model_model"),
             None,
-            "ns 用了下划线 ⇒ 切开就不是 `agent-default-model` 那个 ns 了"
+            "model 那格还在 autosave 白名单里 ⇒ 判定模型卡的残腿"
         );
     }
 
-    /// 本族新增的界面串全过 i18n 表（中文原文当键、en 走 `i18n::EN`）。
+    /// 本族的界面串全过 i18n 表（中文原文当键、en 走 `i18n::EN`）：0.9.0.2/0.9.0.3 换挂
+    /// auto-review 之后的四枚新键 + 后果卡标题。
     #[test]
     fn every_label_in_this_family_is_a_translation_key() {
         let zh = Catalog::load("zh", None);
         let en = Catalog::load("en", None);
         for key in [
-            "判定模型",
-            "预判模型",
-            "自动审批判定模型",
-            "自动审批每次预判写入/命令是否不可回补时所用的模型，选项来自内核模型目录。",
-            "切换后新会话的默认模型也随之改变；已在会话里选过模型的会话不受影响。",
+            "自动审查",
+            "启用自动审查",
+            "切换后会发生什么",
+            "自动审查由内核插件 @deepseek-ai/dsh-experimental-auto-review 提供（内核标题「自动授权审查」）：当会话权限预设切到「自动审查」时，每次工具调用前由当前会话的模型预判是否授权——安全则直接放行，有风险则带理由转人工确认。开关增删内核 profile 的 bundle 清单，由内核热重载即时生效。",
+            "开启后权限模式里多出「自动审查」：每次工具调用前由当前会话模型预判是否授权，安全直接放行、有风险转人工。",
+            "开启：权限选择器（输入区左下角）里出现「自动审查」，新会话可选用它。\n关闭：该预设从选择器消失；正在使用它的会话回落到完全权限，审批恢复人工确认。\n重新开启后继续生效。",
         ] {
             assert_eq!(zh.l(key), key, "{key}：zh 侧没原样回键");
             assert_ne!(en.l(key), key, "{key}：那一串不在 i18n 表里，英文界面会露中文");
@@ -61523,10 +66085,10 @@ mod ctrl_s_toggle_tests {
 // ① 三档文案与口径只有一处真相（`STATS_HEAT_METRIC_CHOICES` + [`HeatMetric::from_index`]，
 //    两端共用同一张下标序）；
 // ② 写点只有一处（reducer 那一发），读侧夹下标；
-// ③ 选中态从状态派生（三颗 `ToggleButton` 谁都能同时 On ⇒ 这是「同刻至多一个档」的唯一保证）；
+// ③ 选中态从状态派生（真 `SelectorBar` 落地后与主干同件，`is_selected` 仍从 `picks` 读出）；
 // ④ 口径真的进了 `heat_cells`（不是写完格就扔 —— 产品码里不许再出现 `HeatMetric::Day` 字样）；
 // ⑤ 那颗分段在**两臂都在场**（主干它是 xaml 静态件，内核没连上时也在卡头右槽里）；
-// ⑥ `IsChecked=false` 的回弹整发吞掉；
+// ⑥ 文本反查不到 = 整发吞掉（主干 `Tag` 反查不到不动的那一判）；
 // ⑦ 四串文案全是 i18n 键（本仓定案的复发缺陷类：英文界面露中文）。
 //
 // 本 mod 追加在**全文件最末尾**（本仓定案的坏法③：新 mod 落在被锁函数之前会把窗口锚点抢走）。
@@ -61585,7 +66147,7 @@ mod heat_metric_tests {
     fn the_pick_cell_has_exactly_one_writer_and_the_read_is_clamped() {
         let code = code_only(include_str!("main.rs"));
         assert_eq!(
-            code.matches(concat!("set_pick(STATS_HEAT_METRIC_", "PICK_KEY, index)"))
+            code.matches(concat!("set_pick(STATS_HEAT_METRIC_", "PICK_KEY, next)"))
                 .count(),
             1,
             "Token 活动统计口径那一格的写入方不止一处"
@@ -61599,19 +66161,19 @@ mod heat_metric_tests {
 
     // ---------------- ② 选中态从状态派生 --------------------------------------
 
-    /// `is_checked(active == index)`：不为 On 的天然只有一个。主干那边靠 `SelectorBar`
-    /// 自己的单选语义，分叉三颗 `ToggleButton` 谁都能同时 On ⇒ 这条是那颗分段唯一的互斥保证。
-    /// 变异：把 `is_checked(active == index)` 换成 `is_checked(false)` ⇒ 本条翻红。
+    /// `is_selected(active == index)`：不为选中的天然只有一个（主干那颗 `SelectorBar` 的
+    /// 单选语义同款）。变异：把 `is_selected(active == index)` 换成 `is_selected(false)` ⇒
+    /// 本条翻红。
     #[test]
     fn the_selection_is_derived_from_state_not_from_the_widget() {
         let source = include_str!("main.rs");
         let bar = window(source, "fn usage_heat_metric_bar(", "fn usage_heat_rows(");
         assert!(
             bar.contains("let active = self.pick(STATS_HEAT_METRIC_PICK_KEY, 0);"),
-            "选中态不再读 picks 那一格（改成控件自持 ⇒ 三颗能同时 On）"
+            "选中态不再读 picks 那一格（改成控件自持 ⇒ 重渲染会弹回）"
         );
         assert_eq!(
-            bar.matches(".is_checked(active == index)").count(),
+            bar.matches(".is_selected(active == index)").count(),
             1,
             "选中态不是从 active 派生的"
         );
@@ -61655,7 +66217,7 @@ mod heat_metric_tests {
         let source = include_str!("main.rs");
         let usage = window(source, "fn settings_usage(", "fn usage_heat_rows(");
         assert_eq!(
-            usage.matches("Some(self.usage_heat_metric_bar(context, p))").count(),
+            usage.matches("Some(self.usage_heat_metric_bar(context))").count(),
             2,
             "口径分段的 push 枚数漂了（主干那颗是 xaml 静态件 ⇒ 两档语义都在场）"
         );
@@ -61681,47 +66243,48 @@ mod heat_metric_tests {
 
     // ---------------- ⑤ 消息与回弹 --------------------------------------------
 
-    /// 消息形状带 `bool`，且只有两发（视图回调 + reducer 臂）。少了 `bool` 就没法分辨
-    /// 「点我」与「我的回弹」—— 这正是下面那条要吞掉的那一发。
-    /// 变异：把 `StatsHeatMetric(usize, bool)` 改成 `StatsHeatMetric(usize)` ⇒ 首条翻红。
+    /// 消息带**选中 item 的文本**，且只有两发（视图回调 + reducer 臂）。
+    /// 变异：把 `StatsHeatMetricByText(Option<String>)` 改回下标载荷 ⇒ 首条翻红。
     #[test]
-    fn the_message_carries_the_native_flag_and_nowhere_else() {
+    fn the_message_carries_the_selected_text_and_nowhere_else() {
         let code = code_only(include_str!("main.rs"));
-        // 窗口从上一颗分段（`StatsRange`）起、到下一个变种（`Note`）止 ⇒ 罩住本变种那一行。
-        let decl = window(code.as_str(), "StatsRange(usize, bool),", "Note(String),");
+        // 窗口从姊妹颗（`StatsRangeByText`）起、到下一个变种（`Note`）止 ⇒ 罩住本变种那一行。
+        let decl = window(code.as_str(), "StatsRangeByText(Option<String>),", "Note(String),");
         assert!(
-            decl.contains("StatsHeatMetric(usize, bool)"),
-            "口径那颗消息不再带原生 IsChecked"
+            decl.contains("StatsHeatMetricByText(Option<String>)"),
+            "口径那颗消息不再带选中文本"
         );
         assert_eq!(
-            code.matches(concat!("Msg::StatsHeatMetric(", "index, on)"))
+            code.matches(concat!("Msg::StatsHeatMetric", "ByText(text)"))
                 .count(),
             2,
             "这一发的发射点不是恰好两处（视图回调 + reducer 臂）"
         );
     }
 
-    /// 重按已选中的那颗：原生 `ToggleButton` 会先把 `IsChecked` 打成 false ⇒ 那一发必须
-    /// **整发吞掉**（不写格、不重渲染）。理由与守卫口径同 [`Msg::ThemePick`]。
-    /// 变异：把 `if on {` 删掉 ⇒ 首条翻红；给回弹补一个 else 分支 ⇒ 末条翻红。
+    /// 主干 `OnStatsHeatMetricChanged`：`Tag` 反查不到 = 整个不动 ⇒ 文本对不上档位表也不写格。
+    /// 变异：删掉 `if let Some(next)` ⇒ 首条翻红；补一个 else 分支 ⇒ 末条翻红。
     #[test]
-    fn the_off_tick_is_swallowed_whole() {
+    fn the_unknown_text_is_dropped_whole() {
         let code = code_only(include_str!("main.rs"));
         let arm = window(
             code.as_str(),
-            concat!("Msg::StatsHeatMetric(", "index, on) => {"),
+            concat!("Msg::StatsHeatMetric", "ByText(text) => {"),
             "Msg::Toggle(key, on)",
         );
-        assert!(arm.contains("if on {"), "那颗 `IsChecked=false` 的回弹没被吞掉");
         assert!(
-            arm.contains(concat!("self.set_pick(STATS_HEAT_METRIC_", "PICK_KEY, index);")),
+            arm.contains("if let Some(next) = next {"),
+            "文本反查不到那一发没被吞掉"
+        );
+        assert!(
+            arm.contains(concat!("self.set_pick(STATS_HEAT_METRIC_", "PICK_KEY, next);")),
             "选档没落到 picks 那一格"
         );
         assert!(
             !arm.contains("else"),
-            "回弹那一发被接了分支（接了就是把选中态往 Off 推）"
+            "反查不到的那一发被接了分支（接了就是给脏文本开口子）"
         );
-        // 写完不显式触发任何事：热力格子与 `max` 都在 `usage_heat_rows` 里现算，
+        // 写完不显式触发任何事：热力格子与 `max` 都在 `usage_heat_cells` 里现算，
         // 声明式重渲染自己会带上新口径（主干 `OnStatsHeatMetricChanged` 那一次手动
         // `RenderStatsHeatmap()` 的等价物）。
         assert!(
@@ -62085,7 +66648,9 @@ mod skin_video_play_tests {
     const A_ARM: &str = concat!("fn arm_skin_", "video_tick(");
     const E_ARM: &str = concat!("fn update_silent_", "check(");
     const A_CLEAR: &str = concat!("Msg::SkinClear =", "> {");
-    const E_CLEAR: &str = concat!("Msg::ApprovalModel(", "index) => {");
+    // 0.9.0.3 拆卡换的止锚：原锚 `Msg::ApprovalModel` 那一臂已随判定模型卡摘掉，
+    // 清除臂与图片导入臂如今相邻 ⇒ 直接拿下一臂的起点当止锚（与 A_IMG 同串，各用各的）。
+    const E_CLEAR: &str = concat!("Msg::SkinImportPick =", "> {");
     const A_IMG: &str = concat!("Msg::SkinImportPick =", "> {");
     const E_IMG: &str = concat!("Msg::SkinVideoImportPick =", "> {");
     const A_VID: &str = concat!("Msg::SkinVideoImportPick =", "> {");
@@ -62372,6 +66937,364 @@ mod skin_video_play_tests {
         assert!(
             body.contains(concat!("Msg::SkinVideoFrame(slot.", "take_frame())")),
             "取货任务没走 FrameSlot::take_frame：等多久的口径从 lib 侧漏到了壳里"
+        );
+    }
+}
+
+// 本 mod 追加在**全文件最末尾**（成规见 `skin_video_play_tests` 头注）。
+//
+// R3 复验余留（12 项）的实现侧锁。每条判据都先读主干真源再钉，出处写在各测试头注。
+#[cfg(test)]
+mod r3_parity_tests {
+    /// `fn_body` 的本地复刻（上面各 mod 的 helper 都是私有 mod 内件，跨 mod 不可见；
+    /// 语义与 `fn_body` 逐字同形：切到尾锚，找不到尾锚就吃到底）。
+    fn fn_body<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
+        let (_, rest) = source
+            .split_once(start)
+            .unwrap_or_else(|| panic!("源码里找不到锚点 {start}"));
+        rest.split_once(end).map_or(rest, |(body, _)| body)
+    }
+
+    // ---------------- 项2：toggle 双侧状态标签 ----------------
+
+    /// 主干那颗开关的屏上形态是「开 [switch]」（`SettingsToggleSwitchStyle` 把内容
+    /// presenter 挪到滑轨左侧）。reactor 的 `ToggleSwitch` 用原生默认模板（内容在右），
+    /// 不喂 OnContent/OffContent 槽时模板吃本地化默认值 ⇒ 右侧多出一颗「开/关」。
+    /// 锁两件事：①行内兄弟 TextBlock 还在（左侧状态字）；②两颗槽都喂了空 `TextBlock`
+    /// 把原生内容压成零宽。变异：把 `.slots([...])` 整条摘掉 ⇒ 第二条翻红。
+    #[test]
+    fn the_toggle_suppresses_the_native_on_off_content() {
+        let source = include_str!("main.rs");
+        let body = fn_body(source, "fn settings_toggle(", "fn settings_general(");
+        assert!(
+            body.contains(concat!("TextBlock::", "new()"))
+                && body.contains(concat!("if on { \"开\" } else { \"关\" }")),
+            "左侧状态字没了（主干 OnContent 在滑轨左列）"
+        );
+        assert!(
+            body.contains(concat!("SlotView::new(ToggleSwitchSlot::", "OnContent")),
+                "OnContent 槽没清空：原生「开」会叠在滑轨右侧",
+        );
+        assert!(
+            body.contains(concat!("SlotView::new(ToggleSwitchSlot::", "OffContent")),
+            "OffContent 槽没清空：原生「关」会叠在滑轨右侧",
+        );
+        assert!(
+            body.matches(concat!("TextBlock::", "new()")).count() >= 3,
+            "两颗槽里各要一颗空 TextBlock（外加左侧那颗状态字）"
+        );
+    }
+
+    // ---------------- 项1：视频皮肤底下那层 SurfaceAlt ----------------
+
+    /// 主干视频皮肤**不换底**：`ApplySkinVideoFromPath` 先把 `ContentSurface.Background`
+    /// 复位成 `SurfaceAltBrush`（`MW:9325`）再插播放器 ⇒ 视频底下恒有一层 LayerFill；
+    /// 图片皮肤是「换底」（`MW:9306` 把 ImageBrush 刷上 Background）⇒ 底层退场。
+    /// 分叉的内容格底色必须按这两态分流（`skin_video` 在册 = 视频皮肤）。
+    /// 变异：把判据改回单看 `skin_laid` ⇒ 首条翻红。
+    #[test]
+    fn the_video_skin_keeps_the_surface_alt_underlay() {
+        let source = include_str!("main.rs");
+        let body = fn_body(source, "let skin_laid = backdrop.is_some();", "let colsync = layout::sync_layout(");
+        assert!(
+            body.contains(concat!("match (skin_laid, self.skin_video.", "is_some())")),
+            "内容格底色没有按「图片/视频」分流：视频皮肤缺 SurfaceAlt 衬底（R3 暗部实测 main≈30-33 / rust≈20-27）"
+        );
+        assert!(
+            body.contains(concat!("(true, false) => p.", "transparent")),
+            "图片皮肤那支丢了 transparent：主干换底后底层必须退场"
+        );
+        assert!(
+            body.contains(concat!("_ => p.", "surface_alt")),
+            "视频/无皮肤那支丢了 surface_alt：主干视频路径的基色就是它"
+        );
+    }
+
+    // ---------------- 项4：S0 组名与会话同起点 ----------------
+
+    /// 组内子行缩进常量与 icon→文字间距是一对（同串对齐法，R3\S0 实测差值）：
+    /// 主干组头文字 x≈54.5、会话行文字 x≈53.5 同起点。间距回到 10 ⇒ 组头文字 −6；
+    /// 缩进回到 41.3 ⇒ 会话行 +10.5，两头都会把「同起点」拆开。
+    #[test]
+    fn the_nav_indent_matches_the_mainline_landmark() {
+        let tokens = include_str!("tokens.rs");
+        let source = include_str!("main.rs");
+        let nav = fn_body(source, "fn nav_item_menu(", "fn session_row(");
+        assert!(
+            tokens.contains(concat!("pub const NAV_GROUP_", "INDENT: f64 = 30.8;")),
+            "NAV_GROUP_INDENT 漂了：R3 实测会话行须与组头文字同起点（30.8 = 41.3 − 10.5）"
+        );
+        assert!(
+            nav.contains(concat!(".spacing(", "16.0)")),
+            "nav 行 icon→文字间距漂了：主干同串实测差 12px@2x ⇒ 16"
+        );
+    }
+
+    // ---------------- 项5：P-usage 热力卡与两颗 SelectorBar ----------------
+
+    /// reactor 的 `children` 只发 reconciliation key、不按序分列 ⇒ 凡 [STAR, Auto]
+    /// 两列网格，右列子级必须显式 `.grid_column(1)`。三处消费者：卡头右槽
+    /// （每日/每周/累计）、时间范围行（近 7 天/近 30 天）、nav 组行 chevron。
+    /// 变异：摘掉任何一处 `grid_column(1)` ⇒ 对应条翻红。
+    #[test]
+    fn the_star_auto_grids_pin_their_second_column() {
+        let source = include_str!("main.rs");
+        let card = fn_body(source, "fn settings_card_with_trailing(", "fn settings_divider(");
+        assert!(
+            card.contains(concat!("Border::new().grid_column(", "1).content(trailing)")),
+            "卡头右槽没钉列：口径分段会贴印「Token 活动」卡头"
+        );
+        let range = fn_body(source, "fn usage_range_row(", "fn usage_heat_rows(");
+        assert!(
+            range.contains(concat!("Border::new().grid_column(", "1).content(bar)")),
+            "时间范围行的 SelectorBar 没钉列：近 7 天/近 30 天会贴印「时间范围」"
+        );
+        let nav = fn_body(source, "fn nav_item_menu(", "fn session_row(");
+        assert!(
+            nav.contains(concat!(".grid_column(", "1)")),
+            "nav 组行 chevron 没钉列：∧/∨ 会贴在标题右侧而不是行右端"
+        );
+    }
+
+    /// 热力卡体：三层（格子/月标/图例）收成一行 —— `settings_card_with_trailing`
+    /// 会给逐行插通栏分隔线，主干那张卡的 body 是 `StackPanel Spacing=12` 没有分隔线；
+    /// 格子+月标水平居中（主干 ScrollViewer 窄内容居中，R3 实测两侧 211/211）。
+    /// 变异：把 `heat-body` 拆回三行 ⇒ 首条翻红；把 `heat-chart` 的居中摘掉 ⇒ 次条翻红。
+    #[test]
+    fn the_heat_card_body_is_one_centered_row() {
+        let source = include_str!("main.rs");
+        let cells = fn_body(source, "fn usage_heat_cells(", "fn usage_heat_legend(");
+        assert!(
+            cells.contains(concat!("\"heat-", "body\"")),
+            "热力卡体拆回多行：divider 会在月份轴下多出一条线"
+        );
+        assert!(
+            cells.contains(concat!("\"heat-", "chart\"")),
+            "格子+月标没有包成同一层：两块必须同轴居中"
+        );
+        assert!(
+            cells.contains(concat!("horizontal_alignment(HorizontalAlignment::", "Center)")),
+            "格子层没居中：月标会落到格子右界之外（主干 5月-10月 压在格轴上）"
+        );
+        assert!(
+            cells.contains(concat!(".margin(th([0.0, 10.0, 0.0,", " 0.0]))")),
+            "卡体顶距丢了：10 + 卡头 margin-bottom 2 = 主干 Spacing 12 那一档"
+        );
+    }
+
+    // ---------------- 项6：宠物库卡无卡头 ----------------
+
+    /// 主干 `RenderPetLibraryCard` 虽写了 `NewCard(L("宠物库"), …)`，但紧跟着的
+    /// `ReloadPetLibraryAsync` 第一发 `rows.Children.Clear()`（`Pet.cs:382`）把卡头与
+    /// 描述一起清掉 ⇒ 渲染真值是无卡头。变异：把「宠物库」字面量填回卡头 ⇒ 翻红。
+    #[test]
+    fn the_pet_library_card_renders_headerless() {
+        let source = include_str!("main.rs");
+        let body = fn_body(source, "fn settings_pet(", "fn pet_library_rows(");
+        let library = fn_body(&body, "\"pet-library\"", "self.pet_library_rows(");
+        assert!(
+            !library.contains(concat!('"', "宠物库", '"')),
+            "宠物库卡又画了卡头：主干重载那发 Clear() 会把它清掉（R3 实测无卡头）"
+        );
+        assert!(
+            !library.contains(concat!('"', "已收录的宠物", '"')),
+            "宠物库卡又画了描述行：同上"
+        );
+    }
+
+    // ---------------- 项7：记忆存储/内容卡零内边距紧排 ----------------
+
+    /// 主干两张卡的 body 都是 NewCard 裸 StackPanel（无 Spacing、无行内边距、无分隔线）：
+    /// 说明行与路径行是直接子级（`MW:14542-14553`），编辑框与「共 N 行」状态行同（`MW:14877-14884`）。
+    /// 变异：把 `store-body` 拆回两行（divider 回来）或把 SETTINGS_ROW 内边距裹回去 ⇒ 翻红。
+    #[test]
+    fn the_memory_cards_stack_tight() {
+        let source = include_str!("main.rs");
+        let memory = fn_body(source, "fn settings_memory(", "fn settings_computer_control(");
+        assert!(
+            memory.contains(concat!("\"store-", "body\"")),
+            "存储卡说明/路径两行拆开了：divider 会把路径挤成独立区块"
+        );
+        assert!(
+            memory.matches(concat!("pad::SETTINGS_", "ROW")).count() == 0,
+            "记忆两卡还有 SETTINGS_ROW 行内边距：主干是零内边距紧排，多出的高度会把状态行推出折叠线"
+        );
+        assert!(
+            memory.contains(concat!("\"line-", "state\"")),
+            "「共 N 行」状态行丢了（主干 `UpdateMemoryStateLine` 那一格）"
+        );
+    }
+
+    // ---------------- 项8：指令框初值不误标 dirty ----------------
+
+    /// dirty 判据的字段读法必须与编辑框回填**同一条回落**：`field(KEY, &instructions_saved)`。
+    /// 空串回落会把启动态（fields 空表、快照无键）读成 "" ≠ 已存稿 ⇒ 初始误标
+    /// 「有未保存的修改…」（主干初值是计数行「字数 30 / 4000」，`Personalization.cs:311-331`）。
+    /// 变异：把回落改回 `""` ⇒ 首条翻红。
+    #[test]
+    fn the_instructions_dirty_check_uses_the_same_fallback_as_the_editor() {
+        let source = include_str!("main.rs");
+        let status = fn_body(source, "fn instructions_status(", "fn ctrl_enter_mode(");
+        assert!(
+            status.contains(concat!(
+                "self.field(INSTRUCTIONS_KEY, &self.",
+                "instructions_saved)"
+            )),
+            "dirty 判据的回落与编辑框回填不一致：启动态会被误标「有未保存的修改…」"
+        );
+        assert!(
+            status.contains(concat!("字数 {0} / {", "1}")),
+            "计数行文案漂了（主干 `UpdateInstructionsState` 的「字数 {{n}} / 4000」）"
+        );
+    }
+
+    // ---------------- 项9：提供方行卡紧排列表 ----------------
+
+    /// 主干把行卡收进 `providerList = StackPanel{ Spacing = Sp4 }`（`MW:11283-11291`）
+    /// 再整列进 SettingsHost ⇒ 行卡间距 4，不是宿主的 12。变异：拆回平铺 ⇒ 翻红。
+    #[test]
+    fn the_provider_cards_pack_into_a_tight_list() {
+        let source = include_str!("main.rs");
+        let models = fn_body(source, "fn settings_models(", "fn provider_card(");
+        assert!(
+            models.contains(concat!("\"provider-", "list\"")),
+            "提供方行卡平铺回宿主：行距会从 4 涨到 12（R3 实测 70 vs 主干 62）"
+        );
+        assert!(
+            models.contains(concat!(".spacing(space::", "S4)")),
+            "紧排列表的间距不是 4"
+        );
+    }
+
+    // ---------------- 项10：S2 工具行不画前导图标 ----------------
+
+    /// 主干头行代码里有一颗工具图标 `FontIcon{Glyph, 12, 0.85}`（`ToolCards.cs:141-146`），
+    /// 但 R3\S2 实测那颗在屏上是空白（PUA 码位没落字形），分叉的 mark 把它画成实心方块
+    /// ⇒ 按渲染真值收掉。变异：把图标 Border（0.8 那层）加回来 ⇒ 翻红。
+    #[test]
+    fn the_tool_line_leaves_out_the_leading_icon() {
+        let source = include_str!("main.rs");
+        // 尾锚 = tool_line 的下一位邻居（`tool_duration_text` 是**前置**自由函数，
+        // 拿它收口会一路吃到文件尾，把别处的 `opacity(0.8)` 灌进窗口）。
+        let line = fn_body(source, "fn tool_line(", "fn max_tokens_card(");
+        assert!(
+            !line.contains(concat!("opacity(0.", "8)")),
+            "工具行的图标宿主 Border 又回来了（0.8 那一层）：R3 主干那颗在屏上是空白"
+        );
+        assert!(
+            line.contains(concat!("mark_size(COMPACTION_", "CHEVRON")),
+            "chevron 丢了（主干头行第一颗，`ToolCards.cs:139`）"
+        );
+    }
+
+    // ---------------- 项11：R5 视觉尾差四件 ----------------
+
+    /// 主干 `Theme/Styles.xaml:209` `SettingsToggleSwitchStyle` 把 `MinWidth` 归零（样式
+    /// 注释明说：原生钉 154、轨丸画在盒左端 ⇒ 行的 Auto 列被撑到 文本+12+154，轨丸右侧
+    /// 多 ~100px 空档，R5 实测距卡右缘 ~190 显示px、主干 21-35）。分叉没有模板替换通路，
+    /// 走本地 `min_width(0)` 压掉样式档 ⇒ 盒贴内容宽、Auto 列贴缘。变异：摘掉
+    /// `.min_width(0.0)` ⇒ 首条翻红。
+    #[test]
+    fn the_settings_toggle_box_hugs_its_track() {
+        let source = include_str!("main.rs");
+        let body = fn_body(source, "fn settings_toggle(", "fn settings_general(");
+        assert!(
+            body.contains(concat!(".min_width(", "0.0)")),
+            "开关盒的 154px 富余又回来了：距卡右缘会多出 ~100 逻辑px 空档"
+        );
+    }
+
+    /// 主干 `MainWindow.Pet.cs` 全文没有一发 `AddDivider`（显示卡 `:290/:319`、宠物库卡
+    /// `:402`、安装卡 `:590/:610`、诊断卡 `:745+` 全是行直排）⇒ 宠物那族不吃卡壳烘进去的
+    /// 通栏 divider（R5\P-pet：清单条目间 4 条、「显示」卡 toggle 行与大小行之间 1 条，
+    /// 主干都没有）。四张卡全部走裸卡体 [`Shell::settings_card_plain`]，与
+    /// [`Shell::settings_card`] 唯一差别 = 不插 divider。变异：任何一张换回
+    /// `settings_card(` ⇒ 首条翻红；`settings_card_plain` 自己长出 divider ⇒ 末条翻红。
+    #[test]
+    fn the_pet_cards_carry_no_dividers() {
+        let source = include_str!("main.rs");
+        let pet = fn_body(source, "fn settings_pet(", "fn pet_library_rows(");
+        assert!(
+            !pet.contains(concat!("self.settings_card", "(")),
+            "宠物区又用了带通栏 divider 的卡壳：主干 Pet.cs 一发 AddDivider 都没有"
+        );
+        assert!(
+            pet.matches(concat!("self.settings_card_", "plain(")).count() == 4,
+            "宠物四卡（显示/清单/安装/诊断）要全部走裸卡体"
+        );
+        let plain = fn_body(source, "fn settings_card_plain(", "fn settings_combo(");
+        assert!(
+            !plain.contains(concat!("settings_", "divider")),
+            "裸卡体自己长出了分隔线：主干 NewCard 的 body 是裸 StackPanel"
+        );
+    }
+
+    /// 主干 `MainWindow.xaml:145-151` 在 AutoSuggestBox.Resources 里把 TextControl 六键
+    /// （Background / …PointerOver / …Focused 与 BorderBrush / …PointerOver / …Focused）
+    /// 覆成 Transparent：TextBox 默认模板的 Focused/PointerOver 态是 Storyboard 动画
+    /// （`BorderElement.Background/BorderBrush` 指到这族资源），本地
+    /// `background(transparent)`/`border_thickness(0)` 压不住 ⇒ R5 截图聚焦态照旧渲出
+    /// 不透明内框 + 浅描边，把胶囊割成「放大镜独立圆底 + 描边输入域」。reactor 0.100.0
+    /// 只给 `Button` 开了 `resource_overrides`（资源沿子树生效）⇒ 输入框包一层透明
+    /// ghost 钮当资源载体（四态钉透明 + `ButtonPadding` 归零，自身零绘制；配方
+    /// [`search_input_resources`]）。变异：摘掉载体钮或任一键 ⇒ 对应条翻红。
+    #[test]
+    fn the_search_input_kills_the_focused_chrome() {
+        let source = include_str!("main.rs");
+        let res = fn_body(source, "fn search_input_resources(", "struct PillFace {");
+        for key in [
+            concat!("\"TextControlBackground\","),
+            concat!("\"TextControlBackgroundPointerOver\","),
+            concat!("\"TextControlBackgroundFocused\","),
+            concat!("\"TextControlBorderBrush\","),
+            concat!("\"TextControlBorderBrushPointerOver\","),
+            concat!("\"TextControlBorderBrushFocused\","),
+        ] {
+            assert!(
+                res.contains(key),
+                "TextControl 六键缺 {key}：聚焦/悬停态的模板动画会把内框画回来"
+            );
+        }
+        assert!(
+            res.contains(concat!("\"ButtonPadding\"")),
+            "载体钮的默认 Padding 没归零：11,5,11,6 会把输入框从胶囊里顶出来"
+        );
+        let strip = fn_body(source, "fn strip(", "const TRAJECTORY_FILTERS");
+        assert!(
+            strip.contains(concat!("resource_overrides(search_input_", "resources())")),
+            "输入框没有包资源载体钮：聚焦态内框+浅描边会把胶囊割成两块"
+        );
+        assert!(
+            strip.contains(concat!("\"SessionSearch", "Box\"")),
+            "搜索框的 AutomationId 丢了（自测矩阵按 id 取元素）"
+        );
+    }
+
+    /// R5\S1 实测（两边标题字形都是 52-53 显示px 高 = 同 2x 倍率）：标题墨底→描述墨顶
+    /// 主干 71 显示px、分叉 55 ⇒ 缺 16 显示px = 8 逻辑px。reactor 的 TextBlock 没有
+    /// line_height 通路（标题行盒比主干矮出的一截补不回来）⇒ 补在描述块顶距：
+    /// [`Shell::settings_section_desc`] 的 margin 钉 `[0, 8, 0, 4]`（不再取
+    /// `pad::CARD_DESCRIPTION`——那把尺还量着卡内副标题，那一格本就对齐），general /
+    /// plugins / auto-review 三处内联段说明统一收编到这颗。变异：8 改回 0 ⇒ 首条翻红；
+    /// 内联段说明绕开共用颗 ⇒ 那个键的字面量回到多处，末条翻红（本文件的计数窗含
+    /// 注释与测试 ⇒ 这条文档里不写带引号的键名）。
+    #[test]
+    fn the_section_desc_leaves_the_title_gap() {
+        let source = include_str!("main.rs");
+        let desc = fn_body(source, "fn settings_section_desc(", "fn settings_line(");
+        assert!(
+            desc.contains(concat!(".margin(th([0.0, 8.0, 0.0,", " 4.0]))")),
+            "段说明顶距丢了：R5\\S1 实测差 16 显示px@2x = 8 逻辑px"
+        );
+        let general = fn_body(source, "fn settings_general(", "fn font_stepper(");
+        assert!(
+            general.contains(concat!("self.settings_section_", "desc(")),
+            "general 的段说明又内联了：顶距只钉在共用颗上"
+        );
+        assert_eq!(
+            source.matches(concat!("\"section-", "desc\"")).count(),
+            1,
+            "段说明的键字面量回到多处：顶距只有一处真相（共用颗）"
         );
     }
 }

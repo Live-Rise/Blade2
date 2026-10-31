@@ -1,16 +1,22 @@
-//! 内核进程保底（task #68：修闪退残留内核占租约）。
+//! 内核进程保底（task #68 起家）+ 常驻复用（0.9.0.4 移植）的进程侧原语。
 //!
 //! 主干那件保底是 `Dsh/DshKernelHost.cs` 在 0.8.1（`f35e6e3`）里长出来的，分叉这里对应两件事：
 //!
-//! · [`KillJob::attach`] —— 对应主干 `AttachToKillJob()`（`DshKernelHost.cs:170`），在 `Kernel`
-//!   里**留住**作业句柄，句柄关闭即 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`（`:22`）带走内核**整棵树**
-//!   （主干 `:155` 那句注释：「作业对象句柄关闭即触发 KILL_ON_JOB_CLOSE」；句柄只在 `Dispose` 收）。
-//!   为什么必须有这层，主干在 `:164-167` 写得很清楚：**内核持有每条会话目录的写租约，只有内核进程
-//!   死亡才释放**；壳 hard crash 时子进程不跟着退 ⇒ 每次崩溃留一个占着租约的孤儿 ⇒ 之后重进同一条
-//!   会话必撞 `SessionAlreadyOwnedError`。分叉今天只有 `kernel.rs` 里那颗 `child.kill()`，
-//!   杀的是内核**主进程一个 PID**，它自己起的 MCP 子进程（server-memory / playwright 等）全都活下来。
+//! · [`kill_process_tree`] —— 主干 `proc.Kill(entireProcessTree: true)` 的对应物（常驻改造后主干
+//!   的 `RecycleResident` / `KillAndClear` / 启动超时三处都走它）。**task #68 时代的「壳亡即杀」
+//!   作业对象（`KillJob`，`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`）已随常驻设计整体移除**：主干
+//!   0.9.0.4 起壳退出必须**留下**内核（冷启 ~6.6s 的大头是 ~200 插件的模块装载风暴，进程级复用
+//!   是唯一能到亚秒的路径；连接信息落 `DSH_HOME\blade2-resident-kernel.json`，见 `kernel.rs`），
+//!   「句柄一关就带走整棵树」与常驻直接矛盾。杀内核的口只剩两个：引导超时
+//!   （`kernel::Kernel::start` 内部）与重试清理（`kernel::Kernel::kill_and_clear`），两者都汇到
+//!   [`kill_process_tree`]。内核持有每条会话目录的写租约、只有进程死亡才释放 —— 所以「杀」必须
+//!   连它自己起的 MCP 子进程（server-memory / playwright 等）整棵树一起收，只杀主进程一样漏租约。
 //!
-//! · [`sweep_orphan_kernels`] —— 对应主干 `SweepOrphanKernels()`（`:253`）。
+//! · [`sweep_orphan_kernels`] / [`sweep_orphan_kernels_sparing`] —— 对应主干
+//!   `SweepOrphanKernels(sparePid)`。无状态文件的崩溃残留仍由它兜底；**常驻内核的父进程是
+//!   上一次的壳（已死），在清扫眼里就是孤儿** —— 会话中途的清扫调用必须走
+//!   [`sweep_orphan_kernels_sparing`] 把当前内核 pid 点名豁免，否则常驻内核被误杀；引导期清扫
+//!   发生在 attach 之后（要么已复用 ⇒ 不清扫，要么已回收 ⇒ 无需豁免），零参版够用。
 //!
 //! ## 为什么这里的判定比主干**更窄**（这条是本模块存在的理由）
 //!
@@ -32,18 +38,21 @@
 //!    另外 [`select_orphans`] 在 owner 集为空时直接返回空表：连一个「活着的本程序」都指认不出来，
 //!    就说明枚举不可信（权限/快照被截），此时一个都不许杀。
 //!
-//! 还有一处比主干窄：主干对命中的进程下 `proc.Kill(entireProcessTree: true)`（`:300`），
+//! 清扫还有一处比主干窄：主干对命中的进程下 `proc.Kill(entireProcessTree: true)`（`:300`），
 //! 这里只对**自己两条判定都过了的那几个 PID** 发 `TerminateProcess`，不对整棵树广播。
+//! （[`kill_process_tree`] 才是「整棵树」的那条路：它只吃调用方**点名**的 pid，先按记录路径核对
+//! 身份再动手，与清扫的自动判定互不共用。）
 //!
 //! ## panic 口径
 //!
 //! 这里每个 `extern "system"` 边界都按「抛出去就是无声死进程」对待（分叉已经被 `0xC000027B` 那类
 //! 静默死咬过；`keys.rs:22-26` 同一个教训）：不许 `unwrap()`/`expect()`，`BOOL` 一律按 0/非 0 判、
-//! `HANDLE` 一律按 null/`INVALID_HANDLE_VALUE` 判，两个总入口 [`KillJob::attach`] 与
-//! [`sweep_orphan_kernels`] 外面再各套一层 [`std::panic::catch_unwind`]。任何一步失败都只把原因
-//! 写进 `note`，调用方照旧走今天的 `child.kill()` 保底 —— 少一层保底是缺陷，多杀一个进程是事故。
+//! `HANDLE` 一律按 null/`INVALID_HANDLE_VALUE` 判，三个总入口 [`kill_process_tree`]、
+//! [`sweep_orphan_kernels_sparing`]（零参版只是它的转发）与 [`process_image_path`] 外面再各套一层
+//! [`std::panic::catch_unwind`]。任何一步失败都只体现在返回值/`note` 里 —— 少杀一个残留内核
+//! 下次启动还会再扫，多杀一个进程是事故。
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::c_void;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::{Component, Path, PathBuf};
@@ -55,15 +64,8 @@ pub type Handle = *mut c_void;
 /// Win32 `BOOL` 的原生宽度是 4 字节 `int`，所以按 `i32` 收，**不**当 `bool` 用。
 type WinBool = i32;
 
-const NULL_HANDLE: Handle = std::ptr::null_mut();
 const INVALID_SNAPSHOT: Handle = usize::MAX as Handle;
 
-/// `DshKernelHost.cs:22` / `:439`。
-const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x0000_2000;
-/// `DshKernelHost.cs:444`：`JOBOBJECTINFOCLASS::JobObjectExtendedLimitInformation`。
-/// 主干注释点过同一个坑：类别与结构体长度不匹配（如 2 配 144 字节）时
-/// `SetInformationJobObject` 以 `ERROR_BAD_LENGTH` **静默**失败 ⇒ 作业没套上、内核照旧留孤儿。
-const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION: WinBool = 9;
 /// `DshKernelHost.cs:440`。
 const TH32CS_SNAPPROCESS: u32 = 0x0000_0002;
 /// `PROCESS_QUERY_LIMITED_INFORMATION`：非提权进程读自身用户态进程的镜像路径够用。
@@ -85,15 +87,6 @@ const IMAGE_PATH_CHARS: usize = 4096;
 
 #[link(name = "kernel32")]
 unsafe extern "system" {
-    fn CreateJobObjectW(job_attributes: *const c_void, name: *const u16) -> Handle;
-    fn SetInformationJobObject(
-        job: Handle,
-        job_information_class: WinBool,
-        job_information: *const c_void,
-        job_information_length: u32,
-    ) -> WinBool;
-    fn AssignProcessToJobObject(job: Handle, process: Handle) -> WinBool;
-    fn IsProcessInJob(process: Handle, job: Handle, result: *mut WinBool) -> WinBool;
     fn CloseHandle(object: Handle) -> WinBool;
     fn CreateToolhelp32Snapshot(flags: u32, process_id: u32) -> Handle;
     fn Process32FirstW(snapshot: Handle, entry: *mut ProcessEntry32W) -> WinBool;
@@ -106,45 +99,6 @@ unsafe extern "system" {
         size: *mut u32,
     ) -> WinBool;
     fn TerminateProcess(process: Handle, exit_code: u32) -> WinBool;
-}
-
-/// `JOBOBJECT_BASIC_LIMIT_INFORMATION`。字段顺序与宽度按 x64 布局：`limit_flags` 之后那个
-/// `usize`（`SIZE_T`）会把对齐垫到 8，与主干 `DshKernelHost.cs:400-412` 那份 `StructLayout` 同形。
-#[repr(C)]
-#[derive(Default, Clone, Copy)]
-struct JobObjectBasicLimitInformation {
-    per_process_user_time_limit: i64,
-    per_job_user_time_limit: i64,
-    limit_flags: u32,
-    minimum_working_set_size: usize,
-    maximum_working_set_size: usize,
-    active_process_limit: u32,
-    affinity: usize,
-    priority_class: u32,
-    scheduling_class: u32,
-}
-
-#[repr(C)]
-#[derive(Default, Clone, Copy)]
-struct IoCounters {
-    read_operation_count: u64,
-    write_operation_count: u64,
-    other_operation_count: u64,
-    read_transfer_count: u64,
-    write_transfer_count: u64,
-    other_transfer_count: u64,
-}
-
-/// `JOBOBJECT_EXTENDED_LIMIT_INFORMATION`（x64 下 144 字节，与主干 `:441-443` 的注释同值）。
-#[repr(C)]
-#[derive(Default, Clone, Copy)]
-struct JobObjectExtendedLimitInformation {
-    basic_limit_information: JobObjectBasicLimitInformation,
-    io_info: IoCounters,
-    process_memory_limit: usize,
-    job_memory_limit: usize,
-    peak_process_memory_used: usize,
-    peak_job_memory_used: usize,
 }
 
 /// `PROCESSENTRY32W`。`th32_default_heap_id` 是 `ULONG_PTR` ⇒ 后面那一串偏移全体移 4，
@@ -265,7 +219,11 @@ fn canonical_text(path: &Path) -> Option<String> {
 /// `Path.GetFullPath` + `TrimEndingDirectorySeparator` + `OrdinalIgnoreCase` 的加强版：
 /// 两边都能 `canonicalize`（解符号链接/junction/8.3，顺带要求文件真实存在）就比规范形，
 /// 否则退回**必须是绝对路径**的字面比较；比不出等号一律 `false`。
-fn same_program_file(candidate: &Path, own: &Path) -> bool {
+///
+/// 常驻复用（0.9.0.4 移植）后多了一类调用方：`kernel::try_attach_resident` 拿状态文件里记的
+/// `exe` 对当前进程的模块路径做**逐字身份核对**（主干 `PathsEqual`，`DshKernelHost.cs:302-315`）
+/// —— 防的是 pid 被无关进程复用后，凭一颗裸 pid 误杀无辜进程。
+pub fn same_program_file(candidate: &Path, own: &Path) -> bool {
     if let (Some(left), Some(right)) = (canonical_text(candidate), canonical_text(own)) {
         return eq_ignore_case(&left, &right);
     }
@@ -359,20 +317,22 @@ pub fn has_live_owner(
 
 /// 两条硬条件的**合取**：`sweep_orphan_kernels` 的循环体整条搬到这里，好让「缺一不杀」可测。
 /// `owners` 为空时一个都不选：连一个活着的本程序都指认不出来，说明这次枚举不可信（权限不足/
-/// 快照被截），这时候宁可不杀。`self_pid` 永不出现在结果里。
+/// 快照被截），这时候宁可不杀。`self_pid`（清扫发起者自己）与 `spare_pid`（调用方点名豁免的
+/// 常驻内核，0 = 不豁免）永不出现在结果里。
 pub fn select_orphans(
     procs: &[ProcInfo],
     own_kernel_path: &Path,
     parents: &HashMap<u32, u32>,
     owners: &HashSet<u32>,
     self_pid: u32,
+    spare_pid: u32,
 ) -> Vec<u32> {
     if owners.is_empty() {
         return Vec::new();
     }
     let mut killed = Vec::new();
     for proc in procs {
-        if proc.pid == self_pid || proc.pid == 0 {
+        if proc.pid == self_pid || proc.pid == spare_pid || proc.pid == 0 {
             continue;
         }
         if !is_same_install_kernel(proc.image_path.as_deref(), own_kernel_path) {
@@ -396,130 +356,73 @@ pub fn is_lease_busy_error(text: &str) -> bool {
             || text.contains("already owned by an active write handle"))
 }
 
-// ------------------------------------------------------------------ 作业对象
+// ------------------------------------------------------------------ 杀树（常驻回收）
 
-/// 一个「壳亡即杀」作业对象。句柄为 null = 这层保底不存在（调用方回落到 `child.kill()`）。
+/// 主干 `proc.Kill(entireProcessTree: true)` 在常驻设计下的三个落点
+/// （`Dsh/DshKernelHost.cs` 的 `RecycleResident` / `KillAndClear` / `StartAsync` 超时支）共用的
+/// 那条腿：一次 toolhelp 快照里把 `pid` 的全部后代连同它自己一起 `TerminateProcess`。
+/// 内核持有会话写租约、它自己起的 MCP 子进程（server-memory / playwright 等）各占各的 ——
+/// 只杀主进程一样漏租约，所以「杀」必须是整棵树。
 ///
-/// 只由持有 `Kernel` 的那条线程摆弄（分叉的 `Kernel` 一直待在 `Arc<Mutex<Kernel>>` 里），
-/// 所以 `Send` 声明的是「跨线程传的是那把锁的所有权」，句柄本身不会有两个线程同时碰。
-pub struct KillJob {
-    handle: Handle,
-    armed: bool,
-    /// 一行诊断，进 `Kernel::log` ⇒ 最终从 `main.rs` 的 `push_log` 变成 stdout 的 `DIAG:` 行。
-    pub note: String,
+/// `expected_exe` 提供时**先核对身份再动手**（主干 `RecycleResident` `:265-288` 同一条纪律）：
+/// 当前 `pid` 的模块路径与它对不上、或根本读不到，一律不动、返回 `false` —— 分叉没有
+/// `Process` 句柄那种「进程对象保真」的机制，pid 复用到无关进程时全靠这一道核对不误杀。
+/// 传 `None` 表示调用方已用别的方式担保了身份（例如手里就攥着该进程的
+/// `std::process::Child` 句柄 —— `kernel::Kernel::start` 的超时支就是这种），才允许裸杀。
+///
+/// 返回值：根进程的 `TerminateProcess` 是否发出成功（后代各自尽力，抢不动的跳过）。
+/// 进程已退出 ⇒ 读不到模块路径 ⇒ `false`（无可回收，主干 `catch { }` 同口径）。
+pub fn kill_process_tree(pid: u32, expected_exe: Option<&Path>) -> bool {
+    match panic::catch_unwind(AssertUnwindSafe(|| kill_tree_inner(pid, expected_exe))) {
+        Ok(terminated) => terminated,
+        Err(_) => false,
+    }
 }
 
-unsafe impl Send for KillJob {}
-
-impl KillJob {
-    /// 一个都不做的空实例（错误分支与测试用）。
-    pub fn inactive(note: impl Into<String>) -> Self {
-        Self {
-            handle: NULL_HANDLE,
-            armed: false,
-            note: note.into(),
+fn kill_tree_inner(pid: u32, expected_exe: Option<&Path>) -> bool {
+    if let Some(expected) = expected_exe {
+        let Some(image) = image_path_of(pid) else {
+            return false; // 已退出 / 读不到：身份证明不了就不碰
+        };
+        if !same_program_file(&image, expected) {
+            return false; // pid 活着但不是那个内核（复用给了别的进程）：绝不误杀
         }
     }
-
-    /// 主干 `AttachToKillJob()`（`:170-233`）的对应物：建 → 设 `KILL_ON_JOB_CLOSE` → 指派 →
-    /// **回头验**（`:213` 那句「套没上必须回头看：这类静默失败不抛异常」）。
-    /// 任何一步失败都只是「这层保底没有」，句柄就地关掉，绝不 panic。
-    pub fn attach(process_handle: Handle) -> Self {
-        match panic::catch_unwind(AssertUnwindSafe(|| attach_inner(process_handle))) {
-            Ok(job) => job,
-            Err(_) => KillJob::inactive("作业对象走了非预期分支：已放弃，内核回收退化为 child.kill()"),
-        }
+    let rows = snapshot_entries();
+    let parents: HashMap<u32, u32> = rows.iter().map(|(pid, parent, _)| (*pid, *parent)).collect();
+    // 先杀根（停住它继续 spawn 的口），再按快照清单收后代 —— 快照是时点数据，
+    // 根死后新出生的进程不在清单里，那类漏网由下次启动的清扫兜底（与主干同一取舍）。
+    // 根那一发抢不动（正在退出/权限）时后代照收，返回值只报根。
+    let terminated = terminate(pid);
+    for descendant in descendants_of(pid, &parents) {
+        terminate(descendant);
     }
+    terminated
+}
 
-    /// 作业是否真的挂上了（`IsProcessInJob` 复查过才算）。
-    pub fn is_armed(&self) -> bool {
-        self.armed
+/// `pid` 的全部后代（子、孙……直到不在快照里），主干 `Kill(entireProcessTree)` 里
+/// 「按父子边收集整棵树」那半截的纯函数替身。BFS + 已访问集，父子表里的回环走不死；
+/// `pid` 自己不出现在结果里。
+pub fn descendants_of(pid: u32, parents: &HashMap<u32, u32>) -> Vec<u32> {
+    let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
+    for (child, parent) in parents {
+        children.entry(*parent).or_default().push(*child);
     }
-
-    /// 主干 `Dispose` 的 `finally`（`:152-160`）：**关掉最后一个句柄就是触发点**。
-    /// 关掉之后 `Drop` 不会再关一次（`handle` 置 null）。
-    pub fn close_now(&mut self) {
-        if !self.handle.is_null() {
-            let closed = unsafe { CloseHandle(self.handle) };
-            if closed == 0 {
-                self.note = format!(
-                    "{}；作业句柄关闭失败({})，孤儿将由下次启动清扫兜底",
-                    self.note,
-                    std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
-                );
+    let mut out = Vec::new();
+    let mut visited: HashSet<u32> = HashSet::from([pid]);
+    let mut queue: VecDeque<u32> = VecDeque::from([pid]);
+    while let Some(current) = queue.pop_front() {
+        let Some(list) = children.get(&current) else {
+            continue;
+        };
+        for child in list {
+            if visited.insert(*child) {
+                out.push(*child);
+                queue.push_back(*child);
             }
-            self.handle = NULL_HANDLE;
         }
-        self.armed = false;
     }
-}
-
-impl Drop for KillJob {
-    fn drop(&mut self) {
-        self.close_now();
-    }
-}
-
-fn last_error() -> i32 {
-    std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
-}
-
-fn attach_inner(process_handle: Handle) -> KillJob {
-    if process_handle.is_null() {
-        return KillJob::inactive("拿不到内核进程句柄：跳过作业对象，回收退化为 child.kill()");
-    }
-    let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
-    if job.is_null() {
-        return KillJob::inactive(format!(
-            "CreateJobObjectW 失败({})：跳过作业对象，回收退化为 child.kill()",
-            last_error()
-        ));
-    }
-    let mut info = JobObjectExtendedLimitInformation::default();
-    info.basic_limit_information.limit_flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-    let length = std::mem::size_of::<JobObjectExtendedLimitInformation>() as u32;
-    let set_ok = unsafe {
-        SetInformationJobObject(
-            job,
-            JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
-            &info as *const JobObjectExtendedLimitInformation as *const c_void,
-            length,
-        )
-    };
-    if set_ok == 0 {
-        unsafe { CloseHandle(job) };
-        return KillJob::inactive(format!(
-            "SetInformationJobObject(KILL_ON_JOB_CLOSE,{length}B) 失败({})：作业未挂载",
-            last_error()
-        ));
-    }
-    let assigned = unsafe { AssignProcessToJobObject(job, process_handle) };
-    if assigned == 0 {
-        unsafe { CloseHandle(job) };
-        return KillJob::inactive(format!(
-            "AssignProcessToJobObject 失败({})：多半是本壳已经跑在别的作业对象里（终端/沙箱宿主），\
-             子进程会继承那个作业；作业保底缺失，内核回收退化为 child.kill() + 启动清扫",
-            last_error()
-        ));
-    }
-    // 主干 `:213`：`IsProcessInJob` 复查。指派「返回 TRUE」不等于套得住，只有实机杀壳才暴露得出来。
-    let mut in_job: WinBool = 0;
-    let verified = unsafe { IsProcessInJob(process_handle, job, &mut in_job) };
-    if verified == 0 || in_job == 0 {
-        unsafe { CloseHandle(job) };
-        return KillJob::inactive(format!(
-            "IsProcessInJob 复查未通过(code={},in_job={})：作业已撤销，靠启动清扫兜底",
-            last_error(),
-            in_job
-        ));
-    }
-    KillJob {
-        handle: job,
-        armed: true,
-        note: format!(
-            "作业对象已挂载并复查（KILL_ON_JOB_CLOSE, {length}B 扩展限额结构）：壳退出即带走内核整棵树"
-        ),
-    }
+    out
 }
 
 // ------------------------------------------------------------------ 进程枚举 / 收尾
@@ -546,8 +449,14 @@ fn snapshot_entries() -> Vec<(u32, u32, String)> {
     rows
 }
 
-/// 候选进程的模块完整路径（主干 `proc.MainModule?.FileName` `:282` 的对应物）。
-/// 打不开、读不出、长度不对 ⇒ `None` = **不是**命中。
+/// 候选进程的模块完整路径（主干 `proc.MainModule?.FileName` `:282` / `TryGetProcessPath`
+/// `:290-300` 的对应物）。打不开、读不出、长度不对 ⇒ `None` —— 调用方各自的口径：
+/// 清扫里 = 不是命中；常驻 attach 里 = pid 已死（主干 `Process.GetProcessById` 抛 `ArgumentException`
+/// 那支与路径读不出那支在「只清状态、不杀」上同归，见 `kernel::try_attach_resident_with`）。
+pub fn process_image_path(pid: u32) -> Option<PathBuf> {
+    image_path_of(pid)
+}
+
 fn image_path_of(pid: u32) -> Option<PathBuf> {
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
     if handle.is_null() {
@@ -602,12 +511,21 @@ impl SweepOutcome {
     }
 }
 
-/// **启动清扫**（主干 `:253`，调用点在 `MainWindow.xaml.cs:2499`，用户可见效果只有 `:2501`
-/// 那一行 `Debug.WriteLine`）。判定见模块头：**两条硬条件缺一不杀**，
-/// 且两条都比主干的 `node` 名字匹配窄。带外异常（枚举/快照失败）一律不许冒到调用点——
-/// 调用点可能是异常筛选器（主干 `:259-263` 同一个理由）。
+/// **启动清扫**（主干 `SweepOrphanKernels()`，零参调用点在 `main.rs` 引导与撞租约两处）。
+/// 常驻设计下等价于 `sweep_orphan_kernels_sparing(0)` —— 引导期清扫发生在 attach 之后
+/// （要么已复用 ⇒ 整段跳过，要么已回收 ⇒ 无需豁免），零参够用；**会话中途**的清扫调用
+/// 必须走 [`sweep_orphan_kernels_sparing`] 把当前内核 pid 传进去，否则常驻内核（父进程是
+/// 上一次已死的壳）会被当孤儿误杀。带外异常（枚举/快照失败）一律不许冒到调用点——
+/// 调用点可能是异常筛选器（主干 `:456-458` 同一个理由）。
 pub fn sweep_orphan_kernels() -> SweepOutcome {
-    match panic::catch_unwind(AssertUnwindSafe(sweep_inner)) {
+    sweep_orphan_kernels_sparing(0)
+}
+
+/// [`sweep_orphan_kernels`] 的点名豁免版：`spare_pid` 是**本轮在用的常驻内核主进程 pid**
+/// （主干 `SweepOrphanKernels(int sparePid = 0)` 的分叉对应物，`DshKernelHost.cs:448`）。
+/// 其余判定一字不差 —— 豁免只是从候选表里划掉，不放松那两条硬条件。
+pub fn sweep_orphan_kernels_sparing(spare_pid: u32) -> SweepOutcome {
+    match panic::catch_unwind(AssertUnwindSafe(move || sweep_inner(spare_pid))) {
         Ok(outcome) => outcome,
         Err(_) => SweepOutcome {
             note: "内核孤儿清扫: 走了非预期分支，本轮一个都没碰".to_string(),
@@ -616,7 +534,7 @@ pub fn sweep_orphan_kernels() -> SweepOutcome {
     }
 }
 
-fn sweep_inner() -> SweepOutcome {
+fn sweep_inner(spare_pid: u32) -> SweepOutcome {
     // 判定目标只认「本安装自带、且真实存在」的那颗 Kernel\node.exe（主干 `BundledNode` `:27-30`
     // 的 `File.Exists` 同口径），并且**不**吃 BLADE2_KERNEL_DIR / BLADE2_KERNEL_EXE。
     let Some(own_kernel) = kernel::bundled_kernel_exe() else {
@@ -656,7 +574,7 @@ fn sweep_inner() -> SweepOutcome {
     let self_pid = std::process::id();
     let scanned = procs.len();
     let owner_count = owners.len();
-    let targets = select_orphans(&procs, &own_kernel, &parents, &owners, self_pid);
+    let targets = select_orphans(&procs, &own_kernel, &parents, &owners, self_pid, spare_pid);
     let mut killed = Vec::new();
     for pid in targets {
         // 抢不动的（正在退出/权限不足）跳过：下一次启动还会再扫（主干 `:305` 同一口径）。
@@ -910,13 +828,37 @@ mod tests {
         ];
         let parents = parent_map(&procs);
         let owners = owner_pids(&procs, &own_exe());
-        let picked = select_orphans(&procs, &own, &parents, &owners, self_pid);
+        let picked = select_orphans(&procs, &own, &parents, &owners, self_pid, 0);
         assert_eq!(
             picked,
             vec![19, 20],
             "只有「路径命中 + 祖先链上没有活着的本程序」那两条同时成立的才被选中"
         );
         assert!(!picked.contains(&self_pid));
+    }
+
+    /// **常驻内核豁免**（主干 0.9.0.4 `SweepOrphanKernels(int sparePid)` 的移植）：常驻内核的
+    /// 父进程是上一次的壳（已死），两条硬条件它全中 —— 不点名豁免就会被当孤儿收掉。
+    /// `spare_pid = 0`（引导期零参版）时它照旧被选中：那份状态语义就是「没有豁免名额」。
+    #[test]
+    fn spare_pid_exempts_the_resident_kernel_and_zero_means_no_exemption() {
+        let own = own_kernel();
+        // pid 30 = 常驻内核：路径正是本安装内核，父进程 998 已死（上一次的壳）⇒ 两条全中。
+        let procs = vec![
+            proc(10, 4, "blade2-rs.exe", Some("C:\\blade2-task68-missing-install\\blade2-rs.exe")),
+            proc(30, 998, "node.exe", Some("C:\\blade2-task68-missing-install\\Kernel\\node.exe")),
+        ];
+        let parents = parent_map(&procs);
+        let owners = owner_pids(&procs, &own_exe());
+        assert_eq!(
+            select_orphans(&procs, &own, &parents, &owners, 10, 0),
+            vec![30],
+            "不豁免 ⇒ 常驻内核在清扫眼里就是孤儿（这正是必须传 spare_pid 的原因）"
+        );
+        assert!(
+            select_orphans(&procs, &own, &parents, &owners, 10, 30).is_empty(),
+            "点名豁免之后一个都不许选 —— 豁免只划掉候选，不放松两条硬条件之外的东西"
+        );
     }
 
     /// owner 集为空（快照不可信 / 权限不足 / 只抓到一半）⇒ **一个都不选**。
@@ -926,7 +868,7 @@ mod tests {
         let own = own_kernel();
         let procs = vec![proc(19, 999, "node.exe", Some("C:\\blade2-task68-missing-install\\Kernel\\node.exe"))];
         let parents = parent_map(&procs);
-        assert!(select_orphans(&procs, &own, &parents, &HashSet::new(), 1).is_empty());
+        assert!(select_orphans(&procs, &own, &parents, &HashSet::new(), 1, 0).is_empty());
     }
 
     /// 名字闸门：只有可能叫 `node.exe` 的进程才配开一次句柄。
@@ -942,6 +884,43 @@ mod tests {
         assert!(!kernel_like_file_name("Blade2.exe"));
         assert!(!kernel_like_file_name("nodemon.exe"), "名字相近也不算");
         assert!(!kernel_like_file_name(""));
+    }
+
+    // ---------------------------------------------------------- 杀树的纯函数半截
+    //
+    // `kill_process_tree` 的 Win32 那半截与清扫同一条纪律：`cargo test` 永远不许碰真 PID。
+    // 这里钉的是「按父子边收集整棵树」那半截 —— 收漏了 = MCP 子进程占着租约活下来，
+    // 收多了 = 把无辜进程带进终止清单。
+
+    /// 树形、多叉、纵深全要收齐；`pid` 自己不在清单里；不在快照里的分支当场断掉。
+    #[test]
+    fn descendants_of_collects_the_whole_tree_without_the_root() {
+        // 30(内核) → 31,32(双叉) → 33(31 的子) → 34(孙)；35 的父不在表里 ⇒ 断。
+        let rows = [
+            (31u32, 30u32),
+            (32, 30),
+            (33, 31),
+            (34, 33),
+            (35, 9999),
+        ];
+        let parents: HashMap<u32, u32> = rows.iter().copied().collect();
+        let mut got = descendants_of(30, &parents);
+        got.sort_unstable();
+        assert_eq!(got, vec![31, 32, 33, 34], "四层全收，根自己除外");
+        assert!(descendants_of(35, &parents).is_empty(), "父不在表里 ⇒ 没有后代可收");
+        assert!(descendants_of(30, &HashMap::new()).is_empty());
+    }
+
+    /// 父子表里的回环（pid 复用后的陈旧快照会出现）不许把 BFS 转死，也不许重复收。
+    #[test]
+    fn descendants_of_terminates_on_cycles_without_duplicates() {
+        let mut looped: HashMap<u32, u32> = HashMap::new();
+        looped.insert(41, 42); // 41→42→41 回环
+        looped.insert(42, 41);
+        looped.insert(43, 42);
+        let mut got = descendants_of(41, &looped);
+        got.sort_unstable();
+        assert_eq!(got, vec![42, 43], "回环当场断，43 照收、不重复");
     }
 
     // ---------------------------------------------------------- 租约忙的判据
@@ -975,25 +954,10 @@ mod tests {
     // ---------------------------------------------------------- 结构体布局
 
     /// 布局只钉 64 位（分叉的唯一目标平台）；32 位上这些常量本来就不该过。
+    /// （task #68 的作业对象布局断言随 `KillJob` 一并移除 —— 常驻设计下那颗结构体已不存在。）
     #[cfg(target_pointer_width = "64")]
     #[test]
-    fn job_object_struct_layout_matches_the_win32_abi() {
-        assert_eq!(
-            std::mem::size_of::<JobObjectExtendedLimitInformation>(),
-            144,
-            "x64 上 JOBOBJECT_EXTENDED_LIMIT_INFORMATION 是 144 字节"
-        );
-        assert_eq!(
-            std::mem::offset_of!(JobObjectExtendedLimitInformation, basic_limit_information),
-            0
-        );
-        assert_eq!(
-            std::mem::offset_of!(
-                JobObjectExtendedLimitInformation,
-                basic_limit_information
-            ) + std::mem::offset_of!(JobObjectBasicLimitInformation, limit_flags),
-            16
-        );
+    fn process_entry_layout_matches_the_win32_abi() {
         assert_eq!(std::mem::size_of::<ProcessEntry32W>(), 568);
         assert_eq!(
             std::mem::offset_of!(ProcessEntry32W, th32_parent_process_id),
@@ -1003,23 +967,7 @@ mod tests {
         assert_eq!(std::mem::size_of::<ProcessEntry32W>() as u32, {
             ProcessEntry32W::zeroed().dw_size
         });
-        assert_eq!(JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, 9);
-        assert_eq!(JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, 0x2000);
-    }
-
-    /// `attach(空句柄)` 不许 panic、也不许留下需要关闭的句柄：这就是「任何一发 Win32 失败
-    /// 都退回今天那条 `child.kill()`」的落地形态（真句柄那一路只能实机验，见 tmp 报告）。
-    #[test]
-    fn attaching_without_a_handle_degrades_instead_of_panicking() {
-        let job = KillJob::attach(NULL_HANDLE);
-        assert!(!job.is_armed());
-        assert!(!job.note.is_empty(), "失败原因要能写进 DIAG 行");
-        assert!(job.handle.is_null());
-        // 关两次：第二次必须是空操作（`Drop` 还会再调一次，「句柄只关一次」在这里钉住）。
-        let mut job = job;
-        job.close_now();
-        job.close_now();
-        assert!(!job.is_armed());
+        assert_eq!(TH32CS_SNAPPROCESS, 0x2);
     }
 
     /// 清扫那一行诊断的文案：命中 0 也要看得出「扫过、目标是谁、认了几个活壳」，
@@ -1063,7 +1011,7 @@ mod tests {
         const PG_SELF: &str =
             include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/procguard.rs"));
         let start = PG_SELF
-            .find("fn sweep_inner() -> SweepOutcome {")
+            .find("fn sweep_inner(spare_pid: u32) -> SweepOutcome {")
             .expect("清扫主链还在");
         let end = start
             + PG_SELF[start..]
@@ -1120,7 +1068,7 @@ mod tests {
             "父表要绑进一个名字里再传下去，别在调用点上现建现传"
         );
         assert!(
-            body.contains("&parents, &owners, self_pid"),
+            body.contains("&parents, &owners, self_pid, spare_pid"),
             "候选侧拿到的必须是同一对 parents/owners 绑定"
         );
     }

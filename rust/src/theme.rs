@@ -63,6 +63,7 @@
 //! 指针先进钮再冒泡进行，行那一档永远后到 ⇒ 钮的圆底一辈子画不出来
 //! （会话行那颗 ⋯ 就是这么被行抢走的，`ui8-shot` 对它报 NO-TRACE）。
 
+use std::sync::OnceLock;
 use windows_reactor::{Brush, Color, ThemeBrush};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -605,9 +606,10 @@ pub fn code_block_brush(scheme: Scheme) -> Brush {
 
 // ===================== 高对比度（HC）档：主题色全族 =====================
 //
-// 主干的 HC 档是**一份完整独立的第三档词典**：`Theme/Tokens.xaml:289-343`
+// 主干的 HC 档是**一份完整独立的第三档词典**：`Theme/Tokens.xaml:294-348`
 // `<ResourceDictionary x:Key="HighContrast">`，36 发 `SolidColorBrush` + 6 发 `StaticResource`
 // 别名，键集合与 Light(`:158-233`)/Dark(`:236-286`) 逐键对齐（`Tokens.xaml:14-15` 自己声明这条）。
+// （0.9.0.4：Dark 词典与 HC 词典之间进了 5 行 ⇒ HC 整段 +5，`mainline_line` 已随抬。）
 //
 // **这一档抄不到 ARGB 字面值，而且不该抄**：36 发键的取值全部写成
 // `Color="{ThemeResource SystemColor<槽>Color}"`，而那八颗 `SystemColor*Color` 资源在
@@ -976,42 +978,42 @@ impl HcToken {
     /// 取证行号（`Theme/Tokens.xaml`）。
     pub const fn mainline_line(self) -> &'static str {
         match self {
-            Self::Surface => "Tokens.xaml:290",
-            Self::SurfaceAlt => "Tokens.xaml:291",
-            Self::Card => "Tokens.xaml:292",
-            Self::CardSecondary => "Tokens.xaml:293",
-            Self::CardHover => "Tokens.xaml:294",
-            Self::TextPrimary => "Tokens.xaml:295",
-            Self::TextSecondary => "Tokens.xaml:296",
-            Self::TextTertiary => "Tokens.xaml:297",
-            Self::TextDisabled => "Tokens.xaml:298",
-            Self::Stroke => "Tokens.xaml:299",
-            Self::StrokeSubtle => "Tokens.xaml:300",
-            Self::Accent => "Tokens.xaml:301",
-            Self::AccentHover => "Tokens.xaml:302",
-            Self::AccentPressed => "Tokens.xaml:303",
-            Self::OnAccent => "Tokens.xaml:304",
-            Self::BubbleMica => "Tokens.xaml:306",
-            Self::Success => "Tokens.xaml:307",
-            Self::SuccessBg => "Tokens.xaml:308",
-            Self::Warning => "Tokens.xaml:309",
-            Self::WarningBg => "Tokens.xaml:310",
-            Self::Error => "Tokens.xaml:311",
-            Self::ErrorBg => "Tokens.xaml:312",
-            Self::Info => "Tokens.xaml:313",
-            Self::InfoBg => "Tokens.xaml:314",
-            Self::FocusRing => "Tokens.xaml:315",
-            Self::ControlFill => "Tokens.xaml:318",
-            Self::ControlHover => "Tokens.xaml:319",
-            Self::ControlPressed => "Tokens.xaml:320",
-            Self::ChartSeries1 => "Tokens.xaml:323",
-            Self::ChartSeries2 => "Tokens.xaml:324",
-            Self::ChartSeries3 => "Tokens.xaml:325",
-            Self::ChartSeries4 => "Tokens.xaml:326",
-            Self::ChartSeries5 => "Tokens.xaml:327",
-            Self::ChartSeries6 => "Tokens.xaml:328",
-            Self::ChartHeatEmpty => "Tokens.xaml:329",
-            Self::ChartGrid => "Tokens.xaml:330",
+            Self::Surface => "Tokens.xaml:295",
+            Self::SurfaceAlt => "Tokens.xaml:296",
+            Self::Card => "Tokens.xaml:297",
+            Self::CardSecondary => "Tokens.xaml:298",
+            Self::CardHover => "Tokens.xaml:299",
+            Self::TextPrimary => "Tokens.xaml:300",
+            Self::TextSecondary => "Tokens.xaml:301",
+            Self::TextTertiary => "Tokens.xaml:302",
+            Self::TextDisabled => "Tokens.xaml:303",
+            Self::Stroke => "Tokens.xaml:304",
+            Self::StrokeSubtle => "Tokens.xaml:305",
+            Self::Accent => "Tokens.xaml:306",
+            Self::AccentHover => "Tokens.xaml:307",
+            Self::AccentPressed => "Tokens.xaml:308",
+            Self::OnAccent => "Tokens.xaml:309",
+            Self::BubbleMica => "Tokens.xaml:311",
+            Self::Success => "Tokens.xaml:312",
+            Self::SuccessBg => "Tokens.xaml:313",
+            Self::Warning => "Tokens.xaml:314",
+            Self::WarningBg => "Tokens.xaml:315",
+            Self::Error => "Tokens.xaml:316",
+            Self::ErrorBg => "Tokens.xaml:317",
+            Self::Info => "Tokens.xaml:318",
+            Self::InfoBg => "Tokens.xaml:319",
+            Self::FocusRing => "Tokens.xaml:320",
+            Self::ControlFill => "Tokens.xaml:323",
+            Self::ControlHover => "Tokens.xaml:324",
+            Self::ControlPressed => "Tokens.xaml:325",
+            Self::ChartSeries1 => "Tokens.xaml:328",
+            Self::ChartSeries2 => "Tokens.xaml:329",
+            Self::ChartSeries3 => "Tokens.xaml:330",
+            Self::ChartSeries4 => "Tokens.xaml:331",
+            Self::ChartSeries5 => "Tokens.xaml:332",
+            Self::ChartSeries6 => "Tokens.xaml:333",
+            Self::ChartHeatEmpty => "Tokens.xaml:334",
+            Self::ChartGrid => "Tokens.xaml:335",
         }
     }
 
@@ -1207,6 +1209,190 @@ pub fn system_high_contrast() -> Option<HighContrastColors> {
     })
 }
 
+// ===================== 系统强调色（非 HC 档的 accent 实色来源） =====================
+//
+// **分歧的根因**（2026-10-26 第一轮门控「发送键白底深箭头」追到这里）：
+// 主干 `SendButton` 挂 `AccentButtonStyle`，四档底色是框架在运行时解析的
+// `AccentFillColorDefaultBrush` —— 浅色词典 = `SystemAccentColorDark1`
+// （generic.xaml:7631）、深色词典 = `SystemAccentColorLight2`（generic.xaml:2080），
+// 即**跟着 Windows 个性化强调色走**，主干侧一行色值都不写。
+// 分叉的 `Pill::accent`（main.rs）对齐了四档**形态**（同一支画刷 + 0.9/0.8 不透明度 +
+// `AccentFillColorDisabled` 灰），把底色交给 `Brush::Theme(ThemeBrush::Accent)`
+// —— 而 reactor 0.100.0 对**元素属性上的主题画刷一律静默丢弃**：core
+// `generated.rs` 的每条 brush 槽（`BorderBackground`:9551-9557、`BorderBorderBrush`
+// :9560-9566、`GridBackground`:9675-9681、`TextBlockForeground`:9436-9442…）都把
+// `Property::Set(Brush::Theme(_))` 映成 `None`，native 层（native/winui/generated.rs
+// :1025-1056）也只收 `Brush::Solid` ⇒ 画刷根本到不了 XAML。于是发送钮那层圆底
+// **从没渲出来过**（透明），屏幕上看到的是输入卡透出的底 + `on_accent_color` 的墨。
+//
+// `.style(ButtonStyle::Accent)`（框架原生强调样式，能自己解析主题资源）与
+// `resource_overrides` 同挂一钮即 native fail-fast（main.rs:30882-30891 那条二分记录），
+// 分叉圆底又必须画在 content Border 里 ⇒ 主题画刷这条通路在分叉**结构性不可用**。
+// 唯一能对齐主干「跟系统强调色走」的路：把系统强调色**当成实色**读回来。
+//
+// 取数源 = Windows 个性化那台机器上和 WinUI `SystemAccentColor*` 同源的注册表
+// `HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Accent` 的 `AccentPalette`
+// （REG_BINARY，32 字节 = 8 组 RGBA 四元组）。本机（2026-10-26 实测 dump）：
+// `EF E5 E5 FF | E2 CE CE FF | D9 BE BE FF | D0 AE AE FF | C6 9E 9E FF | BD 8E 8E FF
+//  | B0 77 77 FF | 88 17 98 00` —— 前 7 组 alpha 恒 FF、末组恒 00（占位），
+// 序为**亮→暗**：`[Light3, Light2, Light1, Accent, Dark1, Dark2, Dark3]`。
+// 交叉验证：本文件文件头记录的主干实渲「发送钮 rest `#C69E9E`」正是浅色词典
+// `SystemAccentColorDark1` = 上表第 5 组（下标 4），逐字节咬合。
+//
+// ⚠ 已知近似：进程内用 `OnceLock` 读一次，用户中途改 Windows 强调色要重启壳才跟上
+// （主干走主题资源是活的）；注册表读不到（企业策略锁注册表等）回落 `None`，
+// 调用侧保持 `Brush::Theme(Accent)`（= 渲不出，但不比改动前更差）。
+
+/// `RegGetValueW` 的 `RRF_RT_REG_BINARY`（本机 winreg 文档口径；win32 常量，无 crate 依赖）。
+const RRF_RT_REG_BINARY: u32 = 0x0000_0008;
+/// `HKEY_CURRENT_USER` 的预定义句柄值（winreg.h：`((HKEY)0x80000001)`）。
+const HKEY_CURRENT_USER: isize = 0x8000_0001_isize;
+
+#[link(name = "advapi32")]
+unsafe extern "system" {
+    fn RegGetValueW(
+        hkey: isize,
+        lp_sub_key: *const u16,
+        lp_value: *const u16,
+        dw_flags: u32,
+        pdw_type: *mut u32,
+        pv_data: *mut core::ffi::c_void,
+        pcb_data: *mut u32,
+    ) -> i32;
+}
+
+/// 注册表里那串二进制的纯解析：32 字节 → 8 组 RGBA，取**前 7 组实色档**。
+/// 亮→暗是本机实测序；防御性校验一头（首组亮度 < 末组亮度即认为序反了，
+/// 翻回来），只影响下标方向、不动任何取值，读错档（浅粉画成暗红）比读不到更糟。
+/// alpha 非 FF 的组（本机第 8 组恒 alpha 00 的占位）**跳过**而不是判死——占位组
+/// 落在首/中/尾都不构成档位语义，实色组凑不满 7（或字节数不足/非 4 倍数）才回落 `None`。
+pub fn parse_accent_palette(bytes: &[u8]) -> Option<[Color; 7]> {
+    if bytes.len() < 28 || bytes.len() % 4 != 0 {
+        return None;
+    }
+    let mut colors = [argb(0xFF, 0); 7];
+    let mut count = 0usize;
+    for quad in bytes.chunks_exact(4) {
+        if quad[3] != 0xFF {
+            continue; // 占位/坏组：不进结果、也不判死
+        }
+        colors[count] = Color {
+            a: 0xFF,
+            r: quad[0],
+            g: quad[1],
+            b: quad[2],
+        };
+        count += 1;
+        if count == 7 {
+            break; // 七档集齐；后面的组（含占位）一律不看
+        }
+    }
+    if count < 7 {
+        return None;
+    }
+    // 亮度取整序（BT.601 粗权）：亮→暗为正序，反了就把 7 档整体翻面。
+    let lum = |c: Color| 299 * u32::from(c.r) + 587 * u32::from(c.g) + 114 * u32::from(c.b);
+    if lum(colors[0]) < lum(colors[6]) {
+        colors.reverse();
+    }
+    Some(colors)
+}
+
+/// 当前系统强调色的 7 档（亮→暗）：进程内读一次注册表，之后走缓存。
+fn system_accent_palette() -> Option<[Color; 7]> {
+    static PALETTE: OnceLock<Option<[Color; 7]>> = OnceLock::new();
+    *PALETTE.get_or_init(|| {
+        // 裸 u16 串（RegGetValueW 要 UTF-16 + NUL）：两条键名都是 ASCII，
+        // 栈上缓冲 + encode_utf16 一次填够，不引依赖也不经分配器。
+        const SUB_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Accent";
+        const VALUE_NAME: &str = "AccentPalette";
+        let mut sub_key = [0u16; 80];
+        let mut value_name = [0u16; 32];
+        let fill = |buffer: &mut [u16], source: &str| {
+            for (slot, unit) in buffer.iter_mut().zip(source.encode_utf16()) {
+                *slot = unit;
+            }
+        };
+        fill(&mut sub_key, SUB_KEY);
+        fill(&mut value_name, VALUE_NAME);
+        let mut buffer = [0u8; 32];
+        let mut size = u32::try_from(buffer.len()).unwrap_or(0);
+        let ok = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                sub_key.as_ptr(),
+                value_name.as_ptr(),
+                RRF_RT_REG_BINARY,
+                core::ptr::null_mut(),
+                buffer.as_mut_ptr().cast(),
+                &mut size,
+            )
+        } == 0
+            && size as usize >= 28;
+        if !ok {
+            return None;
+        }
+        parse_accent_palette(&buffer[..size as usize])
+    })
+}
+
+/// 主干 `AccentFillColorDefaultBrush` 在当前深浅主题下的等值实色：
+/// 浅色 = `SystemAccentColorDark1`（generic.xaml:7631）、深色 = `SystemAccentColorLight2`
+/// （generic.xaml:2080）。注册表读不到回落 `None`，调用侧保持主题画刷原样。
+pub fn system_accent(scheme: Scheme) -> Option<Color> {
+    let palette = system_accent_palette()?;
+    Some(match scheme {
+        // [Light3, Light2, Light1, Accent, Dark1, Dark2, Dark3]
+        Scheme::Light => palette[4],
+        Scheme::Dark => palette[1],
+    })
+}
+
+/// 运行时调色板 = [`Palette::for_scheme`]（主干词典基线，逐档断言守着的那份）
+/// + 把**reactor 渲不出来的主题画刷档**换成等值实色。视图构造一律走这一发；
+/// `for_scheme` 保留 const 纯函数身份给测试与 HC 档。
+///
+/// 实色化的四档与出处（reactor 对元素属性上的 `Brush::Theme` 一律静默丢弃，
+/// 见上方 accent 段——这一刀不只修 accent，还修掉「卡面/描边/根底整个不画」）：
+/// · `accent`：系统强调色，见 [`system_accent`]（读不到回落主题画刷原样）。
+/// · `surface` = `SolidBackgroundFillColorBase`（`Tokens.xaml:160/237` 引的键）：
+///   浅 `#F3F3F3` / 深 `#202020`（generic.xaml:5755/204），与 [`surface_color`] 同源。
+/// · `card` = `CardBrush`：浅 = 框架 `CardBackgroundFillColorDefault` `#B3FFFFFF`
+///   （generic.xaml:7567）；深**不是**框架那颗 `#0DFFFFFF`，主干 `Tokens.xaml:244`
+///   自己把它覆成 `#B3202020`（注释原文：深色 5% 白等于全透，显式给 70% 暗面）⇒
+///   抄词典就抄这一格。
+/// · `stroke` = `StrokeBrush` ← `CardStrokeColorDefaultSolid`（`Tokens.xaml:171/251`）：
+///   浅 `#EBEBEB` / 深 `#1C1C1C`（generic.xaml:7558/2007，两档都是不透明实色）。
+/// · `text_primary` = `TextFillColorPrimary`（`Tokens.xaml:166/247`）：
+///   浅 `#E4000000` / 深 `#FFFFFF`（generic.xaml:7517/1966）。原先挂在框架默认
+///   前景上「碰巧同色」（`TextBlock` 默认就是这一档），但 FontIcon / 非 TextBlock
+///   的 Foreground 槽吃不到框架默认 ⇒ 照字面钉死。
+#[must_use]
+pub fn palette(scheme: Scheme) -> Palette {
+    let mut p = Palette::for_scheme(scheme);
+    if let Some(accent) = system_accent(scheme) {
+        p.accent = Brush::Solid(accent);
+    }
+    let light = matches!(scheme, Scheme::Light);
+    p.surface = Brush::Solid(surface_color(scheme));
+    p.card = Brush::Solid(if light {
+        argb(0xB3, 0xFF_FF_FF)
+    } else {
+        argb(0xB3, 0x20_20_20)
+    });
+    p.stroke = Brush::Solid(if light {
+        argb(0xFF, 0xEB_EB_EB)
+    } else {
+        argb(0xFF, 0x1C_1C_1C)
+    });
+    p.text_primary = Brush::Solid(if light {
+        argb(0xE4, 0x00_00_00)
+    } else {
+        argb(0xFF, 0xFF_FF_FF)
+    });
+    p
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1228,6 +1414,134 @@ mod tests {
         let light = Palette::for_scheme(Scheme::Light);
         // LayerFillColorDefault 是半透明白，不是 #F4F4F4
         assert_eq!(light.surface_alt, Brush::Solid(argb(0x80, 0xFFFFFF)));
+    }
+
+    // ===================== 系统强调色（accent 实色化） =====================
+    //
+    // 夹具 = 本机（2026-10-26）`HKCU\...\Explorer\Accent\AccentPalette` 的实 dump：
+    // 8 组 RGBA、前 7 组 alpha FF 亮→暗（玫瑰系强调色）、末组 alpha 00 占位。
+    // 交叉锚点：第 5 组（下标 4）= `#C69E9E`，正是本文件文件头记录的主干浅色
+    // 发送钮实渲（SystemAccentColorDark1）。
+    fn accent_palette_fixture() -> Vec<u8> {
+        vec![
+            0xEF, 0xE5, 0xE5, 0xFF, // Light3
+            0xE2, 0xCE, 0xCE, 0xFF, // Light2
+            0xD9, 0xBE, 0xBE, 0xFF, // Light1
+            0xD0, 0xAE, 0xAE, 0xFF, // Accent
+            0xC6, 0x9E, 0x9E, 0xFF, // Dark1
+            0xBD, 0x8E, 0x8E, 0xFF, // Dark2
+            0xB0, 0x77, 0x77, 0xFF, // Dark3
+            0x88, 0x17, 0x98, 0x00, // 占位（alpha 00，不进结果）
+        ]
+    }
+
+    #[test]
+    fn accent_palette_parses_light_to_dark_with_alpha_guard() {
+        let got = parse_accent_palette(&accent_palette_fixture()).expect("本机 dump 必须解析得动");
+        // 亮→暗七档逐位
+        let want = [
+            argb(0xFF, 0xEFE5E5),
+            argb(0xFF, 0xE2CECE),
+            argb(0xFF, 0xD9BEBE),
+            argb(0xFF, 0xD0AEAE),
+            argb(0xFF, 0xC69E9E),
+            argb(0xFF, 0xBD8E8E),
+            argb(0xFF, 0xB07777),
+        ];
+        assert_eq!(got, want);
+        // 末组（alpha 00 占位）绝不能混进结果
+        assert_ne!(got[6], Color { a: 0xFF, r: 0x88, g: 0x17, b: 0x98 });
+        // 序反的 dump（暗→亮）必须被翻回亮→暗，档位语义不变（按四元组翻，不动组内 RGBA）
+        let mut reversed = Vec::with_capacity(32);
+        for quad in accent_palette_fixture().chunks(4).rev() {
+            reversed.extend_from_slice(quad);
+        }
+        assert_eq!(parse_accent_palette(&reversed), Some(want));
+        // 半透明组按「跳过」处理：quad 0 的 alpha 打掉（下标 3）后，实色组只剩 6 组
+        // （末组 alpha 00 的占位同样跳过）⇒ 凑不满 7 组回落 None；字节数不足同回落
+        let mut translucent = accent_palette_fixture();
+        translucent[3] = 0x80;
+        assert_eq!(parse_accent_palette(&translucent), None);
+        assert_eq!(parse_accent_palette(&[0xFF; 24]), None);
+        assert_eq!(parse_accent_palette(&[]), None);
+    }
+
+    /// Light→Dark1（generic.xaml:7631）、Dark→Light2（generic.xaml:2080）：
+    /// 两条取档下标咬合本机 dump 的锚点色，串档（浅色取成 Light2 之类）当场红。
+    #[test]
+    fn system_accent_tiers_pick_the_generic_xaml_variants() {
+        // parse 层先行验证下标映射（system_accent 的注册表读取不可离线断言真值）。
+        // 局部名刻意叫 parsed 而不是 palette——后者与本文件同名的运行时构造函数
+        // palette(Scheme) 同名会把它遮住，数组当函数调 = 编译失败。
+        let parsed = parse_accent_palette(&accent_palette_fixture()).unwrap();
+        assert_eq!(parsed[4], argb(0xFF, 0xC69E9E), "浅色档 = Dark1（锚点：文件头主干实渲 #C69E9E）");
+        assert_eq!(parsed[1], argb(0xFF, 0xE2CECE), "深色档 = Light2");
+        // 运行时外壳：读得到就必须是 Solid 实色、且与 for_scheme 的主题画刷分家
+        if let Some(accent) = system_accent(Scheme::Dark) {
+            assert_eq!(accent.a, 0xFF);
+            let patched = palette(Scheme::Dark);
+            assert_eq!(patched.accent, Brush::Solid(accent));
+            assert_ne!(patched.accent, Palette::for_scheme(Scheme::Dark).accent);
+        }
+        // 读不到（CI/策略机）时 palette 与 for_scheme 同值 —— 回落不是「变透明」
+        if system_accent(Scheme::Light).is_none() {
+            assert_eq!(
+                palette(Scheme::Light).accent,
+                Palette::for_scheme(Scheme::Light).accent
+            );
+        }
+    }
+
+    /// `palette()` 的实色化四档逐位（出处见 [`palette`] 的文档）：卡面深档必须落在
+    /// 主干 `Tokens.xaml:244` 的 `#B3202020` 上——抄成框架的 `#0DFFFFFF` 当场红。
+    #[test]
+    fn palette_solidizes_the_dropped_theme_brush_tiers() {
+        for (scheme, card, stroke, text) in [
+            (
+                Scheme::Light,
+                argb(0xB3, 0xFFFFFF),
+                argb(0xFF, 0xEBEBEB),
+                argb(0xE4, 0x000000),
+            ),
+            (
+                Scheme::Dark,
+                argb(0xB3, 0x202020),
+                argb(0xFF, 0x1C1C1C),
+                argb(0xFF, 0xFFFFFF),
+            ),
+        ] {
+            let p = palette(scheme);
+            assert_eq!(p.card, Brush::Solid(card));
+            assert_eq!(p.stroke, Brush::Solid(stroke));
+            assert_eq!(p.text_primary, Brush::Solid(text));
+            assert_eq!(
+                p.surface,
+                Brush::Solid(surface_color(scheme)),
+                "surface 与 surface_color 同源（SolidBackgroundFillColorBase）"
+            );
+            // 实色化档必须全部离开了主题画刷形态——reactor 会把它们静默丢弃
+            for brush in [&p.surface, &p.card, &p.stroke, &p.text_primary] {
+                assert!(matches!(brush, Brush::Solid(_)));
+            }
+        }
+        // HC 档不吃这一刀：hc_palette 本来就全实色，`for_scheme` 基线也不许被改
+        assert!(matches!(
+            Palette::for_scheme(Scheme::Dark).card,
+            Brush::Theme(_)
+        ));
+    }
+
+    /// `system_accent_tiers_pick_the_generic_xaml_variants` 同锚点的运行时档：
+    /// `palette()` 的 accent 必须是 Solid 系统强调色（读得到时）。
+    #[test]
+    fn runtime_palette_carries_a_solid_accent() {
+        for scheme in [Scheme::Light, Scheme::Dark] {
+            let patched = palette(scheme);
+            match system_accent(scheme) {
+                Some(accent) => assert_eq!(patched.accent, Brush::Solid(accent)),
+                None => assert_eq!(patched.accent, Palette::for_scheme(scheme).accent),
+            }
+        }
     }
 
     #[test]

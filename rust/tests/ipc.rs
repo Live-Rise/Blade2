@@ -70,6 +70,38 @@ fn paced_launch(pace_ms: u64) -> Launch {
     }
 }
 
+/// 常驻契约（主干 0.9.0.4 移植）之后 `Kernel::drop` **不再杀内核** —— 生产语义如此
+/// （壳退出留下内核，下次 `try_attach_resident` 复用）。测试里每个假内核都得自己收尾，
+/// 这枚 RAII 壳替用例把「离开作用域即 [`Kernel::kill_and_clear`]」做掉，免得每次
+/// `cargo test` 往机器上漏几十个 fake_dsh.exe。Deref/DerefMut 透传 ⇒ 用例侧的
+/// `kernel.call(...)`/`kernel.pid()` 一类调用一个不用改。
+struct Reaped(Kernel);
+
+impl Reaped {
+    fn new(kernel: Kernel) -> Self {
+        Reaped(kernel)
+    }
+}
+
+impl std::ops::Deref for Reaped {
+    type Target = Kernel;
+    fn deref(&self) -> &Kernel {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Reaped {
+    fn deref_mut(&mut self) -> &mut Kernel {
+        &mut self.0
+    }
+}
+
+impl Drop for Reaped {
+    fn drop(&mut self) {
+        self.0.kill_and_clear();
+    }
+}
+
 /// 一轮该推上来的帧序（元素级标签）：`session_follow_streams_a_full_prompt_turn` 与
 /// 节流用例共用同一份期望 ⇒ 节流只许改「什么时候到」，不许改「到什么」。
 fn turn_tags() -> Vec<&'static str> {
@@ -483,23 +515,23 @@ fn turn_skeleton() -> Vec<&'static str> {
 }
 
 /// 握手 + 鉴权后接一根 mux，返回 (kernel, mux, 该 kernel 的 stream id)。
-fn open_stream(endpoint: &str) -> (Kernel, Mux, String) {
+fn open_stream(endpoint: &str) -> (Reaped, Mux, String) {
     open_stream_with(endpoint, json!({}))
 }
 
 /// 同上，但带上主干那套 `{request:{…}}` 参数。
-fn open_stream_with(endpoint: &str, args: Value) -> (Kernel, Mux, String) {
+fn open_stream_with(endpoint: &str, args: Value) -> (Reaped, Mux, String) {
     open_stream_by(&fake_launch(), endpoint, args)
 }
 
 /// 开着帧间节流的版本（`pace_ms` 毫秒一帧）。
-fn open_stream_paced(endpoint: &str, args: Value, pace_ms: u64) -> (Kernel, Mux, String) {
+fn open_stream_paced(endpoint: &str, args: Value, pace_ms: u64) -> (Reaped, Mux, String) {
     open_stream_by(&paced_launch(pace_ms), endpoint, args)
 }
 
 /// 按给定的启动参数握手 + 鉴权 + 开一条流；关节奏与开节奏两条路共用同一套起手式。
-fn open_stream_by(launch: &Launch, endpoint: &str, args: Value) -> (Kernel, Mux, String) {
-    let kernel = Kernel::start(launch).expect("假内核应完成 dsh web: 握手");
+fn open_stream_by(launch: &Launch, endpoint: &str, args: Value) -> (Reaped, Mux, String) {
+    let kernel = Reaped::new(Kernel::start(launch).expect("假内核应完成 dsh web: 握手"));
     let mut mux = Mux::connect(kernel.endpoint(), kernel.cookie())
         .unwrap_or_else(|e| panic!("{endpoint} mux 握手失败: {e}"));
     let stream = mux
@@ -534,7 +566,7 @@ fn handshake_auth_and_rpc_against_fake_kernel() {
         .expect_err("未知端点应报错");
     assert!(error.contains("not_found"), "{error}");
 
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// 加载卡第 1 段的真刻度（缺口 #1 的数据源）：`plugin/installProgress` 回 `{ready,total}`，
@@ -555,7 +587,7 @@ fn plugin_install_ledger_reports_ready_over_total_and_advances() {
         .call("plugin/installProgress", json!([]))
         .expect_err("args 给数组必须被拒");
     assert!(error.contains("bad_args"), "{error}");
-    quiet.shutdown();
+    quiet.kill_and_clear();
 
     // 2) 开出台账：3 个包、每个 300ms ⇒ 起手 0/3，等过一格之后 ready 严格变大且 ready<=total。
     let launch = Launch {
@@ -595,7 +627,7 @@ fn plugin_install_ledger_reports_ready_over_total_and_advances() {
         assert!(Instant::now() < deadline, "台账该在预算内爬到 3/3：{value}");
         std::thread::sleep(Duration::from_millis(100));
     }
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 #[test]
@@ -609,7 +641,7 @@ fn mainline_rpc_payload_shapes_are_required() {
         .call("session/create", json!({ "cwd": "E:\\x" }))
         .expect_err("session/create 少了 request 包裹必须被拒");
     assert!(error.contains("bad_args"), "{error}");
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 #[test]
@@ -669,8 +701,8 @@ fn mux_events_stream_sends_ready_then_emit() {
 /// `session/control` 的起手式：走 `Mux::open_session_control()` 那个零参发起口，
 /// 也就是主干 `OpenRemoteStreamAsync("session/control", new { }, …)`
 /// （`MainWindow.xaml.cs:15201`）在分叉侧的等价物 ——  args 逐字是 `{}`。
-fn open_control_stream() -> (Kernel, Mux, String) {
-    let kernel = Kernel::start(&fake_launch()).expect("假内核应完成 dsh web: 握手");
+fn open_control_stream() -> (Reaped, Mux, String) {
+    let kernel = Reaped::new(Kernel::start(&fake_launch()).expect("假内核应完成 dsh web: 握手"));
     let mut mux = Mux::connect(kernel.endpoint(), kernel.cookie()).expect("mux 握手失败");
     let stream = mux
         .open_session_control()
@@ -801,7 +833,7 @@ fn mux_session_control_leads_with_baseline_then_stays_open() {
 /// 「只开流不分流 = 静默丢帧」只有拿真线上帧才验得出来：两条流的 `baseline` **同名不同形**。
 #[test]
 fn mux_three_streams_demix_by_stream_id() {
-    let kernel = Kernel::start(&fake_launch()).expect("假内核应完成 dsh web: 握手");
+    let kernel = Reaped::new(Kernel::start(&fake_launch()).expect("假内核应完成 dsh web: 握手"));
     let mut mux = Mux::connect(kernel.endpoint(), kernel.cookie()).expect("mux 握手失败");
     let workspace = mux
         .open("workspace/follow", json!({}))
@@ -1739,7 +1771,7 @@ fn permission_catalog_arrives_fully_formed_over_a_real_socket() {
     );
     assert_eq!(catalog.default_preset.as_deref(), Some("workspace-write"));
 
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// **新锁 B（反向）**：臂名是**全名相等**、不是 `starts_with` 那种松匹配。
@@ -1768,7 +1800,7 @@ fn permission_catalog_arm_matches_the_exact_method_name_only() {
         CATALOG_NS_KEYS,
         "全名那一发必须在架"
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// **新锁 C（默认档反证 + 开档正证，PP2 反锁②那一颗）**：
@@ -1798,7 +1830,7 @@ fn permission_auto_tier_is_off_by_default_and_only_arrives_when_switched_on() {
         vec!["read-only", "workspace-write", "danger-full-access"],
         "默认档逐字节 = 接手态那张表（只是补了真 composition 的表首那一档）"
     );
-    quiet.shutdown();
+    quiet.kill_and_clear();
 
     // ② `$events` 一帧 catalog-changed 都不推：只开这一条流，收满定长两帧后再探一次短静默。
     let (mut kernel, mut mux, stream) = open_stream_by(&fake_launch(), "$events", json!({}));
@@ -1821,7 +1853,7 @@ fn permission_auto_tier_is_off_by_default_and_only_arrives_when_switched_on() {
         "前导两帧里也不许混进 catalog-changed: {frames:?}"
     );
     drop(mux);
-    kernel.shutdown();
+    kernel.kill_and_clear();
 
     // ③ 投影派生不出 auto（s-1003 撞不到表只回 custom）。
     let mut quiet2 = Kernel::start(&fake_launch()).expect("假内核应完成 dsh web: 握手");
@@ -1835,7 +1867,7 @@ fn permission_auto_tier_is_off_by_default_and_only_arrives_when_switched_on() {
         !derived.iter().flatten().any(|value| value == "auto"),
         "投影 currentValue 派生不出 auto: {derived:?}"
     );
-    quiet2.shutdown();
+    quiet2.kill_and_clear();
 
     // ④ 开档反着证：auto **只**进 options，defaultOptions 与投影都不许动。
     let launch = launch_with(&["--pace=0", "--permission-auto=1"]);
@@ -1883,8 +1915,8 @@ fn permission_auto_tier_is_off_by_default_and_only_arrives_when_switched_on() {
         "开档也只该有定长两帧前导（auto 是启动期挂上的，不是运行时改表）: {frames:?}"
     );
     drop(mux);
-    kernel.shutdown();
-    on.shutdown();
+    kernel.kill_and_clear();
+    on.kill_and_clear();
 }
 
 /// **反向锁（PP2 反锁③的「custom 不成行」那一支，跨两档都钉）**：
@@ -1940,7 +1972,7 @@ fn permission_catalog_never_rows_the_derived_state_in_either_tier() {
                 "默认档三读数（不给参数 / `=0` / 脏值回 0）必须逐字节相同 ⇒ 旋钮默认值或脏值分支写歪了"
             );
         }
-        kernel.shutdown();
+        kernel.kill_and_clear();
     }
 }
 
@@ -2115,7 +2147,7 @@ fn session_prompt_validates_mainline_request_shape() {
             "{case} 应回 bad_args，实际 {error}"
         );
     }
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 #[test]
@@ -2519,7 +2551,7 @@ fn mux_cancel_stops_the_follow_stream() {
         collect_within(&mut mux, &kept, 1, QUIET_BUDGET).is_empty(),
         "s-9002 的轮不该串到 s-9003 的流上"
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 #[test]
@@ -2639,7 +2671,7 @@ fn mux_reconnect_reopens_all_three_streams_and_reseeds_from_baseline() {
             .collect()
     }
 
-    let kernel = Kernel::start(&fake_launch()).expect("假内核应完成 dsh web: 握手");
+    let kernel = Reaped::new(Kernel::start(&fake_launch()).expect("假内核应完成 dsh web: 握手"));
     let mut first = Mux::connect(kernel.endpoint(), kernel.cookie()).expect("首连握手失败");
     let ids = open_three(&mut first);
     assert_eq!(
@@ -2867,7 +2899,7 @@ fn select_model_echoes_and_page_backfills_the_journal() {
         .call("session/cancel", json!({ "sessionId": "s-1001" }))
         .expect_err("扁平传必须被拒");
     assert!(error.contains("bad_args"), "{error}");
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// 交付物「打开/回显」是宿主路由而非 RPC（分叉走 `Kernel::post_route`，真 HTTP）：
@@ -2932,7 +2964,7 @@ fn present_open_route_resolves_the_journal_coordinates() {
         let (status, _) = kernel.post_route(case).expect("路由本身可达");
         assert_eq!(status, 400, "{case} 该回 400");
     }
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// 轮尾 chip 点击那条 RPC（分叉 `open_path` → `session/openWorkspacePath`）：
@@ -2970,7 +3002,7 @@ fn open_workspace_path_rpc_covers_both_click_branches() {
         )
         .expect_err("扁平传必须被拒");
     assert!(error.contains("bad_args"), "{error}");
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// 台账 #77 卡 P4-a 第一颗：`session/canOpenWorkspacePath`（主干 `CanOpenWorkspacePathAsync`，
@@ -2999,7 +3031,7 @@ fn can_open_workspace_path_answers_a_bare_boolean_and_takes_no_arguments() {
         .expect_err("这颗端点不收参数");
     assert!(err.starts_with("bad_args: "), "{err}");
     assert!(err.contains(r#"unexpected "path""#), "{err}");
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// 台账 #77 卡 P4-a 第二颗：`session/modelCatalog`（主干 `RunKernelBootCoreAsync`）此前
@@ -3072,7 +3104,7 @@ fn model_catalog_replies_the_schema_shape_and_not_an_invented_items_list() {
         providers.iter().all(|row| row.is_string()),
         "routableProviders 是字符串数组，不是对象数组"
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// 设置页·模型提供方那一叠只读端点：目录 / 已注册路由 / 设置文档快照 / 凭据状态 / 拉模型。
@@ -3257,7 +3289,7 @@ fn settings_rpc_lists_providers_and_credential_states() {
             .expect_err("参数不合 wire 描述符 / 探针被内核拒绝");
         assert!(error.contains(code), "{label} 该回 {code}，实际 {error}");
     }
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// 设置页的三条写端点 + 凭据库 + 「打开设置文档」。主干的闭环是「写一次 → 重新 describe →
@@ -3550,7 +3582,7 @@ fn settings_write_endpoints_round_trip_and_track_revisions() {
     );
     assert_eq!(after["namespaces"][1]["revision"].as_f64(), Some(3.0));
     assert_eq!(after["namespaces"][2]["revision"].as_f64(), Some(1.0));
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// 复查一次预设花名册（`agentPresets/list` 的 `presets` 段）：写入之后主干设置页就是这么重拉的
@@ -3792,7 +3824,7 @@ fn agent_preset_rpc_covers_read_use_and_default_loop() {
         let error = kernel.call(method, args).expect_err("参数或业务态该被拒");
         assert!(error.contains(code), "{label} 该回 {code}，实际 {error}");
     }
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// `agentPresets/list` 的**回帧形状**用例：钉「桩发的形状 == 真内核的形状」这一格，
@@ -3957,7 +3989,7 @@ fn agent_presets_list_wire_shape_is_the_kernel_roster_and_no_items_alias_exists(
     }
     assert!(first_null(&json!({ "presets": after_default }), "roster").is_none());
 
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// 反馈族第二层 ok 的拆解：`Kernel::call` 只剥外层信封（`{result:{ok,value}}`），剩下的
@@ -4203,7 +4235,7 @@ fn session_fork_rename_then_list_closes_the_branch_loop() {
         answers[4]
     );
 
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 #[test]
@@ -4293,7 +4325,7 @@ fn session_fork_and_rename_reject_off_shape_arguments() {
         .expect_err("给不存在的会话改名");
     assert!(error.contains("session/not-found"), "{error}");
 
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// `messageFeedback/put|list|delete` 的正路：写入 → 读回 → 撤销 → 读空，
@@ -4422,7 +4454,7 @@ fn message_feedback_put_list_delete_round_trip() {
         .expect("重复 delete 该幂等成功");
     assert_eq!(feedback_value(body), json!({ "absent": true }));
 
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// `messageFeedback` 的失败面：每条都得是**内层 ok:false + 内核原样错误体**，
@@ -4593,7 +4625,7 @@ fn message_feedback_business_failures_carry_kernel_error_bodies() {
         assert!(error.contains("bad_args"), "{label}：{error}");
     }
 
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// 技能面板与 `/` 菜单读的 `skills/list`。注意：设置页的技能**增删改没有 RPC**
@@ -4676,7 +4708,7 @@ fn skills_list_returns_the_catalog_the_menu_renders() {
             "{label} 该被 wire 把关拦下，实际 {error}"
         );
     }
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 // ================================================================ 目标 A：流式帧的真实节流
@@ -4710,7 +4742,7 @@ fn pacing_off_delivers_the_whole_turn_in_one_burst() {
         turn_tags(),
         "关节奏的帧序就是这轮的基准形状"
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// 开着节奏（`MID_PACE_MS`，见其注释的一帧一批条件）：① RPC 不被推帧拖住、② 头几帧真花了
@@ -4776,7 +4808,7 @@ fn paced_turn_leaves_a_midway_window_for_ui_snapshots() {
         "整轮被拖长的工夫才是 UI 的抢拍窗口，实际 {:?}",
         started.elapsed()
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// 轮尾那条 running=false 只能在最后一帧之后到：分叉的「思考中」占位、左栏那个点全靠它撑着，
@@ -4829,7 +4861,7 @@ fn running_flag_clears_only_after_the_paced_turn_ends() {
         "整轮被拖长的工夫才是 UI 的抢拍窗口，实际 {:?}",
         started.elapsed()
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 // ================================================================ 目标 B：撤回取证的 meta.diffs
@@ -4961,7 +4993,7 @@ fn tool_result_meta_carries_every_diff_shape_revert_needs() {
         result_data(&journal, "call-5")["meta"],
         "回填的 meta 与流上推的那份一致"
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 // ================================================================ #93 注入 / 中继 / 召回帧
@@ -5108,7 +5140,7 @@ fn the_default_profile_delivers_no_injection_frame_at_all() {
     let seeded_users = user_frames(&seeded);
     assert_eq!(seeded_users.len(), 3, "每轮一条真人提问");
     assert_no_injection(&seeded_users);
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// 开档：三型帧（中继 / 召回 / 其余注入）**全部到达客户端**，且逐字段过两处判据。
@@ -5296,7 +5328,7 @@ fn the_injection_switch_delivers_all_three_shapes_to_the_client() {
     );
     assert!(row.context_entries.is_empty() && row.relay_session_id.is_none());
     assert_eq!(ledger.pending_references().len(), 0, "补登完桶该清空");
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// 注入帧走的也是**同一台 journal 机器** ⇒ 历史回读（进会话第一发 `session/page`）必须把它们
@@ -5349,7 +5381,7 @@ fn the_injection_frames_come_back_in_history_replay_too() {
     for data in &users {
         assert!(matches!(data["turn"], Value::Number(_)), "注入帧也得带 turn: {data}");
     }
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// 开着帧间节流的注入轮：① 注入行落在**流式窗口里**（UI 抢得到拍），② 帧与帧的间隔确实
@@ -5395,7 +5427,7 @@ fn the_paced_injected_turn_arrives_frame_by_frame() {
         expect,
         "节流只许改「什么时候到」，不许改「到什么」"
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 // ==================== #75 工作区 CRUD + 内核目录选择器（九发）====================
@@ -5758,7 +5790,7 @@ fn fake_kernel_accepts_every_workspace_rpc_the_constructor_emits() {
         .expect_err("重复删除必须报错");
     assert!(error.contains("workspace/not-found"), "{error}");
 
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// ③：形状错的两条路都得拒得起来 —— 外层包裹错（抄错一层）与内层键集合错。
@@ -5843,7 +5875,7 @@ fn fake_kernel_rejects_off_shape_workspace_and_picker_arguments() {
         assert!(error.contains("bad_args"), "{label}：{error}");
     }
 
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// ③：内核会拒的**业务**错，桩也照真码拒 ⇒ 分叉那几条失败文案才拿得到 code。
@@ -5922,7 +5954,7 @@ fn fake_kernel_refuses_workspace_rpcs_with_the_kernel_error_codes() {
         .expect_err("锚点不在目标工作区");
     assert!(error.contains("workspace/move-invalid"), "{error}");
 
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// 默认档 = native：`pick` 可用、`list`/`createDirectory` 回 `directory-picker/unavailable`。
@@ -5953,7 +5985,7 @@ fn directory_picker_default_serves_native_pick_and_refuses_browsing() {
         assert!(error.contains("directory-picker/unavailable"), "{method}：{error}");
     }
 
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// `--picker=1` 翻成 browse 档：`pick` 改口拒、`list` 两种入参形状都可用（含整棵回执树对比）、
@@ -6067,7 +6099,7 @@ fn directory_picker_browse_mode_lists_both_argument_shapes_and_creates() {
         .expect_err("读不到的目录");
     assert!(error.contains("directory-picker/unreadable"), "{error}");
 
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// 回执要喂回的那张表：`WorkspaceView::to_workspace()` 折出来的东西必须能直接进
@@ -6140,7 +6172,7 @@ fn workspace_writes_feed_the_same_tree_the_follow_stream_builds() {
         "回执喂回树之后，ws-2 那一组就该多出这条会话"
     );
 
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// 上一把测试要的那颗 baseline 料（与假内核 `seed_workspaces()` 的 ws-1 逐字同形）。
@@ -6262,8 +6294,8 @@ fn launch_with_args(args: &[&str]) -> Launch {
 }
 
 /// `open_control_stream()` 的带档位版本：同一套起手式（握手 + 鉴权 + `open_session_control()`）。
-fn open_control_stream_by(launch: &Launch) -> (Kernel, Mux, String) {
-    let kernel = Kernel::start(launch).expect("假内核应完成 dsh web: 握手");
+fn open_control_stream_by(launch: &Launch) -> (Reaped, Mux, String) {
+    let kernel = Reaped::new(Kernel::start(launch).expect("假内核应完成 dsh web: 握手"));
     let mut mux = Mux::connect(kernel.endpoint(), kernel.cookie()).expect("mux 握手失败");
     let stream = mux
         .open_session_control()
@@ -6333,7 +6365,7 @@ fn projections_knob_pushes_six_live_frames_over_the_socket_after_the_pinned_four
         vec!["baseline", "queue", "jobs", "projection"],
         "对照流本身得是那四条既有帧，否则下面的字节比对没有意义: {quiet_frames:?}"
     );
-    quiet.shutdown();
+    quiet.kill_and_clear();
     drop(quiet_mux);
 
     let (mut kernel, mut mux, stream) =
@@ -6468,7 +6500,7 @@ fn projections_knob_pushes_six_live_frames_over_the_socket_after_the_pinned_four
         "六发增量各换各的键，种子大纲不受影响"
     );
     drop(mux);
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// **用例 1 的第二档**：`--projections=2` 末两发负形过 socket 之后 `value` 仍是 `null` 本体
@@ -6525,7 +6557,7 @@ fn projections_knob_level_two_pushes_the_two_null_shapes_last_over_the_socket() 
         "同一批里的成功键不受影响：permissions 还在"
     );
     drop(mux);
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// **用例 2**：`goals/get` 真的被 HTTP/JSON-RPC 层路由到了（`fake_dsh.rs:1618` 那条臂）。
@@ -6599,7 +6631,7 @@ fn goals_get_is_routed_by_the_http_layer_and_replies_three_shapes() {
             .expect_err("多一键同样得拒"),
         r#"bad_args: args fields do not match the descriptor: unexpected "revision""#
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// **用例 2 的旋钮档**：`--goal=1` / `--goal=2` 这两型也在真臂上发得出来
@@ -6638,7 +6670,7 @@ fn goal_knob_switches_the_activation_and_blocked_shapes_on_the_wire() {
         }),
         "整根 activation 缺席 ⇒ 剩下的字节必须与 0 档同源"
     );
-    disarmed.shutdown();
+    disarmed.kill_and_clear();
 
     let mut blocked = Kernel::start(&launch_with_args(&["--goal=2"])).expect("握手");
     let view = blocked
@@ -6653,7 +6685,7 @@ fn goal_knob_switches_the_activation_and_blocked_shapes_on_the_wire() {
         "blockedReason 恰两键（内核 decodeSnapshot 的 expectedKeys）"
     );
     assert_eq!(view["blockedReason"]["code"], json!("round-budget-exhausted"));
-    blocked.shutdown();
+    blocked.kill_and_clear();
 }
 
 // ==================== 批 B3（goals 族第④层）：六枚变更臂走真 socket ====================
@@ -6832,7 +6864,7 @@ fn six_goal_mutations_route_through_the_http_layer_and_survive_the_readback() {
         gone.starts_with("GOAL_NOT_FOUND: "),
         "码面错了：{gone}"
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// 六枚的**把关档**：`assertExactArguments` 的三型键集漂移、活会话无目标、台账外 agent、
@@ -6985,7 +7017,7 @@ fn goal_mutation_wire_gates_reject_before_touching_state() {
         seed,
         "被拒的发数再多人家也不许改账"
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 // ==================== #117：`--trunc=` 走真 socket 的集成用例（SK1 §7 R-2） ====================
@@ -7010,7 +7042,7 @@ fn trunc_turn(session: &str, level: u64, want: usize) -> (Vec<Value>, Vec<Value>
         .expect("session/prompt 应被接受");
     let frames = item_values(&collect_within(&mut mux, &follow, want, DRAIN_BUDGET), &follow);
     let events = journal_of(&frames);
-    kernel.shutdown();
+    kernel.kill_and_clear();
     (frames, events)
 }
 
@@ -7246,7 +7278,7 @@ fn the_truncation_frames_come_back_in_history_replay_matching_the_live_shape() {
         );
     }
     assert_eq!(attempt_events(&events).len(), 3, "档 1 回读不许多出 attempt");
-    kernel.shutdown();
+    kernel.kill_and_clear();
 
     // 档 2 回读：多一发 flat attempt/轮，turn/end 不动。
     let mut kernel = Kernel::start(&launch_with(&["--pace=0", "--trunc=2"])).expect("握手");
@@ -7278,7 +7310,7 @@ fn the_truncation_frames_come_back_in_history_replay_matching_the_live_shape() {
             "档 2 回读不许给 turn/end 补 reason（那是档 1/4）"
         );
     }
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 // ==================== #123：`--retry=` 六档走真 socket 的集成用例（SK2 §7 R-1） ====================
@@ -7347,7 +7379,7 @@ fn retry_turn_argv(session: &str, knobs: &[&str], want: usize) -> (Vec<Value>, V
         .expect("session/prompt 应被接受");
     let frames = item_values(&collect_within(&mut mux, &follow, want, DRAIN_BUDGET), &follow);
     let events = journal_of(&frames);
-    kernel.shutdown();
+    kernel.kill_and_clear();
     (frames, events)
 }
 
@@ -7360,7 +7392,7 @@ fn retry_seed_argv(knobs: &[&str]) -> Vec<Value> {
         .call("session/page", page_args("s-1001", None, None))
         .expect("种子会话该带回历史");
     let events = page_events(&page);
-    kernel.shutdown();
+    kernel.kill_and_clear();
     events
 }
 
@@ -8128,7 +8160,7 @@ fn settings_describe_ledger_covers_every_trunk_read_namespace() {
         json!([{ "path": ["apiKey"], "set": false }]),
         "缺席的 secret 也要枚举出位置，配置面才渲染得出那根只写输入框"
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// (c) 新补的 ns 也走完整写往返：`settings/update` / `settings/mutate` → revision 前进 →
@@ -8221,7 +8253,7 @@ fn newly_ledgered_namespaces_round_trip_writes_and_advance_revisions() {
     // 每支 ns 各记各的账：写 ui-theme/shell 不许把别的推进。
     assert_eq!(row_of(&mut kernel, "agent-loop")["revision"].as_f64(), Some(0.0));
     assert_eq!(row_of(&mut kernel, "llm-deepseek")["revision"].as_f64(), Some(0.0));
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// (d) 不在台账上的 ns 仍拒 + (e) **反向哨兵**：台账从 3 扩到 13 之后，
@@ -8301,7 +8333,7 @@ fn ledger_growth_never_widens_model_discovery_or_write_acceptance() {
         !error.contains("no model discovery"),
         "写端点的拒绝不许串到 discovery 的文案：{error}"
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 // ===========================================================================
@@ -8364,7 +8396,7 @@ fn the_kernels_number_lines_ride_the_describe_wire_and_absent_lines_stay_absent(
             );
         }
     }
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// X-2 的写侧半段：越界值**拒**而不是夹取，message 逐字是内核那句（含 `$.` 路径前缀），
@@ -8404,7 +8436,7 @@ fn a_wire_number_write_outside_the_line_is_refused_with_the_kernels_message() {
         assert_eq!(ok["value"]["fontSize"], json!(edge));
     }
     assert_eq!(ns_row(&mut kernel, "ui-theme")["revision"], json!(2.0), "0 →(12) 1 →(17) 2");
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// X-1：`enabled` / `allowedModels` 的耦合在线上也得成立，且判的是**合并后的整段**——
@@ -8493,7 +8525,7 @@ fn the_subagent_enabled_and_allowed_models_pairing_is_enforced_on_the_wire() {
     );
     assert_eq!(ns_row(&mut kernel, "subagent-model-selection")["revision"], json!(2.0),
         "⑤ 那笔 validate 被拒的写不入账，仍停 2");
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 // ==================== SS1：`--session-stats=` 三档与 `asOfSeq` 水位走真 socket ====================
@@ -8533,7 +8565,7 @@ fn session_rows_at(level: &str) -> (Vec<Projections>, Vec<Value>) {
         .into_iter()
         .map(|row| row.projections)
         .collect();
-    kernel.shutdown();
+    kernel.kill_and_clear();
     let values = raw["items"]
         .as_array()
         .expect("items 该是数组")
@@ -8659,7 +8691,7 @@ fn ledger_shape(launch: &Launch) -> String {
     let raw = kernel
         .call("session/list", json!({ "_request": {} }))
         .expect("session/list 应成功");
-    kernel.shutdown();
+    kernel.kill_and_clear();
     let stripped: Vec<Value> = raw["items"]
         .as_array()
         .expect("items 该是数组")
@@ -8852,7 +8884,7 @@ fn the_advertised_as_of_seq_is_the_cursor_the_page_endpoint_itself_accepts() {
     let after_aggregate = kernel.collect_usage_stats(0).expect("第二轮之后再来一趟聚合");
     assert_eq!(after_aggregate.usage_messages, 5, "新那一轮的答案也得进台账");
     assert_eq!(after_aggregate.total(), 6942, "5322 + 第 4 轮（偶数轮）1620");
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// 两条门读的是同一张投影表：`session/control` 的 baseline 与 `session/list` 必须同源，
@@ -8901,7 +8933,7 @@ fn the_control_baseline_and_the_session_list_agree_on_stats_tier_and_watermark()
             "{id}：同一条桩、同一张表，两门读数一字不差"
         );
     }
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 // ==================== #141：`--compaction=` / `--workflow=` 走真 socket 的集成用例（SK5 §3） ====
@@ -9012,7 +9044,7 @@ fn compaction_turn_argv(session: &str, knobs: &[&str], want: usize) -> (Vec<Valu
         .expect("session/prompt 应被接受");
     let frames = item_values(&collect_within(&mut mux, &follow, want, DRAIN_BUDGET), &follow);
     let events = journal_of(&frames);
-    kernel.shutdown();
+    kernel.kill_and_clear();
     (frames, events)
 }
 
@@ -9034,7 +9066,7 @@ fn workflow_turn_argv(session: &str, knobs: &[&str], want: usize) -> (Vec<Value>
         .expect("session/prompt 应被接受");
     let frames = item_values(&collect_within(&mut mux, &follow, want, DRAIN_BUDGET), &follow);
     let events = journal_of(&frames);
-    kernel.shutdown();
+    kernel.kill_and_clear();
     (frames, events)
 }
 
@@ -9047,7 +9079,7 @@ fn compaction_seed_argv(knobs: &[&str]) -> Vec<Value> {
         .call("session/page", page_args("s-1001", None, None))
         .expect("种子会话该带回历史");
     let events = page_events(&page);
-    kernel.shutdown();
+    kernel.kill_and_clear();
     events
 }
 
@@ -9849,7 +9881,7 @@ fn kw1_step_seed(level: u64) -> (Vec<Value>, Option<SessionStats>) {
         .into_iter()
         .find(|row| row.info.id == "s-1001")
         .and_then(|row| row.projections.stats);
-    kernel.shutdown();
+    kernel.kill_and_clear();
     (events, stats)
 }
 
@@ -9874,7 +9906,7 @@ fn kw1_step_live(session: &str, level: u64, want: usize) -> (Vec<Value>, Vec<Val
             .call("session/page", page_args(session, None, None))
             .expect("回读该带回当场那一轮"),
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
     (frames, lived, replayed)
 }
 
@@ -10130,7 +10162,7 @@ fn ctx_turn(session: &str, level: u64, want: usize) -> (Vec<Value>, Vec<Value>) 
         .expect("session/prompt 应被接受");
     let frames = item_values(&collect_within(&mut mux, &follow, want, DRAIN_BUDGET), &follow);
     let events = journal_of(&frames);
-    kernel.shutdown();
+    kernel.kill_and_clear();
     (frames, events)
 }
 
@@ -10149,7 +10181,7 @@ fn ctx_unflagged_turn(session: &str) -> (Vec<Value>, Vec<Value>) {
     let frames =
         item_values(&collect_within(&mut mux, &follow, TURN_FRAMES, DRAIN_BUDGET), &follow);
     let events = journal_of(&frames);
-    kernel.shutdown();
+    kernel.kill_and_clear();
     (frames, events)
 }
 
@@ -10516,7 +10548,7 @@ fn ctx_unknown_levels_fall_back_and_two_knobs_add_instead_of_replacing() {
         assert_eq!(frames.len(), TURN_FRAMES, "`--ctx={raw}` 该回落成关档");
         assert!(ctx_context_frames(&events).is_empty(), "回落档不许发帧");
         assert!(ctx_fold(probe, &events).occupancy(probe).is_none());
-        kernel.shutdown();
+        kernel.kill_and_clear();
     }
     let trunc_arg = "--trunc=2".to_string();
     let ctx_arg = "--ctx=1".to_string();
@@ -10532,7 +10564,7 @@ fn ctx_unknown_levels_fall_back_and_two_knobs_add_instead_of_replacing() {
         &follow,
     );
     let events = journal_of(&frames);
-    kernel.shutdown();
+    kernel.kill_and_clear();
     assert_eq!(
         frames.len(),
         TURN_FRAMES + 2,
@@ -10568,7 +10600,7 @@ fn ctx_level_one_live_and_page_replay_fold_the_same_reading() {
             .call("session/page", page_args(session, None, None))
             .expect("回读该带回当场那一轮"),
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
     assert_eq!(
         ctx_context_frames(&replayed).len(),
         1,
@@ -10604,7 +10636,7 @@ fn prompt_turn_argv(session: &str, knobs: &[&str]) -> (Vec<Value>, Vec<Value>) {
     let frames =
         item_values(&collect_within(&mut mux, &follow, TURN_FRAMES, DRAIN_BUDGET), &follow);
     let events = journal_of(&frames);
-    kernel.shutdown();
+    kernel.kill_and_clear();
     (frames, events)
 }
 
@@ -10829,7 +10861,7 @@ fn fake_kernel_prompt_frames_are_observable_mid_stream_when_paced() {
         2,
         "整轮收完仍是恰两发"
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 // ==================== RT6 §表5 X-1…X-4：轮次轨四条种子的真 socket 用例（ST9） ==================
@@ -10844,7 +10876,7 @@ fn fake_kernel_prompt_frames_are_observable_mid_stream_when_paced() {
 
 /// 带旋钮开一条控制流并收 `want` 发：`(Kernel, Mux, 流名, 帧值)`。
 /// 帧值走 `item_values` ⇒ 混进 `end`/`failure` 当场炸，这本身就是 X-3「不炸流」的一半判据。
-fn st9_control_open(knobs: &[&str], want: usize) -> (Kernel, Mux, String, Vec<Value>) {
+fn st9_control_open(knobs: &[&str], want: usize) -> (Reaped, Mux, String, Vec<Value>) {
     let (kernel, mut mux, stream) = open_control_stream_by(&launch_with_args(knobs));
     let events = collect(&mut mux, &stream, want);
     let frames = item_values(&events, &stream);
@@ -10991,7 +11023,7 @@ fn st9_rail_shapes_tiers_carry_the_documented_outline_element_counts() {
             "形状轴只灌同一发 projection 的 value，一帧都不许多推"
         );
         previous = outline;
-        kernel.shutdown();
+        kernel.kill_and_clear();
         drop(mux);
     }
     assert_eq!(
@@ -11008,7 +11040,7 @@ fn st9_rail_shapes_tiers_carry_the_documented_outline_element_counts() {
 fn st9_rail_shapes_one_puts_a_long_windows_path_on_the_main_line() {
     let (mut quiet, _qmux, _qstream, quiet_frames) = st9_control_open(&[], 4);
     let quiet_outline = st9_outline(&quiet_frames);
-    quiet.shutdown();
+    quiet.kill_and_clear();
 
     let (mut kernel, mut mux, stream, frames) = st9_control_open(&["--rail-shapes=1"], 4);
     // ⚠ 靶子改过（报告 §3-B2）：ST9 原文是「`frames[..3]` 逐字节不变」，但 **baseline 那一发
@@ -11088,7 +11120,7 @@ fn st9_rail_shapes_one_puts_a_long_windows_path_on_the_main_line() {
         collect_within(&mut mux, &stream, 1, QUIET_BUDGET).is_empty(),
         "X-1 不加帧"
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// **X-2 的真形状**：`--rail-shapes=2` 给两条**空串**条目（一条 `prompt` 空、一条 `response` 空），
@@ -11140,7 +11172,7 @@ fn st9_rail_shapes_two_hands_the_two_empty_string_arms_as_the_kernel_sends_them(
         collect_within(&mut mux, &stream, 1, QUIET_BUDGET).is_empty(),
         "X-2 不加帧"
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// **X-2 的缺键负形**：`--rail-shapes=3` 再加两条 —— 一条整个不发 `prompt` 键、一条不发
@@ -11151,7 +11183,7 @@ fn st9_rail_shapes_three_adds_the_two_missing_key_negative_forms() {
     const OTHER_SIDE: &str = "空字段那一侧之外的正文，副行/主行按它判收起";
     let (mut level_two, _mux2, _stream2, level_two_frames) = st9_control_open(&["--rail-shapes=2"], 4);
     let level_two_outline = st9_outline(&level_two_frames);
-    level_two.shutdown();
+    level_two.kill_and_clear();
 
     let (mut kernel, mut mux, stream, frames) = st9_control_open(&["--rail-shapes=3"], 4);
     let outline = st9_outline(&frames);
@@ -11195,7 +11227,7 @@ fn st9_rail_shapes_three_adds_the_two_missing_key_negative_forms() {
         collect_within(&mut mux, &stream, 1, QUIET_BUDGET).is_empty(),
         "缺键负形也不加帧"
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// **X-4**：`--rail-count=` 把 s-1001 的大纲灌到 N 条，**每一条都真到**（含区间边界 4/60，
@@ -11263,7 +11295,7 @@ fn st9_rail_count_delivers_every_generated_outline_entry_over_the_socket() {
             collect_within(&mut mux, &stream, 1, QUIET_BUDGET).is_empty(),
             "条数轴是「加元素不加帧」：{count} 条仍只有一发 projection"
         );
-        kernel.shutdown();
+        kernel.kill_and_clear();
         drop(mux);
     }
 }
@@ -11280,7 +11312,7 @@ fn st9_rail_knobs_outside_the_interval_are_byte_identical_to_default() {
         3,
         "关档大纲仍是三条（本刀不改默认档的地基）"
     );
-    quiet.shutdown();
+    quiet.kill_and_clear();
     for knob in [
         "--rail-count=0",
         "--rail-count=3",
@@ -11303,7 +11335,7 @@ fn st9_rail_knobs_outside_the_interval_are_byte_identical_to_default() {
             collect_within(&mut mux, &stream, 1, QUIET_BUDGET).is_empty(),
             "{knob} 一帧都不许多推"
         );
-        kernel.shutdown();
+        kernel.kill_and_clear();
         drop(mux);
     }
 }
@@ -11316,7 +11348,7 @@ fn st9_negative_turn_outline_frames_do_not_break_the_control_stream() {
     let (mut level_two, _mux2, _stream2, level_two_frames) =
         st9_control_open(&["--projections=2"], 12);
     assert_eq!(level_two_frames.len(), 12, "2 档仍是 4 + 6 + 2 帧（:6051 的地基）");
-    level_two.shutdown();
+    level_two.kill_and_clear();
 
     let (mut kernel, mut mux, stream, frames) = st9_control_open(&["--projections=3"], 16);
     assert_eq!(frames.len(), 16, "3 档该是 4 + 6 + 2 + 4 帧");
@@ -11443,7 +11475,7 @@ fn st9_negative_turn_outline_frames_do_not_break_the_control_stream() {
         3,
         "负形只是**线上形状**：桩自己的大纲台账一条没多，另一门读数照旧三条"
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// **条数轴不动实时轮**：`--rail-count=25` 之下开一条关节奏（150ms > READ_TICK 120ms）的
@@ -11540,7 +11572,7 @@ fn st9_rail_count_leaves_a_paced_live_turn_frame_for_frame_identical() {
         rows.iter().all(|row| row.info.id != LIVE),
         "实时会话不在这张台账里（桩只列种子 + fork 行）⇒ 大纲按会话分表，别把两件事混成一个数"
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 
@@ -11628,7 +11660,7 @@ fn st12_the_long_path_seed_is_the_first_main_line_the_token_breaker_actually_ben
 
     let (mut quiet, _qmux, _qstream, quiet_frames) = st9_control_open(&[], 4);
     let quiet_marks = st12_marks(&quiet_frames[3]["value"]);
-    quiet.shutdown();
+    quiet.kill_and_clear();
     assert_eq!(quiet_marks.len(), 3, "关档仍是三条种子（本刀不动地基）");
     for mark in &quiet_marks {
         assert_eq!(
@@ -11676,7 +11708,7 @@ fn st12_the_long_path_seed_is_the_first_main_line_the_token_breaker_actually_ben
         collect_within(&mut mux, &stream, 1, QUIET_BUDGET).is_empty(),
         "X-1 不加帧（现测：4 帧之后静默窗零帧）"
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// **X-2**：`--rail-shapes=2` 那两条空串条目把 `main.rs:16743` 与 `:16757` 两个兜底臂的
@@ -11725,10 +11757,10 @@ fn st12_the_two_empty_field_seeds_open_both_preview_card_fallback_gates() {
         "空主行走的是轮次号兜底文案（主干 `TurnRail.cs:372` 的 `LF(\"第 {{0}} 轮\", mark.Turn)`）"
     );
     assert_eq!(
-        en_cards[4][0], zh_cards[4][0],
-        "主干 `MainWindow.TurnRail.cs` 的 `ParseTurnOutline` 走 `LF(\"第 {{0}} 轮\", mark.Turn)`：\
-         通道 A 且主干 `ShellEnglish` **没有**裸 `第 {{0}} 轮` 这枚键 ⇒ 无键必回中文，\
-         英文档与中文档**同串**才是忠实复刻。分叉不许靠 EN 表补一枚主干没有的英文名（KX1 刀 C 撤表）"
+        en_cards[4][0], "Turn 5",
+        "主干 `MainWindow.TurnRail.cs` 的 `ParseTurnOutline` 走 `LF(\"第 {{0}} 轮\", mark.Turn)`；\
+         主干 ShellEnglish 自 0.9.0.2（a3e31f51）起**已收编**裸 `第 {{0}} 轮 = Turn {{0}}` 这枚键 ⇒ \
+         英文档出 \"Turn 5\" 与主干同档才是忠实复刻（旧契约「主干无键⇒英文回中文」随主干收编作废）"
     );
     assert_eq!(
         zh_cards[5][0],
@@ -11766,7 +11798,7 @@ fn st12_the_two_empty_field_seeds_open_both_preview_card_fallback_gates() {
         collect_within(&mut mux, &stream, 1, QUIET_BUDGET).is_empty(),
         "X-2 不加帧"
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// **X-3**：`--projections=3` 的四发负形折叠之后，**存活刻度**在分叉侧落到哪一臂 ——
@@ -11852,7 +11884,7 @@ fn st12_the_folded_negative_marks_land_on_the_same_view_gates() {
         collect_within(&mut mux, &stream, 1, QUIET_BUDGET).is_empty(),
         "四发负形之外一帧都不许多推（流也没被炸）"
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// **X-4**：`--rail-count=` 灌出来的条数真的把 `host_height` 的 `420` 夹紧臂顶开（边界在
@@ -11922,7 +11954,7 @@ fn st12_the_padded_counts_reach_the_host_height_clamps_and_every_mark_has_a_targ
             collect_within(&mut mux, &stream, 1, QUIET_BUDGET).is_empty(),
             "条数轴是加元素不是加帧：{count} 条仍只有一发 projection"
         );
-        kernel.shutdown();
+        kernel.kill_and_clear();
         drop(mux);
     }
     assert_eq!(measured, vec![4, 20, 21, 25, 40], "五档全数到达，一档都没被截");
@@ -12018,7 +12050,7 @@ fn st12_both_rail_axes_open_together_pad_after_the_shapes() {
         collect_within(&mut mux, &stream, 1, QUIET_BUDGET).is_empty(),
         "两轴同开仍不加帧"
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
 
     let (mut kernel, mut mux, stream, frames) =
         st9_control_open(&["--rail-shapes=3", "--rail-count=4"], 4);
@@ -12033,7 +12065,7 @@ fn st12_both_rail_axes_open_together_pad_after_the_shapes() {
         collect_within(&mut mux, &stream, 1, QUIET_BUDGET).is_empty(),
         "只补不摘这一路也不加帧"
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 // ==================== ST11 · 表C 十发端点（五颗旋钮）的真 socket 用例 ====================
@@ -12105,7 +12137,7 @@ fn tablec_all_ten_are_404_when_no_knob_is_given() {
         );
         assert!(error.contains(endpoint), "{endpoint} 的错误串该点着自己的名：{error}");
     }
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// **用例 2**：显式 `--retrieval=0` 与压根不带 argv 是**同一台机器**（原始响应体逐字节同）。
@@ -12120,8 +12152,8 @@ fn tablec_retrieval_zero_is_the_same_machine_as_no_argv() {
         assert_eq!(a, b, "{endpoint} 的 0 档与不带旋钮该逐字节同");
         assert!(a.contains("假内核不支持"), "{a}");
     }
-    off.shutdown();
-    none.shutdown();
+    off.kill_and_clear();
+    none.kill_and_clear();
 }
 
 /// **用例 3**：`session/search` 的回执是 `{items,hasMore}`（**不是** `{sessions}`），
@@ -12142,7 +12174,7 @@ fn tablec_search_receipt_is_items_not_sessions_and_has_more_flips() {
         assert!(item["snippet"].is_string(), "snippet 是 schema 的必填串");
     }
     assert_eq!(value["hasMore"], json!(false));
-    hit.shutdown();
+    hit.kill_and_clear();
 
     let mut empty = tablec_kernel("--retrieval=2");
     let value = empty
@@ -12150,7 +12182,7 @@ fn tablec_search_receipt_is_items_not_sessions_and_has_more_flips() {
         .expect("档 2 也该回执");
     assert_eq!(value["items"].as_array().expect("空命中也是数组").len(), 0);
     assert_eq!(value["hasMore"], json!(true), "档 2 的 hasMore 该翻成 true");
-    empty.shutdown();
+    empty.kill_and_clear();
 }
 
 /// **用例 4**：档 3「检索未开启」的两条 needle 都在 message 里；脏档值回落 = 与关档同形。
@@ -12165,14 +12197,14 @@ fn tablec_search_disabled_arm_matches_both_needles_and_dirty_knob_falls_back() {
             || error.contains("SESSION_QUERY_SEARCH_DISABLED"),
         "主干 `IsSearchDisabled` 两条 needle 至少中一条：{error}"
     );
-    disabled.shutdown();
+    disabled.kill_and_clear();
 
     let mut dirty = tablec_kernel("--retrieval=abc");
     let error = dirty
         .call("session/search", tablec_args("session/search"))
         .expect_err("脏值该回落 0 = 关档");
     assert!(error.contains("HTTP 404"), "{error}");
-    dirty.shutdown();
+    dirty.kill_and_clear();
 }
 
 /// **用例 5**：`updateQueue` 三臂（edit/steer/remove）都过闸，回执是字面量 `{accepted:true}`。
@@ -12203,7 +12235,7 @@ fn tablec_update_queue_accepts_all_three_actions_with_a_literal_receipt() {
         )
         .expect_err("第四种 kind 不存在于 union");
     assert!(bad.starts_with("bad_args"), "{bad}");
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// **用例 6**：档 4 的错误**按 message 文本**命中主干那条 `Contains("no longer pending")`。
@@ -12219,7 +12251,7 @@ fn tablec_queue_item_not_found_matches_on_message_text() {
     );
     assert!(error.contains("session/queue-item-not-found"), "{error}");
     assert!(error.contains("q-1"), "message 该把 itemId 带上：{error}");
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// **用例 7（十发里唯一加帧的那一档）**：档 5 接受 `updateQueue` 后往控制流追推**恰好一帧**
@@ -12242,7 +12274,7 @@ fn tablec_queue_tier5_pushes_exactly_one_queue_frame_and_tier1_pushes_none() {
     assert_eq!(extra[0]["type"], json!("queue"));
     assert_eq!(extra[0]["sessionId"], json!("s-1001"));
     assert_eq!(extra[0]["items"].as_array().expect("items 得是数组").len(), 0);
-    kernel.shutdown();
+    kernel.kill_and_clear();
 
     let (mut quiet, mut qm, qs) = open_control_stream_by(&launch_with_args(&["--retrieval=1"]));
     let _ = collect(&mut qm, &qs, 4);
@@ -12256,7 +12288,7 @@ fn tablec_queue_tier5_pushes_exactly_one_queue_frame_and_tier1_pushes_none() {
         .filter(|event| event_stream(event) == qs)
         .collect();
     assert!(idle.is_empty(), "档 1 receipt-only，一帧都不该加，实际 {idle:?}");
-    quiet.shutdown();
+    quiet.kill_and_clear();
 }
 
 /// **用例 8**：双层 `ok` 只有 `sessionFeedback/record` 一发，且成功格是 `{recorded:true}`
@@ -12280,7 +12312,7 @@ fn tablec_session_feedback_record_is_the_only_double_ok_receipt() {
         vec!["recorded"],
         "第三层只有 recorded —— 桩绝不「顺手修好」成 ok（母本 §8-②）"
     );
-    ok.shutdown();
+    ok.kill_and_clear();
 
     let mut failed = tablec_kernel("--retrieval=4");
     let stripped = failed
@@ -12290,7 +12322,7 @@ fn tablec_session_feedback_record_is_the_only_double_ok_receipt() {
     assert_eq!(stripped["error"]["code"], json!("session-not-found"));
     assert_eq!(stripped["error"]["sessionId"], json!("s-1001"));
     assert!(stripped.get("value").is_none(), "两态互斥：失败臂没有 value");
-    failed.shutdown();
+    failed.kill_and_clear();
 }
 
 /// **用例 9**：record 的可选键「整个不存在」过闸，`null` 被拒（主干注释明说内核 zod 拒 null）。
@@ -12321,7 +12353,7 @@ fn tablec_record_optional_keys_are_absent_not_null() {
         )
         .expect_err("category 是七值 union");
     assert!(unknown.starts_with("bad_args"), "{unknown}");
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// **用例 10**：两发引用的 `value` **顶层就是数组**（不许是 `{items:[]}`）；档 3 单路失败、
@@ -12364,7 +12396,7 @@ fn tablec_reference_pair_returns_top_level_arrays_and_fails_one_side_first() {
     );
     assert_eq!(rows[1]["label"], json!(""), "空 label ⇒ 主干回落 sessionId");
     assert_eq!(rows[1]["sameWorkspace"], json!(false));
-    full.shutdown();
+    full.kill_and_clear();
 
     let mut one_sided = tablec_kernel("--refs=3");
     one_sided
@@ -12376,7 +12408,7 @@ fn tablec_reference_pair_returns_top_level_arrays_and_fails_one_side_first() {
             .is_err(),
         "档 3 只该塌掉 candidates"
     );
-    one_sided.shutdown();
+    one_sided.kill_and_clear();
 
     let mut both = tablec_kernel("--refs=4");
     for endpoint in ["fileReferences/list", "sessionReferenceResolver/candidates"] {
@@ -12385,7 +12417,7 @@ fn tablec_reference_pair_returns_top_level_arrays_and_fails_one_side_first() {
             "{endpoint} 档 4 该失败"
         );
     }
-    both.shutdown();
+    both.kill_and_clear();
 
     // 档 5 = files 少 `kind` 的负形（strict 会拒 ⇒ 看分叉回落方向），candidates 照常。
     let mut negative = tablec_kernel("--refs=5");
@@ -12396,7 +12428,7 @@ fn tablec_reference_pair_returns_top_level_arrays_and_fails_one_side_first() {
     negative
         .call("sessionReferenceResolver/candidates", tablec_args("sessionReferenceResolver/candidates"))
         .expect("档 5 的 candidates 不受影响");
-    negative.shutdown();
+    negative.kill_and_clear();
 }
 
 /// **用例 11**：引用两发的 wire 键是**平铺** `{agentId,query}` ⇒ 裹 `request` 当场 `bad_args`；
@@ -12418,7 +12450,7 @@ fn tablec_reference_wire_keys_are_flat_agentid_query() {
         .call("pluginInventory/list", json!({ "agentId": "s-1001" }))
         .expect_err("pluginInventory/list 的 parameters 是空数组");
     assert!(empty_args.contains("unexpected \"agentId\""), "{empty_args}");
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// **用例 12**：插件台账四档 —— `fiberPhase:null` 合法、空 `entries` **不是错误**、
@@ -12444,14 +12476,14 @@ fn tablec_plugin_inventory_four_tiers_agree_with_the_descriptor() {
     assert!(entries.iter().any(|e| e["fiberPhase"] == json!("failed")));
     assert!(entries.iter().any(|e| e["fiberPhase"] == json!("loading")));
     assert!(entries.iter().any(|e| e["enabled"] == json!(false)), "得有归属给「未启用」计数");
-    mixed.shutdown();
+    mixed.kill_and_clear();
 
     let mut empty = tablec_kernel("--inventory=2");
     let value = empty
         .call("pluginInventory/list", json!({}))
         .expect("空台账不是错误");
     assert_eq!(value["entries"].as_array().expect("数组").len(), 0);
-    empty.shutdown();
+    empty.kill_and_clear();
 
     let mut presets = tablec_kernel("--inventory=3");
     let value = presets.call("pluginInventory/list", json!({})).expect("档 3");
@@ -12469,14 +12501,14 @@ fn tablec_plugin_inventory_four_tiers_agree_with_the_descriptor() {
     assert!(group[1].get("broken").is_some(), "坏预设要有 broken 原因");
     assert!(group[1].get("name").is_none(), "name 是可选键");
     assert_eq!(sorted_keys(&group[1]), vec!["broken", "id", "isDefault", "rows", "trust"]);
-    presets.shutdown();
+    presets.kill_and_clear();
 
     let mut refused = tablec_kernel("--inventory=4");
     let error = refused
         .call("pluginInventory/list", json!({}))
         .expect_err("档 4 该拒");
     assert!(error.starts_with("gateway/internal"), "{error}");
-    refused.shutdown();
+    refused.kill_and_clear();
 }
 
 /// **用例 13**：附件回执带**整颗 `attachment` 块**；档 2 缺 `data`、档 3 `attachment-invalid`、
@@ -12505,14 +12537,14 @@ fn tablec_attachment_receipt_tiers_are_the_four_documented_states() {
         data.chars().all(|c| c.is_ascii_alphanumeric() || "+/=".contains(c)) && data.ends_with("=="),
         "必须是主干 `Convert.FromBase64String` 吃得下的合法 base64"
     );
-    ok.shutdown();
+    ok.kill_and_clear();
 
     let mut nodata = tablec_kernel("--attachment=2");
     let value = nodata
         .call("session/attachment", tablec_args("session/attachment"))
         .expect("档 2 仍 200");
     assert!(value.get("data").is_none(), "data 整颗缺席，不是 null：{value}");
-    nodata.shutdown();
+    nodata.kill_and_clear();
 
     let mut missing = tablec_kernel("--attachment=3");
     let error = missing
@@ -12520,7 +12552,7 @@ fn tablec_attachment_receipt_tiers_are_the_four_documented_states() {
         .expect_err("档 3 该拒");
     assert!(error.starts_with("session/attachment-invalid"), "{error}");
     assert!(error.contains("att-1"), "{error}");
-    missing.shutdown();
+    missing.kill_and_clear();
 
     let mut huge = tablec_kernel("--attachment=4");
     let value = huge
@@ -12529,7 +12561,7 @@ fn tablec_attachment_receipt_tiers_are_the_four_documented_states() {
     let decoded = value["data"].as_str().expect("串").len() / 4 * 3;
     assert!(decoded > 16 * 1024 * 1024, "解码长度该过 16 MiB，实为 {decoded}");
     assert_eq!(value["attachment"]["bytes"], json!(16 * 1024 * 1024 + 1));
-    huge.shutdown();
+    huge.kill_and_clear();
 }
 
 /// **用例 14**：子代理目录三型各有形状（**条目不许有 title/parentSessionId/sessionId**）、
@@ -12586,7 +12618,7 @@ fn tablec_subagents_catalog_prompt_and_interrupt_keep_the_documented_shapes() {
         )
         .expect_err("delivery 只有 queue|steer");
     assert!(bad_delivery.starts_with("bad_args"), "{bad_delivery}");
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }
 
 /// **用例 15**：档 2 父不在线、档 3 两条错误码、档 4 元素非对象（整次作废那一型）、
@@ -12599,7 +12631,7 @@ fn tablec_subagents_error_and_negative_tiers_are_distinct() {
         .expect("档 2 仍出目录");
     assert_eq!(value["parentAvailable"], json!(false));
     assert_eq!(value["entries"].as_array().expect("数组").len(), 3);
-    offline.shutdown();
+    offline.kill_and_clear();
 
     let mut errors = tablec_kernel("--subagents=3");
     let prompt = errors
@@ -12610,7 +12642,7 @@ fn tablec_subagents_error_and_negative_tiers_are_distinct() {
         .call("subagents/interruptByParent", tablec_args("subagents/interruptByParent"))
         .expect_err("档 3 的 interrupt 该拒");
     assert!(interrupt.starts_with("subagent/not-resumable"), "{interrupt}");
-    errors.shutdown();
+    errors.kill_and_clear();
 
     let mut negative = tablec_kernel("--subagents=4");
     let value = negative
@@ -12619,7 +12651,7 @@ fn tablec_subagents_error_and_negative_tiers_are_distinct() {
     let entries = value["entries"].as_array().expect("数组");
     assert_eq!(entries.len(), 1, "数的是元素数");
     assert!(entries[0].is_string(), "元素不是对象 ⇒ 主干 parse_catalog 整次作废");
-    negative.shutdown();
+    negative.kill_and_clear();
 
     let mut five = tablec_kernel("--subagents=5");
     let value = five
@@ -12629,7 +12661,7 @@ fn tablec_subagents_error_and_negative_tiers_are_distinct() {
     assert_eq!(entries[1]["mode"], json!("one-shot"));
     assert_eq!(entries[1]["hasChildren"], json!(true), "one-shot 带 hasChildren 的负形");
     assert_eq!(entries[0]["hasChildren"], json!(false), "另一格不受这一档影响");
-    five.shutdown();
+    five.kill_and_clear();
 }
 
 /// **用例 16（总闸）**：五刀叠开（各档 1）⇒ 十发**逐发顶层键集**等于 typert 允许集，
@@ -12669,7 +12701,7 @@ fn tablec_all_five_knobs_stacked_emit_no_top_level_key_outside_the_schema() {
             );
         }
     }
-    stacked.shutdown();
+    stacked.kill_and_clear();
 }
 
 // ==================== 台账 #144 · KW2 §6 那批：cordis 八发构造器 × 桩键集闸（ST13 落地）=========
@@ -12728,7 +12760,7 @@ fn st13_in_cordis_level<T>(level: u64, f: impl FnOnce(&mut Kernel) -> T) -> T {
     let knob = format!("--cordis={level}");
     let mut kernel = Kernel::start(&launch_with(&["--pace=0", &knob])).expect("假内核握手");
     let out = f(&mut kernel);
-    kernel.shutdown();
+    kernel.kill_and_clear();
     out
 }
 
@@ -13245,7 +13277,7 @@ mod ip6_cordis_socket_tests {
             extra.len()
         );
         drop(mux);
-        kernel.shutdown();
+        kernel.kill_and_clear();
         frames
     }
 
@@ -13516,7 +13548,7 @@ mod ip6_cordis_socket_tests {
             "两枚旋钮都不许追加第三批帧"
         );
         drop(mux);
-        kernel.shutdown();
+        kernel.kill_and_clear();
 
         assert_eq!(frames.len(), 8, "实测 2 + 4 + 2 = 8 帧：{frames:?}");
         let names: Vec<&str> = frames.iter().map(event_name).collect();
@@ -13647,7 +13679,7 @@ mod ip6_cordis_socket_tests {
             cordis_still_pending(&rows, &card.request_id),
             "桩不回写世界（`st6_cordis_outcome` 只读 level + args）⇒ 这一格记的是桩、不是产品"
         );
-        kernel.shutdown();
+        kernel.kill_and_clear();
     }
 
     /// T9 · 那一发 `runHostHalf` × **两条路**（审批 `Some(req-1)` / 面板 `None`）× 档 1..5，
@@ -14017,7 +14049,7 @@ mod ip8_settings_mutate_tests {
         let out = kernel
             .call(call.method, call.args)
             .unwrap_or_else(|error| panic!("{ns} 的合法 ops 该放行，实际 {error}"));
-        kernel.shutdown();
+        kernel.kill_and_clear();
         out
     }
 
@@ -14061,7 +14093,7 @@ mod ip8_settings_mutate_tests {
             wrapped,
             "bad_args: args fields do not match the descriptor: missing \"ns\", \"ops\"; unexpected \"request\""
         );
-        kernel.shutdown();
+        kernel.kill_and_clear();
     }
 
     /// T2 · 简报 §2-2：单段 path 落位 → `settings/describe` 读回同值；`base` 不动、兄弟键不抹。
@@ -14105,7 +14137,7 @@ mod ip8_settings_mutate_tests {
             json!("system"),
             "没写过的兄弟键仍继承 base"
         );
-        kernel.shutdown();
+        kernel.kill_and_clear();
     }
 
     /// T3 · 简报 §2-3：多段 path（主干 `xaml.cs:12152` 那一发就是多段）⇒ 嵌套落位，
@@ -14170,7 +14202,7 @@ mod ip8_settings_mutate_tests {
             row["value"]["providers"]["ip8-gateway"]["displayName"],
             json!("改过名的分叉网关")
         );
-        kernel.shutdown();
+        kernel.kill_and_clear();
     }
 
     /// T4 · 简报 §2-4：`unset` 删既有键；**同一路径再发一次 unset** ⇒ 幂等 `Ok`、不回错。
@@ -14224,7 +14256,7 @@ mod ip8_settings_mutate_tests {
         let row = ns_row(&mut kernel, "ui-theme");
         assert_eq!(row["revision"].as_f64(), Some(2.0));
         assert_eq!(row["user"], json!({}));
-        kernel.shutdown();
+        kernel.kill_and_clear();
     }
 
     /// T5 · 简报 §2-5（**实测档**）：同批 3 发 / 2 发 op 一做做完 ⇒ revision **只抬一次**，
@@ -14368,7 +14400,7 @@ mod ip8_settings_mutate_tests {
             .expect("不带 revision = 无条件写");
         assert_eq!(receipt["revision"].as_f64(), Some(3.0));
         assert_eq!(receipt["user"], json!({ "fontSize": 17, "preference": "light" }));
-        kernel.shutdown();
+        kernel.kill_and_clear();
     }
 
     /// T7 · 简报 §2-6 的第三档 + 空批：显式 `null` 的 revision 与 `ops:[]` 都在 wire 闸上红，
@@ -14407,7 +14439,7 @@ mod ip8_settings_mutate_tests {
         assert_eq!(row["revision"].as_f64(), Some(0.0), "两发红完一格都没抬（起点 0）");
         assert_eq!(row["user"], json!({}), "两发红完一笔都没落");
         assert_eq!(row["value"]["fontSize"].as_f64(), Some(14.0));
-        kernel.shutdown();
+        kernel.kill_and_clear();
     }
 
     /// T8 · 简报 §2-7：台账外 ns 的**逐字**回执（整串等值，含桩把 13 支台账列进文案那半段），
@@ -14440,7 +14472,7 @@ mod ip8_settings_mutate_tests {
             Some(120_000.0),
             "未知 ns 那一发不许顺手写进名字相近的台账支"
         );
-        kernel.shutdown();
+        kernel.kill_and_clear();
     }
 
     /// T9 · 简报 §2-8：回执形状。桩这一族是**单层 `ok`**（外层 `result:{ok,value}` 被
@@ -14528,7 +14560,7 @@ mod ip8_settings_mutate_tests {
                 )
                 .unwrap_or_else(|error| panic!("两支该过的 discovery 注册不许被本刀拆掉：{error}"));
         }
-        kernel.shutdown();
+        kernel.kill_and_clear();
     }
 
     /// T11 · 简报 §2-10 的反向锁：**本刀没让台账变长**。台账仍逐字等于既有 13 支（排序后等值），
@@ -14578,7 +14610,7 @@ mod ip8_settings_mutate_tests {
                 .map(Vec::len),
             Some(13)
         );
-        kernel.shutdown();
+        kernel.kill_and_clear();
     }
 
     /// T12 · 反向锁（ops 支型）：`set` 少 `value`、`op` 字面量不在两支上、`path` 写成字符串、
@@ -14622,7 +14654,7 @@ mod ip8_settings_mutate_tests {
             Some(0.0),
             "四发红完一格都没抬（真内核的起点，见 tmp/rs1-report.md §1）"
         );
-        kernel.shutdown();
+        kernel.kill_and_clear();
     }
 
     /// T13 · 空 path 的 `unset`：**桩现状**是把整段用户层清空（`fake_dsh.rs:6512-6514`
@@ -14672,7 +14704,7 @@ mod ip8_settings_mutate_tests {
             Some(2.0),
             "清掉两根真存在的覆盖 = raw 变了 ⇒ 抬一格（起点 0 ⇒ 0→1→2）"
         );
-        kernel.shutdown();
+        kernel.kill_and_clear();
     }
 
     /// T14 · 登记法反向锁（零子进程）：`SETTINGS_MUTATE_METHODS` 基数**恰 1**、只含这颗方法串，

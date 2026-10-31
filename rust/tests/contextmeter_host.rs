@@ -296,33 +296,62 @@ fn the_meters_fold_before_the_switch_and_nowhere_else() {
     );
 }
 
-/// 换会话 / 进子会话两扇门**都**要复位那本格（地雷 10：只补一扇 = 上一会话的容量留给
-/// 下一会话，#137 同族真 bug）。位置判据：`Msg::Select` 那扇里复位必须**晚于**换 active
-/// 之前取旧值那一发，且不许自造 `let previous` 绕过现成的 `left` 门。
+/// 换会话 / 进子会话两扇门**都**要复位那本格，且摘的是**要进入**的那条会话的格子：
+/// 主干 `ResetContextMeter`（`MainWindow.ContextMeter.cs:137-146`）读的是**调用时刻**的
+/// `_activeSessionId`，而主干**每个** `OpenSessionAsync` 调用点都**先写新 id 再进函数**
+/// （nav `MW:4812/4854`、boot `:5084`、搜索 `:14293`、引用回跳 `:16670`、分叉
+/// `MessageActions.cs:803`、内核补开 `KernelBoot.cs:224`）⇒ 清的是**新 sid** 那一格，
+/// 防的是「重进一条旧会话时上一轮的容量/采样残到首批事件前」（`CM:136` 那句注释）。
+/// ⚠ 方向史：本锁原名 `…_drops_the_left_slot_not_the_new_one`，钉的是「清离开的那条」——
+/// 恰是与主干相反的方向：重进旧会话时旧账原封不动、transcript 回放一叠就翻倍（2026-10-31
+/// R2 实测 84 步 / 526.8 万 tok = 真值两倍）。同日批把两扇门改成新 sid 口径（`run_stats`
+/// /`context_meters` 同一刀，`left` 自此只服务轨迹账本那发 `trajectory_steps.forget(left)`），
+/// 本锁随之反向重钉 —— 再漂回「清离开的那条」= 摘了新会话的（常是空的）格子、旧账漏清。
 #[test]
-fn switching_sessions_drops_the_left_slot_not_the_new_one() {
+fn switching_sessions_drops_the_entered_slot_not_the_left_one() {
     let select = mw4_window(SRC, "Msg::Select(id) => {", "Msg::Search(text)");
     let branched = mw4_window_after(SRC, "Msg::Branched(Ok((rows, child, title))) => {", "Msg::Revoke(message)");
-    for (label, arm) in [("Select", &select), ("Branched", &branched)] {
+    for (label, arm, entered) in [
+        ("Select", &select, "self.context_meters.reset(&id);"),
+        ("Branched", &branched, "self.context_meters.reset(&child);"),
+    ] {
         assert!(
-            arm.contains("self.context_meters.reset(left);"),
-            "{label} 那扇门没复位容量账 ⇒ 旧会话读数会跟到新会话"
+            arm.contains(entered),
+            "{label} 那扇门没复位容量账 ⇒ 重进旧会话时上一轮的旧账会残到首批事件前"
         );
+        // 主干逐调用点的次序：**先写 id**（`self.active = Some(…)`）**再清** —— 清的是刚写进
+        // `active` 的那条；倒过来就成「清离开的那条」（本锁 2026-10-31 之前的旧方向）。
         let take = arm
             .find("let left = self.active.clone();")
             .unwrap_or_else(|| panic!("{label} 那扇门里取旧值的现成门没了"));
+        let write = arm
+            .find("self.active = Some(")
+            .unwrap_or_else(|| panic!("{label} 那扇门里写 active 的那一发没了"));
         let reset = arm
-            .find("self.context_meters.reset(left);")
+            .find(entered)
             .unwrap_or_else(|| panic!("{label} 没找到复位行"));
         assert!(
-            reset > take,
-            "{label}：复位排在取旧值之前 ⇒ 复位读到的 `left` 是新值"
+            take < write,
+            "{label}：取旧值排在写 active 之后 ⇒ `left` 已是新值（轨迹账本那发会清错格子）"
+        );
+        assert!(
+            write < reset,
+            "{label}：复位排在写 active 之前 ⇒ 没跟上主干「先写 id 再清」的调用点次序"
+        );
+        assert!(
+            !arm.contains("self.context_meters.reset(left"),
+            "{label}：清的是离开的那条 ⇒ 漂回与主干相反的旧方向（回放翻倍那档）"
         );
     }
     assert_eq!(
-        mw4_count_word(SRC, "self.context_meters.reset(left);"),
-        2,
-        "复位点枚数不是恰好两处 ⇒ 与 #135 那两扇 `forget(left)` 门不同口径了"
+        mw4_count_word(SRC, "self.context_meters.reset(&id);"),
+        1,
+        "Select 那扇的复位点枚数漂了 ⇒ 换会话门没有各挡各的（或别处多出第三发）"
+    );
+    assert_eq!(
+        mw4_count_word(SRC, "self.context_meters.reset(&child);"),
+        1,
+        "Branched 那扇的复位点枚数漂了 ⇒ 进子会话这扇没有同口径"
     );
     // 反向：不许出现「清整本账」那种偏离主干的写法。
     assert!(!SRC.contains("context_meters.clear("), "主干没有整表复位这一发");

@@ -189,6 +189,50 @@ pub fn toast_sender_path() -> PathBuf {
     shell_file(TOAST_SENDER_FILE)
 }
 
+// ============================== 5. 记忆 JSONL（只读展示） ==============================
+//
+// 主干 `Dsh/DshPluginBootstrap.cs:374-399`：这份 JSONL 由记忆服务器自己管理（挂载条目的
+// env 同源），壳侧在「记忆」分区只做两件事 —— 存储行显示绝对路径、内容卡把原文回填进
+// 只读编辑器。分叉的自动保存是 #70 的活（主干 `SaveMemoryRaw` 那条防抖写盘线没有对位），
+// 这里只接「路径 + 载入」两格。
+
+/// 主干 `DshPluginBootstrap.MemoryFilePath()`（`DshPluginBootstrap.cs:376-386`）逐条：
+/// 预设 `MEMORY_FILE_PATH`（Trim 后非空）则用它，否则 `~/.dsh-mcp-reference-memory.jsonl`
+/// （C# `Path.Combine(UserProfile, …)` 的对位 = `%USERPROFILE%` 拼接）。
+pub fn memory_file_path_from(
+    memory_file_path_env: Option<String>,
+    user_profile: Option<&std::ffi::OsStr>,
+) -> PathBuf {
+    if let Some(value) = memory_file_path_env {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+    std::path::Path::new(user_profile.unwrap_or_else(|| std::ffi::OsStr::new("")))
+        .join(".dsh-mcp-reference-memory.jsonl")
+}
+
+/// 真机版：env 现读。空 `USERPROFILE` 拼出相对路径 —— 主干 `GetFolderPath` 拿不到
+/// profile 的形态在 Windows 上实际到不了，这里不给第二兜底（与主干同一条单路）。
+pub fn memory_file_path() -> PathBuf {
+    memory_file_path_from(
+        std::env::var("MEMORY_FILE_PATH").ok(),
+        std::env::var_os("USERPROFILE").as_deref(),
+    )
+}
+
+/// 主干 `DshPluginBootstrap.ReadMemoryText()`（`:388-399`）：不存在/不可读 = 空串，
+/// 不当错误（大多数用户从没写过记忆）。
+pub fn load_memory_text_from(path: &Path) -> String {
+    std::fs::read_to_string(path).unwrap_or_default()
+}
+
+/// 真机版：读 [`memory_file_path`] 指的那份 JSONL 原文。
+pub fn load_memory_text() -> String {
+    load_memory_text_from(&memory_file_path())
+}
+
 // ============================== 1. shell.json ==============================
 
 /// 主干 `MainWindow.TraySettings.cs:39-50` 那个 `ShellOptions`。
@@ -1760,8 +1804,11 @@ mod tests {
 
     /// **自我源码锁**（本仓 `include_str!` 口径）：本模块的落盘代码里
     /// ① 不许出现 `{:.2}`（会写出 `0.50` 破坏字节）② 不许出现 `json!(`（BTreeMap 字母序）
-    /// ③ 数据家只许有 `LOCALAPPDATA` 这一颗 env 口，不许走分叉私有覆盖口，**且必须**过
-    ///    kernel 那颗 `Code2 → Blade2` 搬迁口（#145 的搬迁半就钉在这一枚上）
+    /// ③ 数据家区段只许有 `LOCALAPPDATA` 这一颗 env 口（锁收窄到「数据家路径」节，不许松），
+    ///    记忆腿的 `MEMORY_FILE_PATH` / `USERPROFILE` 两颗口是另一条功能链（主干
+    ///    `DshPluginBootstrap.MemoryFilePath` 逐字移植），在记忆节单独点名锁死；
+    ///    且全模块 env 口必须全部归属这两条腿 —— 不许冒出无主口。
+    ///    不许走分叉私有覆盖口，**且必须**过 kernel 那颗 `Code2 → Blade2` 搬迁口（#145 的搬迁半就钉在这一枚上）
     /// ④ `shell-toast.sender` 那一节不许复用模块那颗 `0d 0a` 常量、也不许出现 CRLF 转义。
     /// 被搜的串一律 `concat!` 拆开，否则 `include_str!` 会把搜索串本身读进来自匹配。
     #[test]
@@ -1781,13 +1828,38 @@ mod tests {
             code.contains(concat!("migrate_", "data_home")),
             "数据家这条链绕开了 kernel 的搬迁口 ⇒ 主干那次 Code2→Blade2 改名又掉了（#145 搬迁半）"
         );
+        // ③-a 数据家腿：env 口锁收窄到「数据家路径」区段（到记忆节为止）——恰好一颗
+        //     `env::var_os("LOCALAPPDATA")`。记忆腿的两颗口不在本锁管辖内，见下面 ③-b。
+        let home_head = concat!("数据家", "路径 =====");
+        let memory_head = concat!("记忆 ", "JSONL（只读展示）");
+        let home_region = &code[code.find(home_head).expect("找不到数据家节边界")
+            ..code.find(memory_head).expect("找不到记忆节边界")];
         assert_eq!(
-            code.matches("env::var").count(),
+            home_region.matches("env::var").count(),
             1,
             "数据家解析只许有一颗 env 口（LOCALAPPDATA）"
         );
         assert_eq!(code.matches(concat!("\"LOCALAPP", "DATA\"")).count(), 1);
         assert!(code.contains(concat!("use crate::kernel::{data_home_root, DATA_HOME", "_DIR};")));
+        // ③-b 记忆腿单独锁：env 口恰好两颗、键名点名 —— `var("MEMORY_FILE_PATH")` +
+        //     `var_os("USERPROFILE")`，与主干 `DshPluginBootstrap.MemoryFilePath` 同一口径。
+        let json_head = concat!("1. shell", ".json =====");
+        let memory_region = &code[code.find(memory_head).expect("找不到记忆节边界")
+            ..code.find(json_head).expect("找不到 shell.json 节边界")];
+        assert_eq!(
+            memory_region.matches("env::var").count(),
+            2,
+            "记忆路径的 env 口只许两颗：MEMORY_FILE_PATH（var）+ USERPROFILE（var_os）"
+        );
+        assert!(memory_region.contains(concat!("\"MEMORY_FILE_", "PATH\"")));
+        assert!(memory_region.contains(concat!("\"USERPRO", "FILE\"")));
+        // ③-c 对账：全模块 env 口总数必须恰好等于两条已点名功能腿之和 ——
+        //     冒出第三个没归属的口（或哪条腿偷偷加口）就直接红，锁不许靠放宽总数混过去。
+        assert_eq!(
+            code.matches("env::var").count(),
+            home_region.matches("env::var").count() + memory_region.matches("env::var").count(),
+            "出现了不属于任何已点名功能腿的 env 口：要么并进某条腿的锁里点名，要么它不该存在"
+        );
 
         // ④ sender 一节单独锁：它的行内分隔符是裸 LF，用错行尾 = 每次启动白跑 UnregisterAll。
         let sender_head = concat!("6. shell-", "toast.sender");

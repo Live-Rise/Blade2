@@ -74,5 +74,5 @@ fn real_kernel_handshake_and_session_list() {
         after.iter().any(|row| row.id == created),
         "新会话 {created} 应出现在列表中"
     );
-    kernel.shutdown();
+    kernel.kill_and_clear();
 }

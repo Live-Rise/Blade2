@@ -57,6 +57,16 @@ const NODE_COMPILE_CACHE_KEY: &str = "NODE_COMPILE_CACHE";
 /// —— 三条语义都抄主干 `:91-93` 那段注释，本层一颗 `fs` 调用都不发。
 const NODE_COMPILE_CACHE_DIR: &str = "kernel-compile-cache";
 
+/// 常驻状态文件名，主干 `Dsh/DshKernelHost.cs` 的 `ResidentStatePath`（`:347-348`）逐字：
+/// `Path.Combine(dshHome, "blade2-resident-kernel.json")`。两侧共用 `%LOCALAPPDATA%\Blade2`
+/// 这一个家 ⇒ **同版本内核跨壳（C# 主干 ↔ rust 分叉）可互相复用**，文件名/键名都不许改。
+const RESIDENT_STATE_FILE: &str = "blade2-resident-kernel.json";
+
+/// 常驻探活那一发的读超时，主干 `TryAttachResidentAsync` 的 `Timeout = TimeSpan.FromSeconds(2)`
+/// （`:225`）。分叉的 RPC 客户端本来就是裸 `TcpStream` **回环直连**、没有任何代理配置可走
+/// （主干那句 `new HttpClientHandler { UseProxy = false }` 在这里没有对应物 —— 无代理可绕）。
+const RESIDENT_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+
 pub struct Launch {
     pub exe: PathBuf,
     pub args: Vec<String>,
@@ -403,6 +413,276 @@ pub fn warm_kernel_version() {
     let _ = kernel_version();
 }
 
+// =============== 内核常驻复用（主干 0.9.0.4 `Dsh/DshKernelHost.cs` 的移植）===============
+//
+// 冷启 ~6.6s 的大头是 ~200 插件的模块装载风暴，进程级复用是唯一能到亚秒的路径：
+// 壳退出**不再杀**内核（`Dispose` 保活语义），连接信息（pid/url/版本/exe 路径）原子落
+// `DSH_HOME` 状态文件，下次启动 [`try_attach_resident`] 探活复用；失效常驻（版本不符 /
+// pid 已死 / 探活失败）按记录路径杀树回收（防 pid 复用误杀），无状态文件的崩溃残留仍由
+// `procguard::sweep_orphan_kernels*` 兜底。
+//
+// 状态文件与 C# **互通**：同一个 `%LOCALAPPDATA%\Blade2`，JSON 键名逐字 `Home`/`pid`/`url`/
+// `exe`/`ver`（C# `System.Text.Json` 按属性名原样写）—— 键序不同（serde_json 的 Map 按键排序，
+// C# 按声明序）但 JSON 对象键序无语义，两侧都能读。
+
+/// 主干 `ResidentState`（`DshKernelHost.cs:337-345`）的分叉形状：常驻内核的连接信息。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ResidentState {
+    /// 写状态时的数据家（回收时清文件用）。C# 读旧状态缺该字段为 null；本层读回时一律
+    /// 重填当前家（C# `st.Home = dshHome` 同位），写盘时也由 [`write_resident_state`] 强制对齐。
+    pub home: Option<PathBuf>,
+    pub pid: i64,
+    pub url: String,
+    /// 内核主进程的模块完整路径；`None` = 写盘那一刻读不到（序列化成 `null`，与 C# 一致）。
+    /// 它是回收/attach 的**身份凭证**：pid 会复用，路径逐字比对才敢杀。
+    pub exe: Option<String>,
+    pub ver: String,
+}
+
+impl ResidentState {
+    /// 纯：落盘形状。五个键**永远全写**（C# `JsonSerializer.Serialize` 不忽略 null），
+    /// `exe` 缺失写 `null`。
+    pub fn to_json(&self) -> Value {
+        json!({
+            "Home": self.home.as_ref().map(|path| path.display().to_string()),
+            "pid": self.pid,
+            "url": self.url,
+            "exe": self.exe,
+            "ver": self.ver,
+        })
+    }
+
+    /// 纯：读盘形状。缺键按 C# `JsonSerializer.Deserialize` 的默认值（null/0/""）补齐、
+    /// 多余键忽略（C# 默认不 strict）—— 两侧字段演进互不炸读。
+    pub fn from_json(value: &Value) -> Self {
+        Self {
+            home: value["Home"].as_str().map(PathBuf::from),
+            pid: value["pid"].as_i64().unwrap_or(0),
+            url: value["url"].as_str().unwrap_or("").to_string(),
+            exe: value["exe"].as_str().map(str::to_string),
+            ver: value["ver"].as_str().unwrap_or("").to_string(),
+        }
+    }
+}
+
+/// 状态文件路径（主干 `ResidentStatePath` `:347-348` 逐字）。
+pub fn resident_state_path(dsh_home: &Path) -> PathBuf {
+    dsh_home.join(RESIDENT_STATE_FILE)
+}
+
+/// 读状态文件（主干 `ReadResidentState` `:350-370`）：读不到/解析失败/不是 JSON 对象一律
+/// `None`（主干 `catch (Exception) { return null; }` 同口径 —— `Deserialize<ResidentState>`
+/// 对数组那种「合法 JSON 但不是对象」的正文也是抛异常回 null），`home` 强制重填为当前家。
+pub fn read_resident_state(dsh_home: &Path) -> Option<ResidentState> {
+    let text = std::fs::read_to_string(resident_state_path(dsh_home)).ok()?;
+    let value: Value = serde_json::from_str(&text).ok()?;
+    if !value.is_object() {
+        return None;
+    }
+    let mut state = ResidentState::from_json(&value);
+    state.home = Some(dsh_home.to_path_buf());
+    Some(state)
+}
+
+/// 写状态文件（主干 `WriteResidentState` `:372-387`）：建目录 → 写 `.tmp` → 原子改名覆盖，
+/// **写失败静默**（权限/磁盘：本轮照常用，下次冷启，不影响功能）。`Home` 键强制写当前家
+/// （C# `st.Home = dshHome` 同位）。
+pub fn write_resident_state(dsh_home: &Path, state: &ResidentState) {
+    let mut state = state.clone();
+    state.home = Some(dsh_home.to_path_buf());
+    let _ = std::fs::create_dir_all(dsh_home);
+    let path = resident_state_path(dsh_home);
+    let tmp = PathBuf::from(format!("{}.tmp", path.display()));
+    if std::fs::write(&tmp, state.to_json().to_string()).is_ok() {
+        // Windows 上 `rename` 走 `MOVEFILE_REPLACE_EXISTING`，等价主干 `File.Move(…, overwrite: true)`。
+        let _ = std::fs::rename(&tmp, &path);
+    }
+}
+
+/// 删状态文件（主干 `DeleteResidentState` `:389-396`）：不存在/删失败都静默。
+pub fn delete_resident_state(dsh_home: &Path) {
+    let _ = std::fs::remove_file(resident_state_path(dsh_home));
+}
+
+/// 打包内置内核的版本（主干 `BundledDshVersion` `:319-335`）：`<kernel>\dsh\package.json` 的
+/// `version`，读不到返回 `None`（守卫按不匹配处理，走冷启）。取 [`bundled_kernel_dir`] ——
+/// 与 [`Launch::from_env`] 选内核用的是同一颗口径（env 优先、否则从自身 exe 往上找），
+/// 冷启会起哪个内核，守卫就对哪个内核的版本。
+pub fn bundled_dsh_version() -> Option<String> {
+    kernel_version_from(&bundled_kernel_dir()?)
+}
+
+/// 纯：常驻复用的版本守卫（主干 `TryAttachResidentAsync` `:193-198` 那个 if 的判据本体）：
+/// 当前版本读得到（`Some`）且与记录**逐字节相等**（C# `StringComparison.Ordinal`，大小写敏感）。
+/// 读不到 = 升级/降级/缺 Kernel 目录，一律按不匹配处理走回收。
+pub fn resident_version_matches(current: Option<&str>, recorded: &str) -> bool {
+    current.is_some_and(|current| current == recorded)
+}
+
+#[cfg(test)]
+mod resident_tests {
+    use super::*;
+
+    /// 沙箱数据家：`std::env::temp_dir()` 下自建自清（仓规：测试绝不拿真 `%LOCALAPPDATA%` 当参数）。
+    struct Home(PathBuf);
+    impl Home {
+        fn new(tag: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "blade2-resident-{}-{}-{}",
+                tag,
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0)
+            ));
+            let _ = std::fs::create_dir_all(&dir);
+            Home(dir)
+        }
+        fn path(&self) -> &Path {
+            &self.0
+        }
+        fn state_file(&self) -> PathBuf {
+            resident_state_path(&self.0)
+        }
+    }
+    impl Drop for Home {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(self.state_file());
+            let _ = std::fs::remove_dir(&self.0);
+        }
+    }
+
+    fn sample_state() -> ResidentState {
+        ResidentState {
+            home: None,
+            pid: 4242,
+            url: "http://127.0.0.1:8080/?token=T".to_string(),
+            exe: Some(r"C:\Install\Kernel\node.exe".to_string()),
+            ver: "0.1.7".to_string(),
+        }
+    }
+
+    /// 键名逐字对齐 C# `System.Text.Json` 的属性名输出：`Home`/`pid`/`url`/`exe`/`ver`
+    /// 五键全写、一个不多一个不少 —— 两侧共用同一个文件，这里多/少/改任何一个键都是互通性事故。
+    #[test]
+    fn resident_state_json_carries_exactly_the_five_mainline_keys() {
+        let value = sample_state().to_json();
+        let mut keys: Vec<&str> = value
+            .as_object()
+            .expect("对象")
+            .keys()
+            .map(|key| key.as_str())
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(keys, vec!["Home", "exe", "pid", "url", "ver"]);
+        assert_eq!(value["pid"], json!(4242));
+        assert_eq!(value["url"], json!("http://127.0.0.1:8080/?token=T"));
+        assert_eq!(value["exe"], json!(r"C:\Install\Kernel\node.exe"));
+        assert_eq!(value["ver"], json!("0.1.7"));
+        // exe 读不到的那一档：C# 写 null（不省键），分叉同形。
+        let exe_missing = ResidentState { exe: None, ..sample_state() };
+        assert_eq!(exe_missing.to_json()["exe"], Value::Null);
+    }
+
+    /// 读侧与 C# 互通：主干写出的那份 JSON 能读全；缺键按 C# Deserialize 的默认值（null/0/""）
+    /// 补齐；多出来的未知键忽略（C# 默认不 strict）—— 任何一侧加字段都不许炸另一侧的读。
+    #[test]
+    fn resident_state_parsing_tolerates_the_shapes_both_sides_write() {
+        let mainline = r#"{"Home":"C:\\Data\\Blade2","pid":100,"url":"http://127.0.0.1:9/?t=1","exe":"C:\\K\\node.exe","ver":"0.2.0"}"#;
+        let value: Value = serde_json::from_str(mainline).expect("主干形状是合法 JSON");
+        let state = ResidentState::from_json(&value);
+        assert_eq!(state.home.as_deref(), Some(Path::new(r"C:\Data\Blade2")));
+        assert_eq!(state.pid, 100);
+        assert_eq!(state.url, "http://127.0.0.1:9/?t=1");
+        assert_eq!(state.exe.as_deref(), Some(r"C:\K\node.exe"));
+        assert_eq!(state.ver, "0.2.0");
+
+        let empty = ResidentState::from_json(&json!({ "futureKey": 1 }));
+        assert_eq!(empty, ResidentState::default(), "缺键补默认、未知键忽略");
+
+        let roundtrip = ResidentState::from_json(&sample_state().to_json());
+        assert_eq!(roundtrip, sample_state());
+    }
+
+    /// 落盘往返（tmp + rename 原子覆盖）：写入 → 读回各字段；**覆盖写**第二遍仍然读到新值
+    /// （旧文件被原子替换而不是留在原地）；`Home` 键读回时强制重填为当前家
+    /// （C# `ReadResidentState` 的 `st.Home = dshHome` 同位）；删除后读回 `None`。
+    #[test]
+    fn resident_state_roundtrips_and_replaces_atomically_in_a_sandbox() {
+        let home = Home::new("roundtrip");
+        assert!(read_resident_state(home.path()).is_none(), "没写过就是 None");
+        write_resident_state(home.path(), &sample_state());
+        let read = read_resident_state(home.path()).expect("写完就该读得回");
+        assert_eq!(read.pid, 4242);
+        assert_eq!(read.url, "http://127.0.0.1:8080/?token=T");
+        assert_eq!(
+            read.home.as_deref(),
+            Some(home.path()),
+            "home 由读侧重填为当前家"
+        );
+        let second = ResidentState { pid: 7, ..sample_state() };
+        write_resident_state(home.path(), &second);
+        assert_eq!(read_resident_state(home.path()).expect("覆盖写后仍在").pid, 7);
+        assert!(
+            !home.state_file().with_extension("json.tmp").exists()
+                && !home.0.join("blade2-resident-kernel.json.tmp").exists(),
+            "tmp 文件不许留在数据家里"
+        );
+        delete_resident_state(home.path());
+        assert!(read_resident_state(home.path()).is_none());
+        delete_resident_state(home.path()); // 删不存在的文件也静默
+    }
+
+    /// 状态文件名逐字 = 主干 `blade2-resident-kernel.json`（两侧共用一个家，文件名就是协议）。
+    #[test]
+    fn resident_state_file_name_is_mainline_verbatim() {
+        let path = resident_state_path(Path::new(r"C:\Data\Blade2"));
+        assert_eq!(
+            path.file_name().unwrap_or_default().to_string_lossy(),
+            "blade2-resident-kernel.json"
+        );
+    }
+
+    /// 写失败静默（C# `catch (Exception) { }`）：家目录的位置被一个**文件**占着 ⇒
+    /// `create_dir_all`/写 tmp 都失败 ⇒ 不许 panic，函数照常返回（本轮照常用，下次冷启）。
+    #[test]
+    fn write_resident_state_is_silent_when_the_home_is_unwritable() {
+        let holder = Home::new("unwritable");
+        let blocker = holder.0.join("occupied");
+        std::fs::write(&blocker, b"x").expect("占位文件");
+        write_resident_state(&blocker, &sample_state()); // 唯一断言 = 不 panic
+        let _ = std::fs::remove_file(&blocker);
+    }
+
+    /// 坏正文读回 `None`（C# `catch` 同口径）：截断的 JSON / 不是对象，都不许把引导带崩。
+    #[test]
+    fn resident_state_read_treats_garbage_as_absent() {
+        let home = Home::new("garbage");
+        std::fs::write(home.state_file(), "{\"pid\": 4242, \"url\": \"http").expect("写截断 JSON");
+        assert!(read_resident_state(home.path()).is_none());
+        std::fs::write(home.state_file(), "[1,2,3]").expect("写非对象 JSON");
+        assert!(read_resident_state(home.path()).is_none());
+    }
+
+    /// 版本守卫（C# `:193-198` 判据本体）：当前读不到（`None`）一律不匹配（升级/缺 Kernel 目录
+    /// 都走回收）；匹配要求**逐字节相等**（C# Ordinal：大小写、前后缀差一点都不算）。
+    #[test]
+    fn resident_version_guard_is_exact_ordinal_and_none_never_matches() {
+        assert!(resident_version_matches(Some("0.1.7"), "0.1.7"));
+        assert!(resident_version_matches(Some(""), ""), "C# 只比「读得到且相等」，空串也在其列");
+        assert!(!resident_version_matches(None, "0.1.7"), "读不到当前版本 = 不匹配走回收");
+        assert!(!resident_version_matches(Some("0.1.7"), "0.1.7-rc.2"));
+        assert!(!resident_version_matches(Some("0.1.7"), "0.1.8"));
+        assert!(!resident_version_matches(Some("0.1.7"), "0.1.70"));
+        assert!(
+            !resident_version_matches(Some("0.1.7".to_ascii_uppercase().as_str()), "0.1.7")
+                || "0.1.7".to_ascii_uppercase() == "0.1.7",
+            "数字串大小写折叠无影响即可；但凡引入大小写差异就必须判不匹配（Ordinal）"
+        );
+    }
+}
+
 impl Launch {
     /// BLADE2_KERNEL_EXE / BLADE2_KERNEL_ARGS 用于把内核换成假实现做自测，默认对齐主线 DshKernelHost。
     pub fn from_env() -> Result<Self, String> {
@@ -592,10 +872,23 @@ fn http(
     body: Option<&str>,
     cookie: Option<&str>,
 ) -> Result<(u16, String, String), String> {
+    http_with_timeout(ep, method, path, body, cookie, REQUEST_TIMEOUT)
+}
+
+/// [`http`] 的带超时版：常驻探活（[`RESIDENT_PROBE_TIMEOUT`]，主干 2s）与 RPC（120s）
+/// 共用同一套裸回环 HTTP 腿，只有读超时这一档不同。
+fn http_with_timeout(
+    ep: &Endpoint,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+    cookie: Option<&str>,
+    timeout: Duration,
+) -> Result<(u16, String, String), String> {
     let mut stream = TcpStream::connect((ep.host.as_str(), ep.port))
         .map_err(|e| format!("连接 {}:{} 失败: {e}", ep.host, ep.port))?;
     stream
-        .set_read_timeout(Some(REQUEST_TIMEOUT))
+        .set_read_timeout(Some(timeout))
         .map_err(|e| format!("设置超时失败: {e}"))?;
     let mut req = format!(
         "{method} {path} HTTP/1.1\r\nHost: {}:{}\r\nAccept: application/json\r\nConnection: close\r\n",
@@ -657,14 +950,26 @@ fn http(
     Ok((status, headers, body))
 }
 
+/// 内核宿主连接：spawn 冷启（[`Kernel::start`]）或常驻复用（[`try_attach_resident`]）两种来路，
+/// 对上层是同一颗 `Endpoint` + cookie 的 RPC 面。
+///
+/// **生命周期（常驻语义，主干 0.9.0.4 起）**：`Drop` **不杀**内核 —— 壳正常退出后内核继续活
+/// （它占着的会话写租约正是下次复用的前提），连接信息已在 URL 到手时落 [`write_resident_state`]。
+/// 显式终止只有两个口：引导超时（`start` 内部自收）与 [`Kernel::kill_and_clear`]（重试清理）。
+/// task #68 时代「`Drop → shutdown → 作业对象带走整棵树」的链路已随常驻设计整体切断。
 pub struct Kernel {
     ep: Endpoint,
     cookie: Option<String>,
+    /// `Some` = 本会话 spawn 出来的（壳手里有进程句柄）；`None` = attach 到的常驻内核
+    /// （父进程是上一次的壳，早已死，本端只有 pid + 记录路径）。
     child: Option<Child>,
-    /// 缺口 #68：主干 `_job`（`DshKernelHost.cs:24`）的对应物 —— `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`
-    /// 的作业对象，**最后一个句柄关闭即带走内核整棵树**（主干 `:155` 那句「句柄只在 Dispose 里收」）。
-    /// 没有这层，`shutdown()` 那句 `child.kill()` 只杀内核主进程，它起的 MCP 子进程全部活下来继续占租约。
-    job: crate::procguard::KillJob,
+    /// 内核主进程 pid（spawn 或 attach 都有），对应主干 `_kernelPid` —— 会话中途的清扫调用
+    /// 必须拿它豁免（`sweep_orphan_kernels_sparing`）。
+    kernel_pid: Option<u32>,
+    /// spawn/attach 时记下的内核主进程模块路径：`kill_and_clear` 按它核对身份再杀（防 pid 复用）。
+    exe: Option<PathBuf>,
+    /// 本次的数据家（状态文件落点），`kill_and_clear` 清文件用，对应主干 `_dshHome`。
+    dsh_home: Option<PathBuf>,
     next_id: u64,
     pub url: String,
     pub log: Vec<String>,
@@ -914,8 +1219,8 @@ pub fn permission_preset_zh(catalog: &Catalog, value: &str) -> String {
         "read-only" => catalog.l("仅可查看"),
         "workspace-write" => catalog.l("工作区内修改"),
         "danger-full-access" => catalog.l("完全权限"),
-        "auto-approve" => catalog.l("自动审批"),
-        "auto" => catalog.l("自动审批"),
+        "auto-approve" => catalog.l("自动审查"),
+        "auto" => catalog.l("自动审查"),
         "custom" => catalog.l("自定义"),
         _ => value.to_string(),
     }
@@ -1527,6 +1832,21 @@ impl ControlState {
 
     pub fn projections(&self, session_id: &str) -> Option<&Projections> {
         self.projections.get(session_id)
+    }
+
+    /// 主干 `RefreshSessionStateFromListAsync`（`MainWindow.xaml.cs:4942-4993`）补齐契约的落表口：
+    /// 把 `session/list` 那一块 `projections.values` 逐键并进该会话的投影表。增量帧是
+    /// 「整键替换」（[`Projections::apply_key`] 的文档），这里同口径逐键整键替换 + 重算
+    /// typed 字段 —— 与主干 `ApplyProjectionValues(cached)` 每键覆写的语义一致。
+    /// 没有键的空块（旧会话整块缺席）⇒ 什么都不写。
+    pub fn absorb_projections(&mut self, session_id: &str, block: &Projections) {
+        let Some(values) = block.values.as_object() else {
+            return;
+        };
+        let entry = self.projections.entry(session_id.to_string()).or_default();
+        for (key, value) in values {
+            entry.apply_key(key, value);
+        }
     }
 
     /// #51 轮次轨的数据源：该会话的每轮大纲（没有投影就是空表）。
@@ -3713,13 +4033,10 @@ impl Kernel {
             command.creation_flags(0x0800_0000);
         }
         let mut child = command.spawn().map_err(|e| format!("内核启动失败: {e}"))?;
-        // 缺口 #68 ①：紧跟 spawn 挂「壳亡即杀」作业对象 —— 主干 `DshKernelHost.cs:101` 也是
-        // `_process.Start()` 的下一行就 `AttachToKillJob()`，**没有** CREATE_SUSPENDED 那一步，
-        // 所以同一处竞态两家都有：内核若在指派完成之前就生了子进程，那一批子进程不在这个作业里。
-        // 这里不发明挂起路径（多一个失败模式、且 std 的 Command 拿不到 CREATE_SUSPENDED 之后的恢复口），
-        // 靠 `procguard::sweep_orphan_kernels()` 兜同一批漏网（主干 `:168` 那句「仍有 SweepOrphanKernels 兜底」）。
-        // 句柄必须留到 `shutdown()`/`Drop` 才关（主干 `:155`），故先揣进 `job`，失败也只落一行诊断。
-        let job = crate::procguard::KillJob::attach(child_process_handle(&child));
+        // 常驻设计（主干 0.9.0.4）：spawn 路径**不再**挂「壳亡即杀」作业对象 —— 壳退出必须留下
+        // 内核。刚 spawn 的这颗进程的一切收尾（超时/认证失败/正常退出后的回收）都走
+        // `procguard::kill_process_tree`（按 pid 收整棵树，MCP 子进程连同会话写租约一起走），
+        // 崩溃残留则由启动清扫兜底。
 
         let (tx, rx) = mpsc::channel::<String>();
         let stdout_tx = tx.clone();
@@ -3743,7 +4060,14 @@ impl Kernel {
         let url = loop {
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
-                let _ = child.kill();
+                // 引导超时 = 显式终止的两口之一（常驻语义下 `Drop` 不再兜这件事）。
+                // 身份由手里的 `Child` 句柄担保 ⇒ 允许裸杀整棵树；主干同位是
+                // `_process.Kill(entireProcessTree: true)` + `DeleteResidentState`（`:156-157`）。
+                let _ = crate::procguard::kill_process_tree(child.id(), None);
+                let _ = child.wait();
+                if let Some(home) = launch.dsh_home.as_deref() {
+                    delete_resident_state(home);
+                }
                 return Err(kernel_start_failure(
                     "内核握手超时（90s 未见 dsh web: 行）",
                     &log,
@@ -3759,6 +4083,12 @@ impl Kernel {
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     let status = child.try_wait().ok().flatten();
                     let _ = child.kill();
+                    let _ = child.wait();
+                    // 主干同位只删状态文件不杀树（`:160-165`，进程已死没什么可杀，漏网的
+                    // MCP 子进程由下次启动的清扫兜底）。
+                    if let Some(home) = launch.dsh_home.as_deref() {
+                        delete_resident_state(home);
+                    }
                     return Err(kernel_start_failure(
                         &format!("内核提前退出: {status:?}"),
                         &log,
@@ -3775,7 +4105,41 @@ impl Kernel {
             }
         };
 
-        let ep = parse_url(&url)?;
+        // URL 到手即登记常驻（主干 `:167-175`：先于认证 —— 壳退出后内核继续活，下次启动
+        // `try_attach_resident` 探活复用）。`exe` 是**实际进程**的模块路径（回退级就是 cmd.exe
+        // 的路径，与主干 `TryGetProcessPath(_process)` 同口径），读不到记 `null`（主干同形），
+        // 下次 attach 时身份对不上只会清状态、绝不误杀。
+        let kernel_pid = child.id();
+        let exe = crate::procguard::process_image_path(kernel_pid);
+        if let Some(home) = launch.dsh_home.as_deref() {
+            write_resident_state(
+                home,
+                &ResidentState {
+                    home: None,
+                    pid: kernel_pid as i64,
+                    url: url.clone(),
+                    exe: exe.as_ref().map(|path| path.display().to_string()),
+                    ver: bundled_dsh_version().unwrap_or_default(),
+                },
+            );
+            log.push(format!("[resident] state written pid={kernel_pid}"));
+        }
+
+        // URL 已到手之后的任何失败（解析不出端点 / 认证耗尽）都是「这颗刚 spawn 的内核半坏」：
+        // 收掉整棵树 + 删状态再回 `Err`。主干把认证留在引导链、失败时由重试钮调
+        // `KillAndClear` 收尾；分叉的认证折在 `start` 里，`Err` 一旦返回调用方就再没有
+        // `Kernel` 句柄可收 —— 所以这一段自收，语义等价于「重试清理」提前发生。
+        let ep = match parse_url(&url) {
+            Ok(ep) => ep,
+            Err(error) => {
+                let _ = crate::procguard::kill_process_tree(kernel_pid, None);
+                let _ = child.wait();
+                if let Some(home) = launch.dsh_home.as_deref() {
+                    delete_resident_state(home);
+                }
+                return Err(kernel_start_failure(&error, &log));
+            }
+        };
         let path = match &ep.query {
             Some(query) => format!("/?{query}"),
             None => "/".to_string(),
@@ -3787,7 +4151,7 @@ impl Kernel {
         // 「睡一拍」这里走 `rx.recv_timeout` 而不是裸 `thread::sleep`：① 内核在这半秒里死了
         // ⇒ 通道断、当场收束，不白等满剩下的发数；② 这半秒内核吐的行**进 `log`** 而不是烂在泵
         // 线程里 —— 正是耗尽那条 `Err` 要带出去的现场（K4）。
-        let (status, headers) = auth_backoff(
+        let auth = auth_backoff(
             || http(&ep, "GET", &path, None, None),
             |captured: &mut Vec<String>, budget| {
                 let until = Instant::now() + budget;
@@ -3807,17 +4171,19 @@ impl Kernel {
                 }
             },
             &mut log,
-        )?;
+        );
+        let (status, headers) = match auth {
+            Ok(ok) => ok,
+            Err(error) => {
+                let _ = crate::procguard::kill_process_tree(kernel_pid, None);
+                let _ = child.wait();
+                if let Some(home) = launch.dsh_home.as_deref() {
+                    delete_resident_state(home);
+                }
+                return Err(error);
+            }
+        };
         let cookie = cookie_from(&headers);
-        let mut log = log;
-        // 缺口 #68 ⑤：作业对象到底挂没挂上，运行时只能从这一行看出来（主干那句是
-        // `DshKernelHost.cs:213` 的 `IsProcessInJob` 复查 + `Debug.WriteLine`）。`log` 会经
-        // `Msg::Connected` → `push_log` → `emit_line("DIAG: …")` 出到 stdout / `BLADE2_RS_LOG`。
-        log.push(format!(
-            "内核作业对象(pid {}): {}",
-            child.id(),
-            job.note
-        ));
         log.push(format!("auth HTTP {status}"));
         for line in headers.lines().filter(|line| {
             let lower = line.to_ascii_lowercase();
@@ -3832,7 +4198,9 @@ impl Kernel {
             ep,
             cookie,
             child: Some(child),
-            job,
+            kernel_pid: Some(kernel_pid),
+            exe,
+            dsh_home: launch.dsh_home.clone(),
             next_id: 0,
             url,
             log,
@@ -3847,8 +4215,15 @@ impl Kernel {
         self.cookie.as_deref()
     }
 
+    /// 内核主进程 pid（spawn 或 attach 都有）。attach 的内核父进程是上一次已死的壳，
+    /// 会话中途的清扫必须拿这颗 pid 豁免（`procguard::sweep_orphan_kernels_sparing`）。
     pub fn pid(&self) -> Option<u32> {
-        self.child.as_ref().map(Child::id)
+        self.kernel_pid
+    }
+
+    /// 是否为复用来的常驻内核（本会话没有 spawn 过进程）。
+    pub fn is_attached(&self) -> bool {
+        self.child.is_none() && self.kernel_pid.is_some()
     }
 
     pub fn call(&mut self, method: &str, args: Value) -> Result<Value, String> {
@@ -3898,6 +4273,27 @@ impl Kernel {
     pub fn post_route(&mut self, path: &str) -> Result<(u16, String), String> {
         http(&self.ep, "POST", path, None, self.cookie.as_deref())
             .map(|(status, _, body)| (status, body))
+    }
+
+    /// 宿主 HTTP **GET** 路由（插件只读路由，如宠物插件 `/api/pet/pets` / `/api/pet/state`）。
+    /// 主干 `DshRpcClient.GetTextAsync`（`DshPetClient.cs:249-273`）的传输等价物：
+    /// 状态码原样交回（404 = 插件路由不存在 ⇒ 调用方按 `PetRouteStatus.Missing` 分档）。
+    pub fn get_route(&mut self, path: &str) -> Result<(u16, String), String> {
+        http(&self.ep, "GET", path, None, self.cookie.as_deref())
+            .map(|(status, _, body)| (status, body))
+    }
+
+    /// 宿主 HTTP **POST JSON** 路由（插件写路由，如 `/api/pet/set-pet` / `/api/pet/set-config`）。
+    /// 主干 `DshRpcClient.PostJsonAsync`（`DshPetClient.cs:275-294`）的传输等价物。
+    pub fn post_json_route(&mut self, path: &str, body: &str) -> Result<(u16, String), String> {
+        http(
+            &self.ep,
+            "POST",
+            path,
+            Some(body),
+            self.cookie.as_deref(),
+        )
+        .map(|(status, _, body)| (status, body))
     }
 
     /// 会话台账（左栏那一列）。**返回值形状与历史逐字一致**：投影的全量解析走
@@ -3987,7 +4383,21 @@ impl Kernel {
         cwd: &str,
         agent_preset: Option<&str>,
     ) -> Result<String, String> {
-        let request = session_create_request(None, Some(cwd), agent_preset);
+        self.create_session_in(None, cwd, agent_preset)
+    }
+
+    /// [`Self::create_session_with`] 的全参档：另带输入区那颗 `WorkspacePickerButton`
+    /// 挑中的工作区 id（主干 `CreateSessionCoreAsync` 的 `MW:4621-4624`：
+    /// `if (_pendingWorkspace is { Id.Length: > 0 } ws) request["workspaceId"] = ws.Id;
+    /// else request["cwd"] = …` —— location 二选一，见 [`session_create_location`]）。
+    /// 与 `agentPreset` 同一纪律：`None`/空串 = 走 `cwd` 那一支，不发明空键。
+    pub fn create_session_in(
+        &mut self,
+        workspace_id: Option<&str>,
+        cwd: &str,
+        agent_preset: Option<&str>,
+    ) -> Result<String, String> {
+        let request = session_create_request(workspace_id, Some(cwd), agent_preset);
         let value = self.call("session/create", json!({ "request": request }))?;
         value["sessionId"]
             .as_str()
@@ -3995,38 +4405,170 @@ impl Kernel {
             .ok_or_else(|| "bad-response: 会话创建响应缺少 sessionId。".to_string())
     }
 
-    pub fn shutdown(&mut self) {
+    /// 重试清理（主干 `KillAndClear` `:249-263`）：这轮内核可能半坏（探活只证 HTTP 面），
+    /// 收掉整棵树并清状态文件，下一次引导冷启。**正常退出不走这里** —— `Drop` 保活。
+    ///
+    /// 身份纪律：spawn 来的内核优先按 spawn 时记下的模块路径核对后再杀（分叉没有
+    /// `Process` 句柄那种进程对象保真，pid 复用全靠这一道核对不误杀）；记不下路径的
+    /// 退化情形（`exe == None`）只对「本会话 spawn 且句柄未交还」的那颗兜底。幂等：
+    /// 收过一遍再调是空操作（`kernel_pid`/`child` 就地清空）。
+    pub fn kill_and_clear(&mut self) {
+        let pid = self.kernel_pid.take();
+        let expected = self.exe.take();
+        if let Some(pid) = pid {
+            match expected.as_deref() {
+                Some(expected) => {
+                    let _ = crate::procguard::kill_process_tree(pid, Some(Path::new(expected)));
+                }
+                None => {
+                    if let Some(child) = self.child.as_mut() {
+                        if child.try_wait().ok().flatten().is_none() {
+                            let _ = crate::procguard::kill_process_tree(child.id(), None);
+                        }
+                    }
+                }
+            }
+        }
         if let Some(child) = self.child.as_mut() {
-            let _ = child.kill();
             let _ = child.wait();
         }
         self.child = None;
-        // 缺口 #68：`child.kill()` 只管主进程，作业句柄一关才是「整棵树」——内核自己起的
-        // MCP 子进程（server-memory / playwright 等）连同它们占着的会话写租约一起走。
-        // 位置对齐主干 `Dispose` 的 `finally`（`DshKernelHost.cs:152-160`）：先杀再关句柄。
-        // 没挂上作业（`armed == false`）时这一句就是一个空操作，行为与今天完全一致。
-        self.job.close_now();
-    }
-
-    /// 作业对象是否真的挂上了（`IsProcessInJob` 复查过才为 `true`）。运行时观测点：
-    /// 同一句话在 `log` 里那行 `内核作业对象(pid …)` 也写着。
-    pub fn job_armed(&self) -> bool {
-        self.job.is_armed()
+        if let Some(home) = self.dsh_home.take() {
+            delete_resident_state(&home);
+        }
     }
 }
 
-/// `std::process::Child` 手里那颗进程句柄（`ChildExt::raw_handle`，Windows-only，
-/// 与本文件 `command.creation_flags` 那处同源）。null 由 `KillJob::attach` 就地判掉，
-/// 不在这里 panic。
-fn child_process_handle(child: &Child) -> *mut std::ffi::c_void {
-    use std::os::windows::io::AsRawHandle;
-    child.as_raw_handle() as *mut std::ffi::c_void
+// ---------------- 常驻复用：attach 链（主干 `TryAttachResidentAsync` `:185-245`）
+
+/// 常驻内核复用（引导链 attach-first 的入口，真机版本守卫现算）：
+/// 读状态文件 → 版本守卫 → pid 活性 + exe 路径核对 → HTTP 探活 → 认证 → 复用。
+/// 任一环失败返回 `None` 走冷启（能确定身份的环节已按记录路径杀树回收）。
+pub fn try_attach_resident(dsh_home: &Path) -> Option<Kernel> {
+    try_attach_resident_with(dsh_home, bundled_dsh_version())
 }
 
-impl Drop for Kernel {
-    fn drop(&mut self) {
-        self.shutdown();
+/// [`try_attach_resident`] 的注入版：版本守卫的「当前版本」由调用方给（测试用，
+/// 免得为了喂一颗临时 `Kernel\dsh\package.json` 去动进程级 env）。生产路径走上面那颗。
+pub fn try_attach_resident_with(
+    dsh_home: &Path,
+    current_version: Option<String>,
+) -> Option<Kernel> {
+    let state = read_resident_state(dsh_home)?;
+    // C# `:188-190`：状态缺失/形不全直接回 null，**不删文件**（下一轮 StartAsync 会覆盖它）。
+    if state.pid <= 0 || state.url.is_empty() {
+        return None;
     }
+    // 版本守卫（C# `:193-198`）：升级/降级后旧内核代码不同，不复用；读不到当前版本也按不匹配
+    // 处理走回收 —— 回收按记录路径核对身份，误杀不了。
+    if !resident_version_matches(current_version.as_deref(), &state.ver) {
+        recycle_resident(&state);
+        return None;
+    }
+    let Ok(pid) = u32::try_from(state.pid) else {
+        return None;
+    };
+    // pid 活性 + 身份核对（C# `:200-219`）。主干分两支（GetProcessById 抛 = 已死；路径对不上 =
+    // pid 复用），两支的处置完全相同 —— 只清状态、不杀 —— 分叉用一颗 `process_image_path`
+    // 的 Option 就覆盖了这两支：None = 已死/读不出；Some 但与记录 `exe` 不是同一份文件 = 复用。
+    let Some(recorded_exe) = state.exe.as_deref().filter(|exe| !exe.is_empty()) else {
+        // 记录里没有 exe（写盘那一刻就没读到）：身份永远证明不了，只清状态。
+        delete_resident_state(dsh_home);
+        return None;
+    };
+    let Some(image) = crate::procguard::process_image_path(pid) else {
+        delete_resident_state(dsh_home);
+        return None;
+    };
+    if !crate::procguard::same_program_file(&image, Path::new(recorded_exe)) {
+        // pid 活着但不是那个内核（复用给了别的进程）：身份对不上不杀，只清状态。
+        delete_resident_state(dsh_home);
+        return None;
+    }
+    // HTTP 探活（C# `:220-239`：2s、不走代理、成功状态码 = 活）。判据取 `< 400`（与 `auth_step`
+    // 同口径）：分叉这腿是裸 TcpStream **不跟重定向**，真内核带 token 的 GET 直接回 200，
+    // 主干 `IsSuccessStatusCode` 在 HttpClient 自动跟完重定向后验的也是那颗终态 —— 实际分歧
+    // 只落在真内核不发的 3xx 上，换来的是假内核（GET 恒 303）也能被探活（集成测试要靠它）。
+    let Ok(ep) = parse_url(&state.url) else {
+        recycle_resident(&state);
+        return None;
+    };
+    if !resident_probe(&ep) {
+        recycle_resident(&state);
+        return None;
+    }
+    // 认证折在 attach 里（分叉侧差异，主干把这一步留在引导链）：探活已过、认证仍耗尽
+    // = 这颗常驻真坏了（RPC 面不是 HTTP 面的问题），按探活失败同档回收走冷启。
+    let path = match &ep.query {
+        Some(query) => format!("/?{query}"),
+        None => "/".to_string(),
+    };
+    let mut log = Vec::new();
+    let auth = auth_backoff(
+        || http(&ep, "GET", &path, None, None),
+        |_captured: &mut Vec<String>, budget| {
+            // attach 没有子进程管道可听（那颗进程不是本会话 spawn 的）—— 这一觉就是纯睡。
+            thread::sleep(budget);
+            AuthWait::Slept
+        },
+        &mut log,
+    );
+    let (status, headers) = match auth {
+        Ok(ok) => ok,
+        Err(_) => {
+            recycle_resident(&state);
+            return None;
+        }
+    };
+    let cookie = cookie_from(&headers);
+    log.push(format!("[resident] attached pid={pid}"));
+    log.push(format!("auth HTTP {status}"));
+    for line in headers.lines().filter(|line| {
+        let lower = line.to_ascii_lowercase();
+        lower.starts_with("set-cookie:") || lower.starts_with("location:")
+    }) {
+        log.push(format!("auth < {line}"));
+    }
+    Some(Kernel {
+        ep,
+        cookie,
+        child: None,
+        kernel_pid: Some(pid),
+        exe: state.exe.clone().map(PathBuf::from),
+        dsh_home: Some(dsh_home.to_path_buf()),
+        next_id: 0,
+        url: state.url.clone(),
+        log,
+    })
+}
+
+/// 按状态文件的记录杀失效常驻（主干 `RecycleResident` `:266-288`）：exe 路径逐字核对，
+/// pid 复用到无关进程时绝不误杀；杀完（或没得杀）清状态文件。
+fn recycle_resident(state: &ResidentState) {
+    if let Ok(pid) = u32::try_from(state.pid) {
+        if pid > 0 {
+            if let Some(exe) = state.exe.as_deref().filter(|exe| !exe.is_empty()) {
+                let _ = crate::procguard::kill_process_tree(pid, Some(Path::new(exe)));
+            }
+        }
+    }
+    if let Some(home) = &state.home {
+        delete_resident_state(home);
+    }
+}
+
+/// 常驻探活那一发（主干 `:223-229`）：带 token GET、[`RESIDENT_PROBE_TIMEOUT`] 读超时、
+/// `< 400` = 服务在位（口径讨论见 `try_attach_resident_with`）。探活只证 HTTP 面；
+/// RPC/mux 面由引导链既有的重试兜（真坏了重试钮调 `kill_and_clear` 兜底）。
+fn resident_probe(ep: &Endpoint) -> bool {
+    let path = match &ep.query {
+        Some(query) => format!("/?{query}"),
+        None => "/".to_string(),
+    };
+    matches!(
+        http_with_timeout(ep, "GET", &path, None, None, RESIDENT_PROBE_TIMEOUT),
+        Ok((status, _, _)) if status < 400
+    )
 }
 
 #[cfg(test)]
@@ -4214,13 +4756,18 @@ mod tests {
     /// 换成 `create_session_with(&default_session_cwd(`：**这条锁的原意一条没松** —— 仍然是
     /// 「两处、都走文档目录、都不许凭空造 cwd」。`create_session(` 那一枚旧 needle 已随签名改动
     /// 从产品码里消失（`tests/ipc.rs` 与 `tests/real_kernel.rs` 里剩的是 `create_session("…")`
-    /// 显式 cwd 形态，与这条锁无关）。
+    /// 显式 cwd 形态，与这条锁无关）。#56 工作区选择器落地后两处调用点升到全参档
+    /// [`Kernel::create_session_in`]（`workspace_id` 在 `cwd` 之前），needle 随签名同步：
+    /// 仍然钉「恰好两处、cwd 一律文档目录那一档」。
     #[test]
     fn create_session_call_sites_pass_the_known_folder() {
         let source = include_str!("main.rs");
         assert_eq!(
             source
-                .matches(concat!("create_session_with(&default_", "session_cwd("))
+                .matches(concat!(
+                    "create_session_in(workspace_id.as_deref(), &default_",
+                    "session_cwd("
+                ))
                 .count(),
             2,
             "两处 `session/create` 调用点（发送时自动新建 + 新建会话钮）都要走主干那颗文档目录"
@@ -4231,18 +4778,28 @@ mod tests {
         );
         // 反向半边（#56 新增那一半）：不带预设的老签名在产品码里必须一根不剩，
         // 漏改一处就是「挑了档、新建会话却回落到内核默认预设」这种静默偏差。
-        // needle 取 `create_session(&`：它既不是 `create_session_with(&` 的前缀，也不会
-        // 命中 `tests/ipc.rs` / `tests/real_kernel.rs`（那两处不在本锁的 `include_str!` 里，
-        // 且传的是显式 cwd 的 `create_session("…")` 形态）。
+        // needle 取 `create_session(&`：它既不是 `create_session_with(&`/`create_session_in(`
+        // 的前缀，也不会命中 `tests/ipc.rs` / `tests/real_kernel.rs`（那两处不在本锁的
+        // `include_str!` 里，且传的是显式 cwd 的 `create_session("…")` 形态）。
         assert_eq!(
             source.matches(concat!("create_", "session(&")).count(),
             0,
             "产品码里还有一处走不带预设的老签名 ⇒ 那一处建出来的会话用的是内核默认档"
         );
         assert_eq!(
+            source.matches(concat!("create_", "session_with(")).count(),
+            0,
+            "产品码里还有一处走不带工作区的旧签名 ⇒ 那一处建出来的会话落不进待用工作区"
+        );
+        assert_eq!(
             source.matches(concat!("agent_", "preset.as_deref()")).count(),
             2,
             "两处都得把待用预设的 id 递出去（`as_deref()` 那一发），少一处就是静默丢档"
+        );
+        assert_eq!(
+            source.matches("workspace_id.as_deref()").count(),
+            2,
+            "两处都得把待用工作区的 id 递出去，少一处就是「选了工作区、新会话仍落文档目录」"
         );
     }
 
@@ -4554,7 +5111,7 @@ mod tests {
             "主干表里的六个档一个都不许漏（含内核保留的活 auto 预设：0.1.7 起保留、0.2.0-rc.2 实测仍在册，另见 the_reserved_auto_preset_*）"
         );
         assert_eq!(permission_preset_zh(&zh, "read-only"), "仅可查看");
-        assert_eq!(permission_preset_zh(&zh, "auto-approve"), "自动审批");
+        assert_eq!(permission_preset_zh(&zh, "auto-approve"), "自动审查");
         assert_eq!(
             permission_preset_zh(&zh, "third-party-preset"),
             "third-party-preset",
@@ -4602,8 +5159,10 @@ mod tests {
     fn the_reserved_auto_preset_shares_the_auto_approve_label_and_stays_on_the_i18n_path() {
         let zh = Catalog::load("zh", None);
         let en = Catalog::load("en", None);
-        assert_eq!(permission_preset_zh(&zh, "auto"), "自动审批");
-        assert_eq!(permission_preset_zh(&en, "auto"), "Auto approval");
+        // 0.9.0.2/0.9.0.3：主干把「自动审批」（dsh-approval-gate）全面改叫「自动审查」
+        // （内核 0.2.1 的 @deepseek-ai/dsh-experimental-auto-review，预设 id `auto`）。
+        assert_eq!(permission_preset_zh(&zh, "auto"), "自动审查");
+        assert_eq!(permission_preset_zh(&en, "auto"), "Auto review");
         assert_eq!(
             permission_preset_zh(&zh, "auto"),
             permission_preset_zh(&zh, "auto-approve"),
@@ -14282,10 +14841,85 @@ mod pk1_permission_catalog_tests {
 }
 
 // ===========================================================================
-// #195 B2 · 引导可靠性第二棒（K1b 认证退避 / K2 `NODE_COMPILE_CACHE` / K4 失败带出现场）
-// 追加在文件末尾的理由同 `:7898` 那条注释 —— 本仓 `include_str!` 源码锁按「起始锚 → 结束锚首次
-// 出现」开窗，新 mod 只能落在所有既开窗锚之后。
+// 宠物插件（@linxin666/dsh-pet）只读路由的解析 —— 追加在文件末尾（理由同上：
+// 源码锁按「起始锚 → 结束锚首次出现」开窗，新段落在所有既开窗锚之后）。
+// 主干真源 = `Dsh/DshPetClient.cs`：`GetPetsAsync`（GET api/pet/pets，数组、条目缺 id 整条丢）
+// 与 `GetStateAsync`（GET api/pet/state，当前宠物 id 在 `pet.id`）。设置页宠物库的
+// 数据源就是这两发（`MainWindow.Pet.cs:379-404`）。
 // ===========================================================================
+
+/// `/api/pet/pets` 的一行：设置页宠物库行要吃的五格（主干 `PetDefinition` 里
+/// `Id/DisplayName/Description/Renderer` + 派生的 `ShellRenderable`）。图集几何
+/// （cell/columns/rows/atlasUrl/tracks）是宠物**窗口**渲染要吃的，设置页清单用不到
+/// ⇒ 不建模（主干 `MakePetRowAsync` 也只读那五格 + 预览路由）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PetListEntry {
+    pub id: String,
+    pub display_name: String,
+    pub description: String,
+    pub renderer: String,
+    /// 主干 `PetDefinition.ShellRenderable`（`DshPetClient.cs:333-334`）：
+    /// `Renderer != "live2d" && Tracks.Count > 0 && CellWidth > 0 && CellHeight > 0`。
+    /// 分叉不建 tracks/cell 三格 ⇒ 只按「非 live2d」判（主干注释自己写明按这个方向判
+    /// 「插件改渲染器名时不至于把宠物全灭」），来源标注走「图集帧数据不全，壳内不渲染」
+    /// 那一档时以插件回执的 renderer 为准 —— 与主干在 sprite2d 宠物上同果。
+    pub shell_renderable: bool,
+}
+
+/// `GET api/pet/pets` 的正文 → 行表（主干 `GetPetsAsync:42-62`）：数组才算数，
+/// 条目不是对象 / `id` 缺席或空 ⇒ 整条丢；`displayName` 缺席回落 id、
+/// `description` 缺席空串、`renderer` 缺席回落 `"sprite2d"`（`:95-102` 的默认值）。
+#[must_use]
+pub fn parse_pet_list(text: &str) -> Vec<PetListEntry> {
+    let Ok(value) = serde_json::from_str::<Value>(text) else {
+        return Vec::new();
+    };
+    let Some(items) = value.as_array() else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            let item = item.as_object()?;
+            let id = item.get("id")?.as_str()?.to_string();
+            if id.is_empty() {
+                return None;
+            }
+            let renderer = item
+                .get("renderer")
+                .and_then(Value::as_str)
+                .unwrap_or("sprite2d")
+                .to_string();
+            Some(PetListEntry {
+                display_name: item
+                    .get("displayName")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&id)
+                    .to_string(),
+                description: item
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                shell_renderable: renderer != "live2d",
+                renderer,
+                id,
+            })
+        })
+        .collect()
+}
+
+/// `GET api/pet/state` 的正文 → 当前宠物 id（主干 `GetStateAsync:106-137` 只读
+/// `pet.id` 那一格；根不是对象 / `pet` 缺席 / `id` 非串 ⇒ `None`，与主干 `""` 同档）。
+#[must_use]
+pub fn parse_pet_active_id(text: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(text).ok()?;
+    value
+        .get("pet")?
+        .get("id")?
+        .as_str()
+        .map(str::to_string)
+}
 
 #[cfg(test)]
 mod pb2_boot_fallback_tests {
@@ -14548,22 +15182,25 @@ mod pb2_boot_fallback_tests {
         );
     }
 
-    /// ⑤ 可见性 + 反向锁（源形）：`Kernel::start` 的三条早退路**逐条**过现场组装器，
+    /// ⑤ 可见性 + 反向锁（源形）：`Kernel::start` 的失败路**逐条**过现场组装器，
     /// 老的「一发定生死」直路闸已经从函数窗里消失。
     #[test]
     fn every_start_failure_leaves_the_straight_shot_and_carries_the_scene() {
         let start = band("pub fn start(launch: &Launch)", "pub fn endpoint(&self)");
-        // `start` 自己只剩两发显式 `return Err(`（握手超时 / 提前退出）：认证那一路的失败出口
-        // 搬进了 `auth_backoff`，`start` 这里是 `auth_backoff(…)?` —— 位置换了，吞不掉。
+        // `start` 自己有**四发**显式 `return Err(`：握手超时 / 提前退出（老两条，主干同位），
+        // 加常驻时代的两条自收尾 —— URL 解析不出端点、认证耗尽（这颗刚 spawn 的内核半坏，
+        // 杀树 + 删状态再回 Err；主干把认证留在引导链、由重试钮的 KillAndClear 收，分叉
+        // 折进 start 就得就地收）。认证那条的现场由 `auth_backoff` 内部的
+        // `kernel_start_failure` 组好，`start` 原样上抛 —— 位置换了，吞不掉。
         assert_eq!(
             start.matches("return Err(").count(),
-            2,
+            4,
             "start 的失败出口数漂了（多了 = 多做，少了 = 有一条被吞成 Ok）"
         );
         assert_eq!(
             start.matches("return Err(kernel_start_failure(").count(),
-            2,
-            "有一条失败路又不带内核现场了"
+            3,
+            "有一条失败路又不带内核现场了（第四发是 auth_backoff 组好的原文直传）"
         );
         // 三条定性原文逐字仍在（老锁吃的是前缀，本刀不许把它们换成一句泛化话）。
         assert!(start.contains("内核握手超时（90s 未见 dsh web: 行）"));
@@ -14586,17 +15223,18 @@ mod pb2_boot_fallback_tests {
         assert!(PB2_SELF.contains("鉴权请求失败"), "禁串针空转：驱动里那句原文都没了");
         // 反「乘第二遍」：认证这一族（驱动 + start）里没有 mux 的单轮/总窗，也没有裸阻塞口。
         let wide = band("pub fn auth_backoff<", "pub fn endpoint(&self)");
-        // 这一族里**每一发**失败出口都过现场组装器：4 发（驱动 2 + start 2）。
+        // 这一族里**每一发**失败出口都过现场组装器：6 发（驱动 2 + start 4 —— 常驻时代 start
+        // 多了两发自收尾：URL 解析不出端点（组装器）与认证耗尽（驱动组好的原文直传，不重复组装））。
         // 少一发 = 有一条被吞成 Ok 或不带现场；多一发 = 有人在本族里加了主干没有的第三条失败路。
         assert_eq!(
             wide.matches("return Err(").count(),
-            4,
+            6,
             "认证这一族的失败出口数漂了"
         );
         assert_eq!(
             wide.matches("return Err(kernel_start_failure(").count(),
-            4,
-            "这一族里有一条失败路又不带内核现场了"
+            5,
+            "这一族里有一条失败路又不带内核现场了（第 6 发是驱动组好的原文直传）"
         );
         for forbidden in [
             concat!("from_secs(", "2)"),

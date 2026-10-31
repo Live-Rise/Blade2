@@ -14,14 +14,14 @@
        运行时从不传（zh/en 走键直返），带了是 28 份死重。
 
   用法：
-    pwsh -File build-msix.ps1                        # 0.8.3.9 + target/release/blade2-rs.exe
+ pwsh -File build-msix.ps1                        # 0.9.0.4 + target/release/blade2-rs.exe
     pwsh -File build-msix.ps1 -ExePath <exe>         # 指定别的 release exe
     pwsh -File build-msix.ps1 -SkipSign              # 只 pack 不签（调试用）
     pwsh -File build-msix.ps1 -WithRuntime           # 把 WinAppSDK 运行期 DLL 一并打进包
 #>
 [CmdletBinding()]
 param(
-  [string]$Version = '0.8.3.9',
+  [string]$Version = '0.9.0.4',
   [string]$ExePath,
   [switch]$SkipSign,
   [switch]$WithRuntime

@@ -702,7 +702,22 @@ pub const EN: &[(&str, &str)] = &[
         "Workspace and allowed temp dirs writable; broader retries need approval",
     ),
     ("完全文件访问，不再弹出审批确认", "Full file access; no approval prompts"),
+    // —— 0.9.0.2/0.9.0.3：主干把「自动审批」（内核 dsh-approval-gate）全面改叫「自动审查」
+    // （内核 0.2.1 的 @deepseek-ai/dsh-experimental-auto-review，预设 id 是 `auto`）。旧键
+    // 「自动审批」与「Flash 预判…」是**接线层映射常量**，不许动：
+    // · `kernel.rs::permission_preset_zh` 的 `"auto"`/`"auto-approve"` 两臂查 `l("自动审批")`，
+    //   RPC 契约测试 `the_reserved_auto_preset_shares_the_auto_approve_label_and_stays_on_the_i18n_path`
+    //   钉死 zh「自动审批」/ en "Auto approval"；
+    // · `main.rs::permission_preset_desc_zh` 的 `"auto-approve"` 臂查 `l("Flash 预判…")`，
+    //   测试 `the_permission_texts_are_all_in_the_english_table` 钉它在册。
+    // 显示文案切到下面两枚新键是 main.rs/kernel.rs 接线层的活（下一个代理），这里先把
+    // 新键备齐：映射常量与文案解耦（键不动、文案换）。
     ("自动审批", "Auto approval"),
+    ("自动审查", "Auto review"),
+    (
+        "每次工具调用前由当前会话模型预判是否授权：安全的直接放行，有风险的带理由转人工",
+        "The session's own model assesses authorization before each tool call: safe calls go straight through, risky ones go to a human with the reason",
+    ),
     (
         "Flash 预判写入/命令是否不可回补：安全自动批准，有风险转人工审批",
         "Flash pre-judges whether writes/commands are irreversible: safe ones auto-approve, risky ones go to human approval",
@@ -1077,25 +1092,23 @@ pub const EN: &[(&str, &str)] = &[
         "模型用量环形图：近 {0} 天共 {1} tokens，{2} 个模型",
         "Model usage ring: {1} tokens over the last {0} days, {2} models",
     ),
-    (
-        "自动审批由内核插件 dsh-approval-gate 提供：当会话权限预设切到「自动审批」时，Flash 模型会预判每次写入/命令是否不可回补——安全则自动批准，涉及删除、凭据、系统配置等硬类别转人工确认。开关增删内核 profile patch 里的 auto-approve 预设，由内核热重载即时生效。",
-        "Auto approval comes from the kernel plugin dsh-approval-gate: when a session permission preset switches to Auto approval, the Flash model pre-judges whether each write/command is irreversible - safe ones are approved automatically, while hard categories such as deletions, credentials and system configuration fall back to manual confirmation. The toggle adds or removes the auto-approve preset in the kernel profile patch, which the kernel hot-reloads immediately.",
-    ),
+    // （此处原有一枚 dsh-approval-gate 段说明的「Flash 模型」旧变体，0.9.0.2 起主干整域
+    //  改挂 @deepseek-ai/dsh-experimental-auto-review，旧变体零调用点已删；现行键见下方
+    //  「自动审查由内核插件 …」那枚。）
     ("{0} tokens（近 {1} 天）", "{0} tokens (last {1} days)"),
     // 目标条 / 上下文圈 / 气泡卡 / 附件 / 使用统计：主线 ShellEnglish 已登记的原文照抄。
-    // 管理、管理目标、已用 token 主线在代码里用了却没登记进表（英文界面会露出中文），
-    // 这 3 条的译文是分叉自拟的。
-    // 轮次轨兜底那枚 `第 {0} 轮` 曾按同样口径自拟过一枚 "Turn {0}"，本轮（刀 C）已撤：主干
-    // `MainWindow.TurnRail.cs` 用的是 `LF("第 {0} 轮", mark.Turn)`（通道 A），ShellEnglish 里
-    // 根本没有这个裸键 ⇒ 主干英文档自己就吐中文 `第 5 轮`。分叉补一枚表值 = 造主干没有的
-    // 回落档，属冒名登记；撤表后分叉与主干同串，见
-    // `en_table_entries_that_leaked_from_the_bilingual_family_stay_render_compatible`。
+    // 管理 / 管理目标：主干 0.9.0.2（a3e31f51）已把它们登记进表（`Manage` / `Manage targets`），
+    // 值随主干对齐；「已用 token」主干至今没登记，译文仍是分叉自拟。
+    // 轮次轨兜底那枚 `第 {0} 轮` 曾按「主干没登记」的口径自拟过一枚 "Turn {0}" 并在刀 C 撤表；
+    // 主干 0.9.0.2 的 ShellEnglish 补齐（1355 键）把裸键 `第 {0} 轮 = Turn {0}` 收编了 ⇒
+    // 现在**主干英文档也出 "Turn 5"**，分叉随总闸补回同一枚键（见尾部批量块），
+    // 面值锁 `the_turn_rail_fallback...` 已按新现实反转。
     ("目标待命", "Goal armed off"),
     ("目标进行中", "Goal active"),
     ("目标已暂停", "Goal paused"),
     ("目标受阻", "Goal blocked"),
     ("管理", "Manage"),
-    ("管理目标", "Manage goal"),
+    ("管理目标", "Manage targets"),
     ("上下文已用 {0}%", "{0}% of context used"),
     ("已用", "Used"),
     ("上下文容量", "Context capacity"),
@@ -1507,17 +1520,24 @@ pub const EN: &[(&str, &str)] = &[
     ("Cua Driver 驱动", "Cua Driver provider"),
     ("浏览器控制注册表", "Browser-use registry"),
     ("Playwright 驱动", "Playwright provider"),
-    ("自动审批由内核插件 dsh-approval-gate 提供：当会话权限预设切到「自动审批」时，由判定模型预判每次写入/命令是否不可回补——安全则自动批准，涉及删除、凭据、系统配置等硬类别转人工确认。开关增删内核 profile patch 里的 auto-approve 预设，判定模型写在默认模型设置里，两者都由内核热重载即时生效。", "Auto approval is provided by the kernel plugin dsh-approval-gate: when a session's permission preset is switched to Auto approval, the judging model pre-judges whether each write/command is irreversible — safe ones are approved automatically, while hard categories such as deletion, credentials, and system configuration are escalated to a human. The toggle adds or removes the auto-approve preset in the kernel profile patch and the judging model lives in the default-model setting; both are hot-reloaded by the kernel on the fly."),
-    ("开启后权限模式里多出「自动审批」：判定模型预判越界请求，安全自动批准、有风险转人工。", "When on, an Auto approval option appears in the permission presets: the judging model pre-judges out-of-bounds requests, approving safe ones automatically and escalating risky ones to a human."),
-    ("启用自动审批", "Enable auto approval"),
-    ("自动审批判定模型", "Auto approval judging model"),
-    ("判定模型", "Judging model"),
-    ("自动审批每次预判写入/命令是否不可回补时所用的模型，选项来自内核模型目录。", "The model that pre-judges whether each write/command is irreversible during auto approval; the options come from the kernel model catalog."),
-    ("预判模型", "Pre-judgment model"),
-    ("切换后新会话的默认模型也随之改变；已在会话里选过模型的会话不受影响。", "Switching also changes the default model for new sessions; sessions that already picked a model are unaffected."),
+    // —— 自动审查子页（主干 `AddAutoReviewCardsAsync`，MW:14662-14681：说明卡/开关卡/后果提示卡；
+    //     0.9.0.2 起改挂内核 @deepseek-ai/dsh-experimental-auto-review，原「自动审批」的
+    //     dsh-approval-gate 域四键就地改名，语义没变只是换词的按主干逐字对齐）——
+    (
+        "自动审查由内核插件 @deepseek-ai/dsh-experimental-auto-review 提供（内核标题「自动授权审查」）：当会话权限预设切到「自动审查」时，每次工具调用前由当前会话的模型预判是否授权——安全则直接放行，有风险则带理由转人工确认。开关增删内核 profile 的 bundle 清单，由内核热重载即时生效。",
+        "Auto review is provided by the kernel plugin @deepseek-ai/dsh-experimental-auto-review (kernel title \"Auto Authorization Review\"): when a session's permission preset is switched to Auto review, the session's own model assesses authorization before each tool call — safe calls go straight through, risky ones are escalated to a human with the reviewer's reason. The toggle adds or removes the bundle in the kernel profile's bundle list; the kernel hot-reloads the change on the fly.",
+    ),
+    (
+        "开启后权限模式里多出「自动审查」：每次工具调用前由当前会话模型预判是否授权，安全直接放行、有风险转人工。",
+        "When on, an Auto review option appears in the permission presets: the session's own model assesses authorization before each tool call, letting safe calls through and escalating risky ones to a human.",
+    ),
+    ("启用自动审查", "Enable auto review"),
     ("模型目录不可用：{0}", "Model catalog unavailable: {0}"),
     ("切换后会发生什么", "What happens when you switch"),
-    ("开启：权限选择器（输入区左下角）里出现「自动审批」，新会话可选用它。\n关闭：该预设从选择器消失；正在使用它的会话回落到自定义权限，审批恢复人工确认。\n判定记录与学习状态不受影响，重新开启后继续生效。", "On: an Auto approval option appears in the permission picker (bottom-left of the composer), available to new sessions.\nOff: that preset disappears from the picker; sessions using it fall back to custom permissions, and approval returns to manual confirmation.\nDecision logs and learned state are unaffected and resume when you switch it back on."),
+    (
+        "开启：权限选择器（输入区左下角）里出现「自动审查」，新会话可选用它。\n关闭：该预设从选择器消失；正在使用它的会话回落到完全权限，审批恢复人工确认。\n重新开启后继续生效。",
+        "On: an Auto review option appears in the permission picker (bottom-left of the composer), available to new sessions.\nOff: that preset disappears from the picker; sessions using it fall back to full access, and approval returns to manual confirmation.\nSwitching it back on resumes auto review.",
+    ),
     ("关于", "About"),
     ("Blade² 的版本信息与更新。更新通过覆盖安装新版本 MSIX 完成（安装前需先退出应用）。", "Blade² version info and updates. Updates are applied by installing a newer MSIX over the current one (quit the app before installing)."),
     ("版本", "Version"),
@@ -1680,6 +1700,142 @@ pub const EN: &[(&str, &str)] = &[
     ("Agent 可选择的模型", "Models agents may choose"),
     ("当前没有模型提供方公布模型。", "No model provider currently advertises a model."),
     ("保存前请至少选择一个模型。", "Select at least one model before saving."),
+    // —— 0.9.0.2/0.9.0.3 i18n 全量补齐（主干 a3e31f51 ShellEnglish 补至 1355 键 + 1508acdf
+    //     空态自动审查；总闸 `en_table_matches_every_mainline_shell_english_key` 要求主干 ⊆ EN
+    //     且值逐字相等，本块按主干字典序首见序照抄）。域分组：消息卡片/轨迹/详情/计划/任务面板、
+    //     压缩与模型重试、XAML 静态 UIA 标签、自动审查域零星键。其中 DetText/TrajText 内联族
+    //     的 24 枚是主干 0.9.0.2 自己收编进表的（「补键即全语言生效」），分叉跟着收编，
+    //     INLINE_ONLY 名单已同步裁剪。 ——
+    ("越界工具调用的自动授权审查开关。", "Switch for automatic authorization review of out-of-bounds tool calls."),
+    ("{0} 个成员", "{0} members"),
+    ("来自会话 {0}", "From session {0}"),
+    ("引用会话 · {0}", "Referenced session · {0}"),
+    ("跨会话召回", "Cross-session recall"),
+    ("跨会话中继", "Cross-session relay"),
+    ("跨会话召回 · {0}", "Cross-session recall · {0}"),
+    ("收起成员", "Collapse members"),
+    ("没有启动成员", "No active members"),
+    ("空成员名", "Empty member name"),
+    ("计时总览", "Timing overview"),
+    ("事件账本", "Event ledger"),
+    ("轨迹", "Trajectory"),
+    ("轨迹面板", "Trajectory panel"),
+    ("全部", "All"),
+    ("步骤", "Steps"),
+    ("系统", "System"),
+    ("类型筛选", "Filter by type"),
+    ("共 {0} 条事件 · {1} 轮", "{0} events · {1} turns"),
+    ("会话时间戳（运行中）", "Session timestamps (running)"),
+    ("{0} 步", "{0} steps"),
+    ("开始时间", "Start time"),
+    ("总时长", "Total duration"),
+    ("首 token 延迟", "Time to first token"),
+    ("工具耗时", "Tool time"),
+    ("{0:N0} 毫秒", "{0:N0} ms"),
+    ("跳到消息", "Jump to message"),
+    ("跳到第 {0} 轮消息", "Jump to message in turn {0}"),
+    ("事件", "Event"),
+    ("来源", "Source"),
+    ("参数 JSON", "Parameters JSON"),
+    ("结果 JSON", "Result JSON"),
+    ("暂无轮次计时。", "No turn timing yet."),
+    (
+        "暂无事件（打开会话并产生消息后，账本随 journal 回放/实时流填充）。",
+        "No events yet (open a session and produce messages; the ledger fills as the journal replays and streams).",
+    ),
+    ("当前筛选没有事件。", "No events for the current filter."),
+    (
+        "事件账本与交互计时总览（数据来自 session journal 渲染管线）。点击轮次可跳到对应消息；展开行只读查看参数/结果/差异 JSON。",
+        "Event ledger and interaction timing overview (data from the session journal rendering pipeline). Click a turn to jump to its message; expand a row to read parameters/results/diff JSON.",
+    ),
+    ("事件连接已失效，请等待重新连接后再回答。", "The event connection has dropped. Wait for reconnection before replying."),
+    ("消息详情", "Message details"),
+    ("元数据", "Metadata"),
+    ("角色", "Role"),
+    ("轮次", "Turn"),
+    ("序号", "Index"),
+    ("时间", "Time"),
+    ("用时", "Duration"),
+    ("用量", "Usage"),
+    ("消息 ID", "Message ID"),
+    ("助手 · {0} tok", "Assistant · {0} tok"),
+    ("助手流式尝试", "Assistant streaming attempt"),
+    ("工具 · {0}", "Tool · {0}"),
+    ("工具结果 · {0}", "Tool result · {0}"),
+    ("工具结果", "Tool result"),
+    ("轮次开始 · 第 {0} 轮", "Turn start · turn {0}"),
+    ("轮次结束 · 第 {0} 轮", "Turn end · turn {0}"),
+    ("步骤开始 · 第 {0} 轮", "Step start · turn {0}"),
+    ("步骤结束 · 第 {0} 轮", "Step end · turn {0}"),
+    ("请求头 · {0}", "Request headers · {0}"),
+    ("请求头", "Request headers"),
+    ("会话标题", "Session title"),
+    ("插件 · {0}", "Plugin · {0}"),
+    ("未知来源", "Unknown source"),
+    ("未捕获参数", "Uncaptured parameters"),
+    ("未捕获结果", "Uncaptured result"),
+    ("复制格式化 JSON", "Copy formatted JSON"),
+    ("复制紧凑 JSON", "Copy compact JSON"),
+    (
+        "计划为只读清单（数据来自会话投影 schedule）。此入口不创建、编辑或删除计划，也不调用 schedules RPC。",
+        "Plans are a read-only list (data from the session schedule projection). This entry point never creates, edits, or deletes plans, and never calls the schedules RPC.",
+    ),
+    ("当前会话没有计划。", "This session has no plans."),
+    (
+        "任务清单来自会话 todos 投影（模型经 todo_write 更新）。此面板只读，不创建、编辑或删除任务。",
+        "The task list comes from the session todos projection (updated by the model via todo_write). This panel is read-only and never creates, edits, or deletes tasks.",
+    ),
+    ("当前会话没有任务清单。", "This session has no task list."),
+    ("上下文已压缩", "Context compacted"),
+    ("正在压缩…", "Compacting…"),
+    ("已压缩 {0} 条历史记录（约 {1} tokens）", "Compacted {0} history records (about {1} tokens)"),
+    ("压缩摘要不可用", "Compaction summary unavailable"),
+    ("点击查看压缩摘要", "Click to view the compaction summary"),
+    ("等待重试模型请求", "Waiting to retry the model request"),
+    ("已重试模型请求", "Model request retried"),
+    ("模型请求重试已取消", "Model request retry canceled"),
+    ("重试延迟：{0} ms", "Retry delay: {0} ms"),
+    ("失败原因：", "Failure reason:"),
+    ("发送继续", "Send continue"),
+    ("取消重试", "Cancel retry"),
+    ("已达到输出 token 上限", "Output token limit reached"),
+    (
+        "回答被截断，已有输出保留在对话中。发送“继续”可让模型接着输出。",
+        "The reply was truncated; output so far is kept in the conversation. Send \"continue\" to let the model resume.",
+    ),
+    ("已截断", "Truncated"),
+    ("已移除", "Removed"),
+    ("已新增", "Added"),
+    ("已载入", "Loaded"),
+    ("取代先前的快照", "Replaces the previous snapshot"),
+    ("未记录", "Not recorded"),
+    ("保留 {0} 条 · 省略 {1} 条", "Keeping {0} · omitting {1}"),
+    ("…还有 {0} 条", "…and {0} more"),
+    ("Cordis 插件", "Cordis plugin"),
+    ("助手", "Assistant"),
+    ("工具", "Tool"),
+    ("第 {0} 轮", "Turn {0}"),
+    ("目标 · Round {0}", "Goal · Round {0}"),
+    ("记忆", "Memory"),
+    ("找不到会话 {0}", "Session {0} not found"),
+    (
+        "预设即一个会话的 Agent 所运行的插件组装——它的工具、提示词与能力。可用「创造模式」让 Agent 帮你创建，或直接在预设目录放置文件。",
+        "A preset is the plugin assembly a session's agent runs — its tools, prompts, and capabilities. Let the agent create one in Creation mode, or drop files directly into the preset directory.",
+    ),
+    (
+        "关闭：该预设从选择器消失；正在使用它的会话回落到完全权限，审批恢复人工确认。\n",
+        "Off: the preset disappears from the picker; sessions using it fall back to full access, and approvals return to manual confirmation.\n",
+    ),
+    ("重新开启后继续生效。", "Takes effect again when re-enabled."),
+    ("当前会话标题", "Current session title"),
+    ("少女祈祷中", "Praying"),
+    ("历史快速定位", "Quick jump in history"),
+    ("轮次刻度列表", "Turn tick list"),
+    ("内核启动状态", "Kernel boot status"),
+    ("设置二级页", "Settings subpage"),
+    ("关闭图片预览", "Close image preview"),
+    ("已更新", "Updated"),
+    ("附加内容块", "Attached content block"),
 ];
 
 #[derive(Clone)]
@@ -2326,10 +2482,17 @@ mod tests {
         );
         assert_eq!(en.lf("{0}分钟前", &one("5")), "5 min ago");
         // 反面对照（这一句才是「主干那几条不许改用 `lf`」的证据）：键没进 EN 表时 `lf` 会露中文。
-        assert_eq!(en.lf("来自会话 {0}", &one("s-7")), "来自会话 s-7");
+        // `来自会话 {0}` 这枚真调用点对 0.9.0.2 起被主干 a3e31f51 收编进表（值与内联同串）
+        // ⇒ 它现在是「表里有键、两法同串」的正例；露中文的反例换一枚表里确实没有的样例键。
+        assert_eq!(en.lf("来自会话 {0}", &one("s-7")), "From session s-7");
         assert_eq!(
             en.dtf("来自会话 {0}", "From session {0}", &one("s-7")),
             "From session s-7"
+        );
+        assert_eq!(en.lf("样例键 {0}", &one("s-7")), "样例键 s-7");
+        assert_eq!(
+            en.dtf("样例键 {0}", "Explicit en {0}", &one("s-7")),
+            "Explicit en s-7"
         );
     }
 
@@ -2341,24 +2504,31 @@ mod tests {
     // 前五条零 IO；第八条运行时解析主干源码，主干缺席即跳过（跳过 ≠ 假绿，消息里写「跳过」）。
 
     /// 第一档/第三档的分界：调用点自带的那枚英文**只在 `ShellEnglish` 未收录的键上**出场。
+    /// 例键口径（0.9.0.2 后）：`轨迹面板` 已被主干 a3e31f51 收编进表，未收录示例换
+    /// `Cordis 插件面板`（`MainWindow.Cordis.cs:646` 的内联对，主干至今没登记）。
     #[test]
     fn bt_returns_the_call_site_english_only_for_keys_shellenglish_misses() {
         let en = Catalog::load("en", None);
         // 未收录 ⇒ 前缀门为假 ⇒ 落调用点英文。
-        assert_eq!(en.bt("轨迹面板", "Trajectory panel"), "Trajectory panel");
+        assert_eq!(
+            en.bt("Cordis 插件面板", "Cordis plugins panel"),
+            "Cordis plugins panel"
+        );
         assert_eq!(
             en.bt("内核未连接。", "Kernel is not connected."),
             "Kernel is not connected."
         );
         // 已收录 ⇒ `l()` 先赢，内联英文是死码（主干 `TrajText` 第一行就是 `var s = L(zh);`）。
+        // `轨迹面板` 0.9.0.2 起主干自己登记了（值恰与内联同串），现在走的是表那档。
         assert_eq!(en.bt("恢复", "Resume"), "Restore");
+        assert_eq!(en.bt("轨迹面板", "Trajectory panel"), "Trajectory panel");
         // `zh` 档：`l` 的第一档直通，收录与否都原样。
         let zh = Catalog::load("zh", None);
         assert_eq!(zh.bt("轨迹面板", "Trajectory panel"), "轨迹面板");
         assert_eq!(zh.bt("恢复", "Resume"), "恢复");
         // 空串两半照主干：`en` 为空且走到第三档就是空串，**不**回落 `zh`；`zh` 为空时只有
         // 「locale 不走 `zh` 前缀门」这条出路，`zh` / `zh-TW` 档仍是空串（主干 `L("")` 第一档）。
-        assert_eq!(en.bt("轨迹面板", ""), "");
+        assert_eq!(en.bt("Cordis 插件面板", ""), "");
         assert_eq!(en.bt("", "Anything"), "Anything");
         assert_eq!(zh.bt("", "Anything"), "");
         assert_eq!(Catalog::load("zh-TW", None).bt("", "Anything"), "");
@@ -2389,18 +2559,31 @@ mod tests {
         assert_eq!(de.bt("查看", "Inspect"), "View");
         // 对照 `dt`：它跳过 EN 档 ⇒ 同一枚调用点字面串给内联英文（那 39 个调用点的账，本轮不改）。
         assert_eq!(de.dt("查看", "Inspect"), "Inspect");
-        // 第四档：`zh` **前缀**门（不是 `== "zh"`），且大小写不敏感。
+        // 第四档：`zh` **前缀**门（不是 `== "zh"`），且大小写不敏感。例键用主干至今没收的
+        // `Cordis 插件面板`（0.9.0.2 起原例键 `类型筛选` 已被主干 a3e31f51 收编进表，
+        // 收编键在 zh- 档落的是第三档 EN 表、到不了前缀门，见下）。
         assert_eq!(
-            Catalog::load("zh-TW", None).bt("类型筛选", "Kind filter"),
-            "类型筛选",
+            Catalog::load("zh-TW", None).bt("Cordis 插件面板", "Cordis plugins panel"),
+            "Cordis 插件面板",
             "zh- 前缀没落中文档"
         );
-        assert_eq!(Catalog::load("zh-HK", None).bt("类型筛选", "Kind filter"), "类型筛选");
-        assert_eq!(Catalog::load("ZH-TW", None).bt("类型筛选", "Kind filter"), "类型筛选");
+        assert_eq!(
+            Catalog::load("zh-HK", None).bt("Cordis 插件面板", "Cordis plugins panel"),
+            "Cordis 插件面板"
+        );
+        assert_eq!(
+            Catalog::load("ZH-TW", None).bt("Cordis 插件面板", "Cordis plugins panel"),
+            "Cordis 插件面板"
+        );
         // `zh-TW` 上已收录的键 ⇒ 主干（json 缺、字典有）出英文 ⇒ 门来不及管。
         assert_eq!(Catalog::load("zh-TW", None).bt("恢复", "Resume"), "Restore");
+        // 0.9.0.2 收编档的证据：`类型筛选` 进表后 zh- 档与主干 `L` 同落 `ShellEnglish` 那档。
+        assert_eq!(
+            Catalog::load("zh-TW", None).bt("类型筛选", "Kind filter"),
+            "Filter by type"
+        );
         // 对照 `dt` 的精确门：`zh-TW` 下未收录键出英文。
-        assert_eq!(Catalog::load("zh-TW", None).dt("类型筛选", "Kind filter"), "Kind filter");
+        assert_eq!(Catalog::load("zh-TW", None).dt("Cordis 插件面板", "Cordis plugins panel"), "Cordis plugins panel");
     }
 
     /// 主干 `TrajFormat` / `DetFormat` 的失败口径：实参少给 ⇒ `catch (FormatException)` 返回
@@ -2444,8 +2627,10 @@ mod tests {
         assert_eq!(en.btf("{0:N0} 毫秒", "{0:N0} ms", &[]), "{0:N0} 毫秒");
     }
 
-    /// 11 枚「字典生效值 ≠ 内联 `en`」的键：断言**字典生效值赢**（= 主干英文界面实际显示的那串）。
-    /// 内联那列在这 11 枚上是死码，传错也不显示 ⇒ 这一条同时锁住「宿主带内联字面串也不会译反」。
+    /// 13 枚「字典生效值 ≠ 内联 `en`」的键：断言**字典生效值赢**（= 主干英文界面实际显示的那串）。
+    /// 内联那列在这 13 枚上是死码，传错也不显示 ⇒ 这一条同时锁住「宿主带内联字面串也不会译反」。
+    /// 末两枚（任务面板长句对）原是「撤表债」跟踪名单（0.9.0.2 之前主干没登记、分叉误入表）；
+    /// 主干 a3e31f51 自己把它们收编进 `ShellEnglish`（登记值 ≠ 内联值），债已清、随批并入本锁。
     #[test]
     fn bt_renders_the_dictionary_value_where_the_inline_english_disagrees() {
         // (中文键, 主干调用点的内联 en, 主干生效值)
@@ -2461,8 +2646,14 @@ mod tests {
             ("复制参数 JSON", "Copy JSON", "Copy parameters JSON"),
             ("已取消", "Cancelled", "cancelled"),
             ("继续", "continue", "Continue"),
+            (
+                "任务清单来自会话 todos 投影（模型经 todo_write 更新）。此面板只读，不创建、编辑或删除任务。",
+                "The to-do list comes from the session todos projection (the model updates it via todo_write). This panel is read-only.",
+                "The task list comes from the session todos projection (updated by the model via todo_write). This panel is read-only and never creates, edits, or deletes tasks.",
+            ),
+            ("当前会话没有任务清单。", "No to-do list in this session.", "This session has no task list."),
         ];
-        assert_eq!(DIFF.len(), 11);
+        assert_eq!(DIFF.len(), 13);
         // 三档都不带 assets（`load(locale, None)`）⇒ 本语种 json 恒空，断的是主干「该语种 json
         // 缺这枚键」那一列；`zh-TW` 上主干同样只有 `ShellEnglish` 那一档可落 ⇒ 出英文。
         for locale in ["en", "de", "zh-TW"] {
@@ -2481,138 +2672,53 @@ mod tests {
     /// 反向锁（纯函数行为锁，零 IO、不碰任何源码文本）：这族刻意留在**调用点那一行**的串，
     /// 主干明文「勿写入 ShellEnglish」⇒ 分叉 EN 表（它的镜像）也不许收。判据用
     /// `l(zh) == zh` 证明「字典里没有」；哪天有人补键，这条立刻红。
-    /// 最后破窗的三枚（`第 {0} 轮` + 两枚任务面板长句）现已**全部撤表**并移进下面这份名单：
-    /// 两枚长句随 #148 刀 B 撤（同刀把 `main.rs` 调用点换成内联道），`第 {0} 轮` 随刀 C 撤
-    /// （它走的是通道 A 的 `LF`，撤表不需要动 `main.rs`）。判据见
-    /// `en_table_entries_that_leaked_from_the_bilingual_family`。
+    /// 0.9.0.2（a3e31f51）把内联族的 24 枚（轨迹/事件账本/参数 JSON/任务面板长句/DetText
+    /// 第五族 10 枚…）自己收编进了 `ShellEnglish`（「补键即全语言生效」）⇒ 那批键随总闸
+    /// 进表、退出本名单；名单只剩主干**至今没收**的 6 枚。原「在册债」跟踪
+    /// （`en_table_entries_that_leaked_from_the_bilingual_family`）随收编撤销，两枚任务面板
+    /// 长句的「字典生效值 ≠ 内联」改由
+    /// `bt_renders_the_dictionary_value_where_the_inline_english_disagrees` 的 DIFF 名单接管。
     #[test]
     fn bilingual_family_keys_that_mainline_left_out_of_shellenglish_stay_out_of_en() {
         const INLINE_ONLY: &[&str] = &[
-            "轨迹面板",
-            "计时总览",
-            "事件账本",
-            "类型筛选",
-            "暂无轮次计时。",
-            "当前筛选没有事件。",
             "内核未连接。",
             "Cordis 插件面板",
             "还没有定义任何插件",
             "待审批",
             "Client 待激活",
-            "跳到第 {0} 轮消息",
-            "参数 JSON",
-            "结果 JSON",
-            "工具耗时",
-            "未捕获参数",
-            "未捕获结果",
             "Token",
-            "当前会话没有任务清单。",
-            "任务清单来自会话 todos 投影（模型经 todo_write 更新）。此面板只读，不创建、编辑或删除任务。",
-            // 刀1（DetText 第五族 · #148）追加 10 枚：主干 `MainWindow.MessageDetails.cs`
-            // 那批 `DetText(zh, en)` / `DetFormat(zh, en, …)` 的内联档串（`:257` / `:290-292` /
-            // `:440-442` / `:446` / `:466` / `:473`）——主干没登记进 `ShellEnglish`，英文权威
-            // 在调用点那一行 ⇒ 分叉 EN 表（它的镜像）也不许收。模板位写 `{0}`/`{1}` 原样。
-            "跨会话中继",
-            "保留 {0} 条 · 省略 {1} 条",
-            "已截断",
-            "跨会话召回 · {0}",
-            "已载入",
-            "已移除",
-            "已新增",
-            "已更新",
-            "…还有 {0} 条",
-            "取代先前的快照",
         ];
         let en = Catalog::load("en", None);
         for key in INLINE_ONLY {
             assert_eq!(en.l(key), *key, "{key} 的英文权威在调用点那一行，不该进 EN 表");
             assert_eq!(en.bt(key, "inline-only sentinel"), "inline-only sentinel");
         }
-        // 刀1（#148 · DetText 第五族）追加 10 枚后，名单必须**真的带着这 10 枚**：上面那圈只验
-        // 「不在 EN 表里」，不验「在册」⇒ 删掉一枚照样绿（DT2 给这张硬编码名单挂的 [否] 旗）。
-        // 这里补**内容闸 + 枚数等号**，一枚 `>=` 下界都没有。
-        const DET_FAMILY: &[&str] = &[
-            "跨会话中继",
-            "保留 {0} 条 · 省略 {1} 条",
-            "已截断",
-            "跨会话召回 · {0}",
-            "已载入",
-            "已移除",
-            "已新增",
-            "已更新",
-            "…还有 {0} 条",
-            "取代先前的快照",
-        ];
-        assert_eq!(
-            DET_FAMILY.len(),
-            10,
-            "DetText 第五族刀1 定案 13 枚 = 去重后 10 枚（#11/#12 同串；#1/#2 走字典档、严禁入表）"
-        );
-        for key in DET_FAMILY {
-            assert!(
-                INLINE_ONLY.contains(key),
-                "刀1 那 10 枚里少了这一枚：{key}"
-            );
-        }
         assert_eq!(
             INLINE_ONLY.len(),
-            30,
-            "名单现册 = 20（刀1 之前）+ 10（刀1）；枚数变了必须同时改这条等号，不许静默漂移"
+            6,
+            "名单现册 = 30（刀1 后）- 24（主干 0.9.0.2 收编进 ShellEnglish，随总闸进表）；\
+             枚数变了必须同时改这条等号，不许静默漂移"
         );
     }
 
-    /// 曾误入 EN 表的内联双语对：**在册三枚已全部撤完**（两枚任务面板长句随 #148 刀 B 撤表并把
-    /// `main.rs` 的调用点换成内联道；`第 {0} 轮` 随刀 C 撤 —— 主干 `MainWindow.TurnRail.cs` 走
-    /// `LF("第 {0} 轮", mark.Turn)`（通道 A），压根没有内联英文可抄，分叉生产端 `lf` 保留不动）。
-    /// 名单自此只留**主干确有内联英文档**的那两枚（撤表后它们改由 `bt` 那一档出英文，本锁把
-    /// 「表里 / 表外两条路径给同一串」钉成行为等值，防哪天有人重新登记进 EN 表却改了译名）。
-    /// `第 {0} 轮` 已不属这一族（它没有内联档可钉），故随刀 C 一并从名单摘除；它的口径是
-    /// 「英文档必须与中文档同串」，由真值端与等价穷尽锁守，不在这张表里挂账。
-    /// 判据是**行为等值**而非存在性：撤掉之后内联档仍给同一串 ⇒ 撤表那天这条自然转绿、
-    /// 不会留下假红；哪天两侧给的串分叉了才红。
-    #[test]
-    fn en_table_entries_that_leaked_from_the_bilingual_family_stay_render_compatible() {
-        // (中文键, 主干调用点的内联 en, 主干落点符号)
-        const DEBT: &[(&str, &str, &str)] = &[
-            (
-                "任务清单来自会话 todos 投影（模型经 todo_write 更新）。此面板只读，不创建、编辑或删除任务。",
-                "The to-do list comes from the session todos projection (the model updates it via todo_write). This panel is read-only.",
-                "CapabilityText",
-            ),
-            (
-                "当前会话没有任务清单。",
-                "No to-do list in this session.",
-                "CapabilityText",
-            ),
-        ];
-        for (key, inline, site) in DEBT {
-            let en = Catalog::load("en", None);
-            // 撤表前后都必须给主干那一串。
-            assert_eq!(en.bt(key, inline), *inline, "{key} @ {site}");
-            if en.l(key) != *key {
-                // 还在表里 ⇒ 表值必须与主干内联一致，否则撤表会顺带改动 `l` 路径的显示。
-                assert_eq!(en.l(key), *inline, "{key} @ {site} 的表值与主干内联不一致");
-                eprintln!("在册债：{key} 仍在 EN 表里（主干 {site} 的内联对），本该撤");
-            }
-        }
-    }
-
-    /// 刀 C 撤表后的**面值锁**（英文档必须露中文，这才是主干 `LF` 的行为）：主干
-    /// `MainWindow.TurnRail.cs` 写的是 `LF("第 {0} 轮", mark.Turn)` —— `LF` 只查 `ShellEnglish`，
-    /// 而那本字典里**没有**裸 `第 {0} 轮`（只有 `将把本轮（第 {0} 轮）改过的文件…` 那枚长键），
-    /// 所以主干英文界面此处本就吐 `第 5 轮`。分叉 `lf` 走同一把查法 ⇒ 撤表后同串。
-    /// 哪天有人把 `"Turn {0}"` 再塞回 EN 表（= 凭空造一枚主干没有的回落档），这条立刻红。
+    /// 刀 C 撤表后的**面值锁**（0.9.0.2 前的旧现实：英文档露中文，这才是主干 `LF` 的行为）。
+    /// 主干 0.9.0.2（a3e31f51）的 ShellEnglish 补齐把裸键 `第 {0} 轮` 收编为
+    /// `["第 {0} 轮"] = "Turn {0}"` ⇒ 主干 `LF` 现在也出 `Turn 5`，英文档不再露中文。
+    /// 本锁随之**反转**：分叉 `lf` 与主干同档（表值生效），谁再撤这枚键谁就把英文档
+    /// 退回到主干已经没有的「露中文」行为。
     #[test]
     fn the_turn_rail_fallback_leaks_chinese_in_english_exactly_like_mainline_lf() {
         let five = || vec!["5".to_string()];
         assert_eq!(Catalog::load("zh", None).lf("第 {0} 轮", &five()), "第 5 轮");
+        // 0.9.0.2 起主干登记了裸键 `第 {0} 轮 = Turn {0}` ⇒ 主干 `LF` 英文档出 `Turn 5`，
+        // 分叉 `lf` 走同一把查法、同落表值（旧断言「英文档露中文」已随主干收编而失效）。
         assert_eq!(
             Catalog::load("en", None).lf("第 {0} 轮", &five()),
-            "第 5 轮",
-            "撤表后英文档必须与中文档同串：主干 ShellEnglish 无裸「第 {{0}} 轮」键 ⇒ \
-             分叉不许靠 EN 表补一枚主干没有的英文名"
+            "Turn 5",
+            "主干 ShellEnglish 已收编裸「第 {{0}} 轮」键（a3e31f51）⇒ 撤这枚表值会把英文档\
+             退回主干已经没有的露中文行为"
         );
-        // 表里剩下的那枚**长键**才是主干真登记过的，方向别搞反。
+        // 表里那枚**长键**一直是主干真登记过的，方向别搞反。
         assert_eq!(
             Catalog::load("en", None).l("将把本轮（第 {0} 轮）改过的文件恢复到修改前的状态："),
             "Restore the files changed in turn {0} to their state before the change:"

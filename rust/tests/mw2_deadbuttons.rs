@@ -85,13 +85,33 @@ fn the_clear_reducer_arm_clears_memory_and_disk_in_one_move() {
 #[test]
 fn the_skin_backdrop_is_a_real_layer_under_both_pages() {
     let body = window(SRC, "fn body(", "fn column_splitter(");
+    // 0.9.0.4 起 body 先取一次皮肤层再喂两处（叠放格 + content 格的底色判据），
+    // 同一格状态不出第二份真相 ⇒ 针随产品码同刀换形（旧针 `match self.mw2_skin_backdrop() {`
+    // 锁的是单次内联调用的旧写法）。
     assert!(
-        body.contains("match self.mw2_skin_backdrop() {"),
+        body.contains("let backdrop = self.mw2_skin_backdrop();"),
         "内容区底下的皮肤层不入了 ⇒ 清除钮永远看不见效果"
     );
     assert!(
         body.contains("Grid::new().children((backdrop, pages))"),
         "皮肤层必须压在两页**底下**（主干 ContentSurface.Background 的等值宿主）"
+    );
+    // 终验清单第 4 项（0.9.0.4 门控）+ 收敛轮两态化：主干皮肤底衬**按皮肤类型分流**——
+    // 图片皮肤「换底」（ApplySkinFromPath 把 ImageBrush 刷上 ContentSurface.Background，
+    // xaml.cs:9306，SurfaceAlt 只在无皮肤/ClearSkin 回场 :9267）；视频皮肤**保留**衬底
+    // （:9325 视频路径不换底，SurfaceAlt 一直在）——视频帧之间有换帧空窗，衬底兜住素底。
+    // 分叉的等值物 = content 格按 (skin_laid, skin_video.is_some()) 双键分流底色。
+    assert!(
+        body.contains(".background(match (skin_laid, self.skin_video.is_some()) {"),
+        "content 格底色没按 皮肤在场×视频皮肤 两态分流 ⇒ 与主干「图片换底/视频保衬底」不同形"
+    );
+    assert!(
+        body.contains("(true, false) => p.transparent,"),
+        "图片皮肤态必须让位透明（主干图片路径 :9306 换底语义）"
+    );
+    assert!(
+        body.contains("_ => p.surface_alt,"),
+        "其余态（无皮肤 / 视频皮肤）必须回铺 surface_alt 衬底——主干视频路径 :9325 保留衬底、ClearSkin 复位 :9267 同款"
     );
     let helper = window(SRC, "fn mw2_skin_backdrop(", "fn mw2_pet_status_text(");
     for needle in [

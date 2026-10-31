@@ -441,18 +441,21 @@ fn the_skin_opacity_key_stays_a_bare_string_at_exactly_one_site() {
     );
 }
 
-/// 未移植的两类保持零调用点（这是**设计结论**，不是遗漏）：`pet-window.json` 与
-/// `shell-skin.videopause`。
+/// 未移植的那一类保持零调用点（这是**设计结论**，不是遗漏）：`pet-window.json`。
 ///
-/// ⚠ 诚实备案：这颗锁在接线前后**都是绿**（它锁的是「不做」），不属于 §3 的两态表。
+/// ⚠ 备案更新：`shell-skin.videopause` 已随 videopause 接线批正式接上（主干
+/// `LoadSkinVideoPauseOnBlur` 启动读盘进内存 + `OnSkinVideoPauseToggled` 立即落盘、写失败吞掉，
+/// `xaml.cs:9067-9081` / `:9120-9127`）⇒ 两枚口从本锁的禁单挪到下面的正向钉（各恰好一枚、
+/// 落盘口住在 `Msg::Toggle` 的 `SKIN_VIDEO_PAUSE_KEY` 臂里）；`pet-window.json` 仍是
+/// 「分叉没有宠物宿主」的设计结论（见 main.rs `pet_window_path` 的 ⚠）。
+///
+/// ⚠ 诚实备案：pet 半边在接线前后**都是绿**（它锁的是「不做」），不属于 §3 的两态表。
 #[test]
 fn the_two_unported_kinds_stay_uncalled() {
     for forbidden in [
         "shellfiles::save_pet_window(",
         "shellfiles::render_pet_window_json(",
         "shellfiles::pet_move_to_default(",
-        "shellfiles::save_skin_video_pause(",
-        "shellfiles::load_skin_video_pause(",
         "shellfiles::parse_pet_window(",
     ] {
         assert_eq!(count(forbidden), 0, "{forbidden} 本片不该调用");
@@ -460,6 +463,32 @@ fn the_two_unported_kinds_stay_uncalled() {
     // 第五类 `layout-columns.json` 走的是 #90 那条 `layout::save_prefs`，本刀不碰。
     assert_eq!(count("shellfiles::save_layout_columns("), 0);
     assert!(SRC.contains("layout::save_prefs"));
+    // videopause 已接的两枚口各恰好一枚：读口进启动 switches 表、写口在 Toggle 臂。
+    assert_eq!(
+        count("shellfiles::load_skin_video_pause("),
+        1,
+        "读盘口不是恰好一枚：要么启动没读进内存，要么哪处渲染路径偷偷碰了盘"
+    );
+    assert_eq!(
+        count("shellfiles::save_skin_video_pause("),
+        1,
+        "落盘口不是恰好一枚：主干 `OnSkinVideoPauseToggled` 就那一发"
+    );
+    let save_at = at(SRC, "shellfiles::save_skin_video_pause(");
+    let arm_at = SRC[..save_at]
+        .rfind("SKIN_VIDEO_PAUSE_KEY => {")
+        .expect("落盘口不住在 `Msg::Toggle` 的 SKIN_VIDEO_PAUSE_KEY 臂里");
+    // 臂开行与落盘口之间不许夹别的代码（注释与空白不限）：
+    // 段内非注释行只许是 `SKIN_VIDEO_PAUSE_KEY => {` 这一行本身。
+    let between = &SRC[arm_at..save_at];
+    assert!(
+        between
+            .lines()
+            .map(|line| line.trim())
+            .filter(|line| !line.is_empty() && !line.starts_with("//"))
+            .all(|line| line == "SKIN_VIDEO_PAUSE_KEY => {"),
+        "落盘口与它的臂之间混进了别的语句/臂 ⇒ 臂锚漂了，锁在骗人：{between}"
+    );
 }
 
 /// `shell-skin.we` 的**写/读两钩在 main.rs 侧确实没有宿主**（MR2 §B 的结论，非遗漏）。
@@ -469,7 +498,8 @@ fn the_two_unported_kinds_stay_uncalled() {
 /// 比不接坏：只写 stamp 不 Register，会**伪造**主干 `:394` 的新鲜判定，让启动少清一次槽。
 ///
 /// ⚠ 诚实备案：这颗锁接线前后**都是绿**（它锁的是「不做」），口径同
-/// [`the_two_unported_kinds_stay_uncalled`]。它防的是「将来有人顺手补一半」。
+/// [`the_two_unported_kinds_stay_uncalled`]（pet 半边）口径同此；videopause 已随接线批
+/// 从那把锁的禁单挪进正向钉（见那颗的备案更新）。它防的是「将来有人顺手补一半」。
 /// 另记一笔**已随 #240 收口的账**：主干 `ClearSkinWeId()` 有 **3 个调用点**（`MainWindow.xaml.cs:8742`、
 /// `:8782` 本地导入两径 + `:8804` 清除皮肤）；原备案写的「分叉只接了 `:8804` 那一档、另两径卡在
 /// `SkinImportButton` 无 `on_click`」已过时——#240 把两发导入接上了（图片/视频档各自的臂先清

@@ -114,8 +114,16 @@ pub mod size {
     pub const NAV_INDICATOR_RADIUS: f64 = 2.0;
     /// 子代理行的 `row.Margin.Left`。
     pub const SUBAGENT_INDENT: f64 = 14.0;
-    /// 展开的工作区节点下，子项再缩进一级（WinUI 的嵌套缩进数值待与主干截图核对）。
-    pub const NAV_GROUP_INDENT: f64 = 20.0;
+    /// 展开的组节点下，子项再缩进一级。R3 复验重校（同串对齐法，2x 截图÷2）：
+    /// 主干 R3\S0 里「未分组」组头**文字**墨迹 x≈54.5、组内会话行文字 x≈53.5 —— 同一起点
+    /// （1 之差 = 字形侧耳）；分叉旧值 41.3（mainline4 时代的 71.33−30 差值）把会话行送到
+    /// x=64，比组头文字还靠右 10.5，与主干「子行文字 = 组头文字」的结构不符。
+    /// 新值 30.8 = 旧值 − 10.5（同串「导出谱面生成skill…」两侧墨迹差 21px@2x）。
+    /// 与 `nav_item_menu` 的 icon→文字间距 10→16 配套：调完组头文字 54.5、会话行 53.5、
+    /// 「展开其余」行 ∨ 55.5 / 文字 86，全部与主干 R3 逐像素同位。
+    /// 旧值 20 更早是占位（2026-10-27 终验清单第 5 项：截断两侧都已挂 CharacterEllipsis，
+    /// 差的是可用宽度）⇒ 本值仍须 ≥ 主干截断发生的可用宽度档。
+    pub const NAV_GROUP_INDENT: f64 = 30.8;
     /// 会话行 `⋯` 钮：24×24、Padding 2、RadiusPill、Opacity 0。
     pub const ROW_MORE_BUTTON: f64 = 24.0;
     pub const BRAND_MARK: f64 = 24.0;
@@ -405,8 +413,8 @@ pub const SETTINGS_PLUGIN_CARDS: &[(&str, char, &str, &str)] = &[
     (
         "auto-approval",
         '\u{e73e}',
-        "自动审批",
-        "越界请求的自动批准预设与判定模型。",
+        "自动审查",
+        "越界工具调用的自动授权审查开关。",
     ),
     (
         "defaults",
@@ -427,7 +435,7 @@ pub const DESC_MODELS: &str = "填入各提供方的 API 密钥即可使用其�
 pub const DESC_SKILLS: &str = "Blade² 已安装的全部技能。技能是带说明的指令包：在输入框键入 /名称 即可调用，模型也可能在合适的时机自行调用。";
 pub const DESC_MEMORY: &str = "记忆通过内核 dsh-mcp-client 挂载 MCP 参考记忆服务器（@modelcontextprotocol/server-memory），模型可跨会话写入与召回信息。开关编辑内核 profile patch 的 disabled 标志，由内核热重载即时生效。";
 pub const DESC_AGENT_PRESETS: &str =
-    "预设即一个会话的 Agent 所运行的插件组装——它的工具、提示词与能力。";
+    "预设即一个会话的 Agent 所运行的插件组装——它的工具、提示词与能力。可用「创造模式」让 Agent 帮你创建，或直接在预设目录放置文件。";
 pub const DESC_COMPUTER_CONTROL: &str = "电脑控制由内核 dsh-computer-use 注册表与 Cua Driver provider（@deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp）提供：模型可截图并操作鼠标、键盘完成桌面任务。开关编辑内核 profile patch 的 disabled 标志，由内核热重载即时生效。";
 pub const DESC_BROWSER_CONTROL: &str = "浏览器控制由内核 dsh-browser-use 注册表与 Playwright provider（@deepseek-ai/dsh-experimental-browser-use-playwright-mcp）提供：模型可打开浏览器完成网页任务。开关编辑内核 profile patch 的 disabled 标志，由内核热重载即时生效。";
 pub const DESC_PET: &str = "桌面宠物由内核插件 @linxin666/dsh-pet 提供（Codex Pet 兼容）：聊天窗口里常驻一只宠物，模型干活时它跟着动，点它可以逗一逗。宠物素材装在 $DSH_HOME/pets，重启内核后收录。";

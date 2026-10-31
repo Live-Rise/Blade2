@@ -18,7 +18,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$ExpectedVersion = '0.8.3.9'
+$ExpectedVersion = '0.9.0.4'
 $Thumbprint      = 'E2B4870249B661186E86F816E2A403261E74F6A0'
 $PackageName     = 'Blade2Rs'
 $ConsoleProc     = 'blade2-rs.exe'
