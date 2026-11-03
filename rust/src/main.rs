@@ -266,16 +266,38 @@ enum Msg {
     /// 引导期不弹卡，与主干 `LoadSavedSkin` 的 catch 同档）。
     SkinPoster(Result<Option<PathBuf>, String>),
     /// 视频皮肤播放腿的取货回执（`skinplay` 帧泵 → 壳）。三档：
-    /// `Frame(bmp)` = 来了一帧，入 `skin_video_frame` 那一格，下一帧 `view` 就用它；
-    /// `Idle` = 等超时还没新帧（首帧装载 / 循环回绕接缝 / 某一帧解得慢），不是错误，
-    /// 重上发条即可；`Dead(原因)` = 泵死了，停泵 + 落 DIAG + 回落海报，**不再**重上发条。
+    /// `Frame(bmp)` = 来了一帧，入双缓冲的**隐藏格**（[`Shell::skin_video_ingest`]：
+    /// 忙则跳帧、闲则喂入，等原生解码完成的回执再翻面显示）；`Idle` = 等超时还没新帧
+    /// （首帧装载 / 循环回绕接缝 / 某一帧解得慢），不是错误，重上发条即可；
+    /// `Dead(原因)` = 泵死了，停泵 + 落 DIAG + 回落海报，**不再**重上发条。
     /// 三档之外还有一道**总闸**：泵已经不在了（停泵 / 换泵 / 清皮肤）⇒ 整条回执作废。
     /// 停泵是同步 join，但一枚在飞的取货任务可能刚被唤醒、手里攥着停泵前发布的最后一帧；
     /// 不收下它，「换成图片皮肤」之后那一帧就会后来居上把新图顶掉。
     ///
     /// 节拍形制逐字照 `status_pulse` / `instructions_armed` 那两族：`spawn_background`
     /// 睡到有帧可取，回一条 `Msg`，`update` 里再上发条 —— 一枚在飞，不叠。
+    ///
+    /// 为什么中间隔一道「解码完成」才上屏：reactor 的 `EncodedImage` 换源是
+    /// **「先 `ClearValue(Source)` 再异步 StoreAsync + SetSourceAsync」**（`native/winui/mod.rs`
+    /// 的 `SetProperty(ImageSource)` 臂 → `start_encoded_image`）—— 直接喂前格 = 逐帧清屏，
+    /// 异步解码没回来之前那一格整格透明，背景在「壁纸 ⇄ 素底」之间闪。双缓冲让清屏只
+    /// 发生在观众看不见的隐藏格上，前格的旧帧保持到新帧就绪（主干 `MediaPlayerElement`
+    /// 「视频层恒在、帧连续」的语义，`xaml.cs:9296-9313`）。
     SkinVideoFrame(FrameTake),
+    /// 双缓冲的「新帧就绪」回执：[`Msg::SkinVideoFrame`] 喂进隐藏格的那一帧已经原生
+    /// 解码完成并 `SetSource`，翻面过去不空窗。载荷 = 缓冲格序号（0/1）。
+    ///
+    /// 信号源是 `Image::on_opened`（reactor 的解码回执）。它对 `EncodedImage` 节点**可达**：
+    /// `encoded_image_nodes` 压的是 `enqueue()` 里 XAML `ImageOpened` 的反馈回声
+    /// （`native/winui/mod.rs:3186`），而解码完成的回执走 reactor 内部通道
+    /// `enqueue_image_decode_event`（`:3862`，只看 `(node, event)` 有没有订阅）直发，
+    /// 不过那道闸。收到即翻面（见 reducer 那一臂）；不翻面会怎样：下一帧永远喂不进
+    /// 「忙」着的隐藏格，画面冻在旧帧上。
+    SkinVideoReady(usize),
+    /// 同上的失败档（`Image::on_failed`）：只把隐藏格的「忙碌」旗抬起来，**不**翻面
+    /// —— 翻到一格没解出来的空格等于自己制造空窗。帧字节是自家 `skinvideo::bmp_bytes`
+    /// 拼的 BMP，失败基本不可达；这枚回执是防卡死的保险（失败后下一帧重试），静默。
+    SkinVideoFailed(usize),
     /// #140 刀2（MW2）：主干 `Pet.cs:602` → `InstallPetFromCommandAsync` 的**第 1 档**：
     /// 只解析命令形态 + 写状态行（`DshPetStore.cs:394-451` 的安全语义本来就是「只解析，不执行」）；
     /// 落盘档（目录拷贝 / zip 解压）未接，见报告 §5。主干这发不经内核。
@@ -360,6 +382,9 @@ enum Msg {
     OpenSub(String),
     /// 返回上一级（主干 `CloseSettingsSubPage`；主干还绑在 Esc 上，分叉没有键事件）。
     CloseSub,
+    /// 设置页钻取转场的逐帧推进（自 `spawn_background` 32ms 一发；见
+    /// [`Shell::settings_entrance`] 与 [`Shell::start_settings_entrance`]）。
+    SettingsEntranceTick,
     Field(String, String),
     Number(String, f64),
     FontStep(f64),
@@ -560,6 +585,12 @@ enum Msg {
     /// 点某颗触发器 = 开它那张展开层；**再点同一颗 = 收**（口径同 [`Msg::FileMenuToggle`]）。
     /// 从关到开那一发会顺带重拉菜单（主干 `AgentModeFlyout.Opening`，`MW:2627`）。
     SelectorToggle(SelectorKind),
+    /// 触发器胶囊面上那一发**按下**的窗口内坐标（DIP，`PointerEventInfo::window_x/y`）。
+    /// 主干那两张卡钉在触发器上沿（`Placement=Top`），分叉读不回元素矩形 ⇒ 锚 = 真实
+    /// 按下点：press（这发）先于 release（`Click` → [`Msg::SelectorToggle`]）落到表里，
+    /// 开臂取到的永远是被点那颗钮的最新坐标。层开着时指针事件全被遮罩吃掉
+    /// （遮罩盖着触发器）⇒ 这一发不会在开层期间窜进来。
+    SelectorAnchor(f64, f64),
     /// 收那张展开层：Esc（借道 `Msg::PaletteClose` 那一臂）、遮罩按下（主干 flyout 的
     /// light-dismiss）、切页、切会话四路共用（同 [`Msg::FileMenuClose`] 的四条出口）。
     SelectorClose,
@@ -6129,6 +6160,78 @@ const AGENT_MODE_DEFAULT_LABEL: &str = "标准模式";
 /// [`TODO_GLYPH_CHECK_GLYPH`] 同刻法在本文件写常量，并由离线测钉住码位。
 const AGENT_MODE_GLYPH: char = '\u{E9D9}';
 
+// ---- 选择器展开层的 MenuFlyout 形制常数（2026-11-01 弹层对齐刀）------------------------
+// 权威 = 主干实拍量测：`tmp-cap/flyout-main-agentmode.png` / `flyout-main-model.png`
+// （DPI 200%，px ÷ 2 = DIP）+ AppSDK 1.6 `generic.xaml` 23898-23900 的生效档。
+// 行距 64px=32 DIP、单项高 28 DIP、勾点 10px=5 DIP、文字左缘 91px=45.5 DIP，全部吻合
+// `MenuFlyoutItemMargin=4,2,4,2` + `MenuFlyoutItemThemePadding=11,4,11,5`（NarrowPadding 档，
+/// 桌面非触态生效）+ CheckGlyph FontIcon @12（步进 14.5）+ 右距 16 的模板算术。
+/// 单项外距（主干 `MenuFlyoutItemMargin` 生效档 `4,2,4,2`，generic.xaml:23898）。
+/// ⚠ 分叉行**只取横向 4**：`Button` 的 padding 槽不可用（覆 `ButtonPadding` 实测不生效，
+/// 见 [`menu_row_faces`] 的注），模板默认 padding（11,5,11,6）竖向已含 11 DIP ——
+/// 再叠主干的 2+2 行距就到 35.65，故竖向归 0、行高用 [`MENU_ROW_MIN_HEIGHT`] 钉 32。
+const MENU_ITEM_MARGIN: [f64; 4] = [4.0, 0.0, 4.0, 0.0];
+/// 单项内边距（主干 `MenuFlyoutItemThemePadding` 的 NarrowPadding 档 `11,4,11,5`，
+/// generic.xaml:23900；默认档 `11,8,11,9` 是触态值，实拍行距钉的是这一档）。
+/// 只喂 `Border`（区头）——`Button` 的 padding 槽不可用，见 [`menu_row_faces`]。
+const MENU_ITEM_PADDING: [f64; 4] = [11.0, 4.0, 11.0, 5.0];
+/// 单行行高（主干实拍 64px@200% = 32 DIP；分叉行 = 模板 padding 11 + 行盒 18.65 + 边 2
+/// = 31.65，用 min_height 补齐到 32；两行说明行自然 50.3 > 32，不受影响）。
+const MENU_ROW_MIN_HEIGHT: f64 = 32.0;
+/// `RadioMenuFlyoutItem` 的勾点直径（实拍 10px@200% 的实心圆，色 ≈ TextFillColorSecondary）。
+const MENU_RADIO_DOT: f64 = 5.0;
+/// 勾点列宽 = 主干模板 `CheckGlyph`（FontIcon，FontSize 12）的字形步进；unchecked 档
+/// Opacity=0 但**占位仍在**（实拍：四行文字左缘一条线）⇒ 分叉用定宽格承载同一几何。
+const MENU_RADIO_COLUMN: f64 = 14.5;
+/// 勾点列与文字的间距（主干模板 `CheckGlyph.Margin="0,0,16,0"`）。
+const MENU_RADIO_GAP: f64 = 16.0;
+/// 两张卡的自宽：主干 `MenuFlyout` 宽 = 最宽行内容，实拍两张分别 231px / 1151px（@200%）。
+/// 分叉读不回卡片自宽（布局不可测）⇒ 宽度定死为这份量测值；表数据变了会漂（备案：
+/// 内置四档与当前内核 catalog 的行集就是这两张表的现状）。
+const AGENT_MODE_FLYOUT_WIDTH: f64 = 115.5;
+const MODEL_FLYOUT_WIDTH: f64 = 575.5;
+/// 卡下缘与触发器上沿的间距：实拍 11px ≈ 5.5 DIP（`Placement=Top` 的系统间隙 + 阴影带）。
+const FLYOUT_GAP_ABOVE_TRIGGER: f64 = 5.5;
+/// 触发器胶囊半高（DefaultButtonStyle MinHeight 32 的一半）：点击锚在胶囊面内，
+/// 竖向锚 = 点击 y − 半高 = 上沿。
+const FLYOUT_TRIGGER_HALF_HEIGHT: f64 = 16.0;
+
+// ---- 设置页钻取转场常数（0.9.0.4 转场刀）--------------------------------------------
+/// 步数：8 × 32ms ≈ 主干 `DurationPageTransition`(250, `MW:9756`)。
+const SETTINGS_ENTRANCE_STEPS: u8 = 8;
+/// 每步间隔（毫秒）。
+const SETTINGS_ENTRANCE_TICK_MS: u64 = 32;
+/// 位移峰值（主干 `SettingsDrillSlideOffset` 令牌默认 120，`MW:9757`）。
+const SETTINGS_DRILL_OFFSET: f64 = 120.0;
+
+/// 转场帧的 opacity：p = 已走进度，线性淡入（主干 AddEntrance 淡入+位移并播）。
+fn settings_entrance_opacity(state: Option<(u8, bool)>) -> f64 {
+    match state {
+        Some((steps, _)) => {
+            let p = 1.0 - steps as f64 / SETTINGS_ENTRANCE_STEPS as f64;
+            p.clamp(0.0, 1.0)
+        }
+        None => 1.0,
+    }
+}
+
+/// 转场帧的 margin：进入 = 自下方上浮（top 峰值 120 二次 ease-out），返回 = 自左侧滑回。
+fn settings_entrance_margin(state: Option<(u8, bool)>) -> [f64; 4] {
+    match state {
+        Some((steps, back)) => {
+            let p = 1.0 - steps as f64 / SETTINGS_ENTRANCE_STEPS as f64;
+            let rest = (1.0 - p).max(0.0);
+            let off = SETTINGS_DRILL_OFFSET * rest * rest;
+            if back {
+                [-off, 0.0, 0.0, 0.0]
+            } else {
+                [0.0, off, 0.0, 0.0]
+            }
+        }
+        None => [0.0, 0.0, 0.0, 0.0],
+    }
+}
+
 /// `AgentModeFlyout` 的一行。`checked` = 主干 `RadioMenuFlyoutItem.IsChecked`
 /// （`MW:4838/4866` 那两行同一条判据 `_pendingPreset?.Id == id`）。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -10963,6 +11066,12 @@ struct Shell {
     section: String,
     /// 设置页当前钻取的二级页 id；`None` 即停在分区一级页（主干 `_settingsSubPages` 栈）。
     sub: Option<String>,
+    /// 设置页钻取转场：`Some((剩余步数, 是否返回))` —— 主干 `PlaySettingsDrillIn/DrillOut`
+    /// 的分叉等价。reactor 0.100 无 TranslateY/Storyboard 通路（ExitTransition 只有 fade），
+    /// 用 margin+opacity 逐帧近似：8 步 ×32ms ≈ 主干 `DurationPageTransition` 250ms，
+    /// 位移 = 主干 `SettingsDrillSlideOffset`(120, `MW:9757`) 的二次 ease-out。
+    /// 进入 = 自下方上浮；返回 = 自左侧滑回（主干 DrOut 方向）。`None` = 静止。
+    settings_entrance: Option<(u8, bool)>,
     /// 主干 `MakeTextBox` / `MakePasswordBox` 的当前值（内核快照回落，分叉只存内存）。
     fields: Vec<(String, String)>,
     /// 主干 `MakeNumberBox` 的当前值。
@@ -11052,16 +11161,25 @@ struct Shell {
     /// `DataHome/shell-skin.img`）。`None` = 内容区走 `p.surface_alt`（主干复位档）；
     /// 它是「画不画那一层 Image」的**唯一**判据，不留第二份真相。
     skin_path: Option<PathBuf>,
-    /// #240 播放腿的三格（`skinplay` 帧泵）：
-    /// * `skin_video` = 活泵把手，`Some` = 专线解码线程在跑。它管的是「这一层 Image 走
-    ///   **帧源**（`source_data`）还是**静图**（`source_file`）」，与 `skin_path` 各管一半：
+    /// #240 播放腿的四格（`skinplay` 帧泵）：
+    /// * `skin_video` = 活泵把手，`Some` = 专线解码线程在跑。它管的是「这一层走**帧源**
+    ///   （`source_data`）还是**静图**（`source_file`）」，与 `skin_path` 各管一半：
     ///   `skin_path` 管画不画，`skin_video` 管画什么。两份判据不合并 —— 合并了就分不出
     ///   「视频在播但首帧还没到」（那阵子要回落海报）和「本来就只有海报」。
-    /// * `skin_video_frame` = 最新一帧的 BMP 字节。首帧未到时 `None` ⇒ 回落海报。
+    /// * `skin_video_buffers` / `skin_video_ready` / `skin_video_front` = **双缓冲**三格。
+    ///   前格（`front`）显示已解码的帧，隐藏格接收新帧；reactor 的 `EncodedImage` 换源
+    ///   必先 `ClearValue(Source)` 再异步解码（`native/winui/mod.rs` 的
+    ///   `SetProperty(ImageSource)` 臂），直接喂前格 = 逐帧清屏闪。清屏只许发生在
+    ///   隐藏格上；隐藏格解码完成（[`Msg::SkinVideoReady`]）才翻面 —— **旧帧保持到
+    ///   新帧就绪**，与主干 `MediaPlayerElement` 的「视频层恒在、帧连续」同一语义
+    ///   （`xaml.cs:9296-9313`）。`ready` = 「这格没有解码在飞」（空格也算不忙，
+    ///   否则首帧永远喂不进去）。
     /// * `skin_video_armed` = 「同一时刻至多一枚取货任务在飞」（形制逐字照
     ///   `instructions_armed` / `skin_opacity_armed` 那两族防抖位）。
     skin_video: Option<skinplay::PumpHandle>,
-    skin_video_frame: Option<std::sync::Arc<[u8]>>,
+    skin_video_buffers: [Option<std::sync::Arc<[u8]>>; 2],
+    skin_video_ready: [bool; 2],
+    skin_video_front: usize,
     skin_video_armed: bool,
     /// #140 刀2（MW2）：主干 `Pet.cs:726-731 PetInstallSay` 的那一行常驻状态
     /// （`(已解析文本, warn)`；`None` = 还没点过安装那颗 ⇒ 不入树）。
@@ -11402,6 +11520,10 @@ struct Shell {
     /// `Visibility`，口径同上面四格）。这一格同时就是「同刻至多一张」那条主干事实的载体
     /// （三张 `MenuFlyout` 都是系统级、彼此 light-dismiss），装不下第二张。
     selectors: Option<SelectorKind>,
+    /// 最近一次触发器按下的窗口内坐标（DIP）——[`Msg::SelectorAnchor`] 的落点，两张卡
+    /// （Agent 模式 / 模型）的定位锚。层收起那一发（[`Msg::SelectorClose`]）一并清掉，
+    /// 同 [`scroll::forget_anchor`] 的卫生口径；开臂必先有 press ⇒ 取值时恒有新鲜锚。
+    selector_anchor: Option<(f64, f64)>,
     /// 主干 `_pendingPreset`：待用的 Agent 预设 `(id, name)`。
     /// **初值就是 `("standard", "标准模式")`**（`MW:2297` 的字段声明带了初值，不是 `null`），
     /// 且主干**从不清它**（全仓只有 `:4789` 一处赋值）⇒ 换会话、切页都不复位，这格照旧。
@@ -17349,6 +17471,34 @@ fn effort_tier_blurb(catalog: &Catalog, id: &str) -> String {
     }
 }
 
+/// 模型行说明的合成（主干 `ModelOptionDescription`，`MC:24-52`）：id 以 `-flash` / `-pro`
+/// 结尾的模型**无论 catalog 给没给 description** 都写两档产品文案（过表）；其余读 catalog
+/// 的 `description`，两段英文原文逐字命中也过表，再不然原文直出。主干实拍
+/// （`tmp-cap/flyout-main-model.png`）里所有两行行都出自这条规则（内核 catalog 不带
+/// description 字段）⇒ 不合成这条，两行行就整行缺席。
+fn model_option_description(catalog: &Catalog, provider: &str, id: &str, raw: &str) -> String {
+    let _ = provider; // 主干 row 串只参与两发全等比对，被后缀规则覆盖 ⇒ 留参对齐签名
+    let lower = id.to_ascii_lowercase();
+    if lower.ends_with("-flash") {
+        return catalog.l("快速、高效且经济；适合目标明确、常规或并行任务。");
+    }
+    if lower.ends_with("-pro") {
+        return catalog.l("更强的自主编码、知识与复杂推理能力；适合复杂或质量优先的任务，但成本更高。");
+    }
+    if raw.is_empty() {
+        return String::new();
+    }
+    match raw {
+        "Fast, efficient, and economical; suited to focused, routine, or parallel tasks." => {
+            catalog.l("快速、高效且经济；适合目标明确、常规或并行任务。")
+        }
+        "Stronger agentic coding, knowledge, and difficult reasoning; suited to complex or quality-critical tasks at higher cost." => {
+            catalog.l("更强的自主编码、知识与复杂推理能力；适合复杂或质量优先的任务，但成本更高。")
+        }
+        _ => raw.to_string(),
+    }
+}
+
 /// 模型行的可见文案（主干 `MW:13536` + `AttachModelOptionDescription` `MC:55-65`）：
 /// 有 `description` 就 `"{name}\n{desc}"` 两行，没有就单行名字。
 fn model_row_text(name: &str, description: &str) -> String {
@@ -18325,21 +18475,36 @@ impl Shell {
             .automation_id("ModelButton")
             .automation_name(name)
             .on_click(context.message(Msg::SelectorToggle(SelectorKind::Model)))
+            // 弹层定位锚（2026-11-01 弹层对齐刀）：指针事件只挂 `Border`（generated.rs 唯一
+            // 宿主）⇒ 内容包一层**透明 `Border`**，记下按下点的窗口 DIP
+            // （[`Msg::SelectorAnchor`]）。press（这发）先于 release（`Click` → toggle）落表
+            // ⇒ 开臂取到的锚恒属于被点这颗。⚠ 锚面只盖**内容盒**（不含模板 padding 面）：
+            // 盖满面那两条路都试过且废——负边距把按钮 DesiredSize 收小；`ButtonPadding`
+            // 资源覆写实测不生效（模板 Setter 的 ThemeResource 在挂资源前已解析，
+            // 实测胶囊被垫高 11 DIP）⇒ 贴内容盒是零几何风险的落点；点在 padding 面上
+            // 仍有 [`Msg::SelectorToggle`]（锚用上一发的旧值/回落位），行为不缺只偏。
             .content(
-                StackPanel::new()
-                    .orientation(Orientation::Horizontal)
-                    .spacing(space::S6)
-                    .vertical_alignment(VerticalAlignment::Center)
-                    .children((
-                        TextBlock::new()
-                            .text(face.label)
-                            .font_size(type_ramp::BODY.size)
-                            .text_wrapping(TextWrapping::NoWrap)
-                            .text_trimming(TextTrimming::CharacterEllipsis)
+                Border::new()
+                    .background(Color::transparent())
+                    .on_pointer_pressed(context.callback(|info: PointerEventInfo| {
+                        Msg::SelectorAnchor(info.window_x, info.window_y)
+                    }))
+                    .content(
+                        StackPanel::new()
+                            .orientation(Orientation::Horizontal)
+                            .spacing(space::S6)
                             .vertical_alignment(VerticalAlignment::Center)
-                            .automation_id("ModelEffortLabel"),
-                        mark_size(glyph::DROPDOWN_CHEVRON, size::GLYPH_CAPTION),
-                    )),
+                            .children((
+                                TextBlock::new()
+                                    .text(face.label)
+                                    .font_size(type_ramp::BODY.size)
+                                    .text_wrapping(TextWrapping::NoWrap)
+                                    .text_trimming(TextTrimming::CharacterEllipsis)
+                                    .vertical_alignment(VerticalAlignment::Center)
+                                    .automation_id("ModelEffortLabel"),
+                                mark_size(glyph::DROPDOWN_CHEVRON, size::GLYPH_CAPTION),
+                            )),
+                    ),
             )
             .tooltip(tip)
     }
@@ -18347,11 +18512,16 @@ impl Shell {
     /// `ModelFlyout` 的表体（主干 `RebuildModelFlyout`，`MW:13524-13575`）：**一个触发器两个区**。
     /// 行的形状、区头、分隔线、档位说明四件逐格照主干；两件抄不动的记在下面。
     ///
-    /// · `RadioMenuFlyoutItem` 的 `GroupName` 自动互斥 + `IsChecked` 在本依赖里没有对应物
-    ///   ⇒ 当前档走 `ButtonStyle::Accent`（与 [`Shell::agent_mode_menu`] / [`Shell::permission_menu`]
-    ///   同一刻法），行内文案与 UIA 名**不加**「（当前）」那类推论；
+    /// · 档位行 = `RadioMenuFlyoutItem` 的分叉等价：**勾点列 + 文字**（[`menu_radio_row_content`]，
+    ///   勾选位 = 5×5 圆点，几何见那颗的注），不再是 `ButtonStyle::Accent` 强调底——主干实拍
+    ///   （`tmp-cap/flyout-main-model.png`）里当前档就是「点心 + 常色字」。行内文案与 UIA 名
+    ///   **不加**「（当前）」那类推论；
+    /// · 模型行 = 主干是**普通** `MenuFlyoutItem`（`:13536`，无勾选位、无图标）⇒ 分叉同形：
+    ///   行面不带任何「当前模型」标记（此前那枚 Accent 底是分叉自造，摘）；
     /// · 主干那两张「区头」是 `MenuFlyoutItem { IsEnabled = false }`，而分叉的仓规是
     ///   **画出来的死控件一律不许新增** ⇒ 区头落成真 `TextBlock`（不是按住的那颗钮）。
+    /// · 卡落点/卡宽与 [`Shell::agent_mode_menu`] 同一刻法（锚 = [`Msg::SelectorAnchor`]，
+    ///   宽 = [`MODEL_FLYOUT_WIDTH`] 实测量宽）。
     ///
     /// 本轮**不落**「上次使用」那一区（主干 `AppendLastUsedMenuItems` / `RestoreLastUsedModelAsync`
     /// 属 `ModelExtras` 那张刀），所以 `未能切换到 {0}：目录中未找到该模型。` 那一支也不发。
@@ -18364,33 +18534,28 @@ impl Shell {
             menu_section_header(catalog.l("模型"), p),
         ));
         for row in &state.rows {
-            let text = model_row_text(&row.name, &row.description);
+            // 说明 = 合成规则优先（主干 `MC:24-52`），catalog 原文兜底（见那颗的注）。
+            let desc = model_option_description(catalog, &row.provider, &row.id, &row.description);
+            let text = model_row_text(&row.name, &desc);
             let cell: View = Button::new()
                 .automation_id(format!("ModelOption_{}", row.name))
                 .automation_name(model_row_name(catalog, &row.name))
                 .min_width(0.0)
                 .horizontal_alignment(HorizontalAlignment::Stretch)
                 .horizontal_content_alignment(HorizontalAlignment::Left)
-                .style((row.id == state.selected_id).then_some(ButtonStyle::Accent))
+                .margin(th(MENU_ITEM_MARGIN))
+                .min_height(MENU_ROW_MIN_HEIGHT)
+                .resource_overrides(menu_row_faces(&p))
                 .on_click(context.message(Msg::ModelPick(
                     row.id.clone(),
                     row.provider.clone(),
                     row.name.clone(),
                 )))
-                .content(
-                    TextBlock::new()
-                        .text(text)
-                        .font_size(type_ramp::BODY.size)
-                        .text_wrapping(TextWrapping::Wrap)
-                        .vertical_alignment(VerticalAlignment::Center),
-                )
+                .content(menu_item_text(text))
                 .into();
             // 主干 `MC:63` 那句 `ToolTipService.SetToolTip(item, desc)`：没描述就没有这一件。
-            let cell = if row.description.is_empty() {
-                cell
-            } else {
-                cell.tooltip(row.description.clone())
-            };
+            // 挂的也是**合成后**的那条（主干 ToolTip 与第二行同串）。
+            let cell = if desc.is_empty() { cell } else { cell.tooltip(desc) };
             // 键必须**带 provider**：理由见 [`model_row_key`]。
             cells.push(KeyedView::new(
                 model_row_key(&row.provider, &row.id),
@@ -18424,15 +18589,11 @@ impl Shell {
                 .min_width(0.0)
                 .horizontal_alignment(HorizontalAlignment::Stretch)
                 .horizontal_content_alignment(HorizontalAlignment::Left)
-                .style((row.id == state.effort).then_some(ButtonStyle::Accent))
+                .margin(th(MENU_ITEM_MARGIN))
+                .min_height(MENU_ROW_MIN_HEIGHT)
+                .resource_overrides(menu_row_faces(&p))
                 .on_click(context.message(Msg::EffortPick(row.id.clone())))
-                .content(
-                    TextBlock::new()
-                        .text(text)
-                        .font_size(type_ramp::BODY.size)
-                        .text_wrapping(TextWrapping::NoWrap)
-                        .vertical_alignment(VerticalAlignment::Center),
-                )
+                .content(menu_radio_row_content(text, row.id == state.effort, &p))
                 .into();
             // 主干 `MW:13568-13571`：`if (blurb.Length > 0)` 才设 ToolTip。
             let cell = if blurb.is_empty() {
@@ -18446,11 +18607,14 @@ impl Shell {
             .grid_row(0)
             .horizontal_alignment(HorizontalAlignment::Left)
             .vertical_alignment(VerticalAlignment::Bottom)
-            .margin(th(pad::COMPOSER_SELECTORS))
+            .width(MODEL_FLYOUT_WIDTH)
+            .margin(th(selector_card_margins(self.selector_anchor, MODEL_FLYOUT_WIDTH)))
             .background(p.card.clone())
             .border_brush(p.stroke.clone())
             .border_thickness(size::STROKE)
             .corner_radius(radius::MEDIUM)
+            // 主干 `MenuFlyoutPresenterThemePadding` 生效档 `0,2,0,2`（generic.xaml:23894）。
+            .padding(th([0.0, 2.0, 0.0, 2.0]))
             .automation_id("ModelFlyout")
             .automation_name(catalog.l("模型与推理等级"))
             .content(
@@ -18645,33 +18809,121 @@ struct ModelFace {
     name: String,
 }
 
-/// `MenuFlyoutItem { IsEnabled = false }` 那两张区头/说明行的分叉落点：**一段真字**
+/// `MenuFlyoutItem { IsEnabled = false }` 那两张区头/两档说明行的分叉落点：**一段真字**
 /// （`Border` 套 `TextBlock` —— 本依赖只有 `Border` 有 `padding` 槽，见那颗函数里的注）。
 /// 不用「画出来按住的那颗钮」（本仓硬规矩，判据母本 =
 /// `the_trigger_carries_the_three_mainline_names_and_one_real_action` 里那枚
 /// `is_enabled(false)` 禁串）。文案已过表 ⇒ 调用方给串。
+///
+/// 形制（2026-11-01 弹层对齐刀）：主干这行就是**禁用的 MenuFlyoutItem** —— 字号与可点行
+/// 同一枚 14（实拍 `推理等级` 区头与两档说明的字高与行距 32 DIP 都同普通行），色 =
+/// 禁用档（`TextFillColorDisabled`），度量 = [`MENU_ITEM_MARGIN`] + [`MENU_ITEM_PADDING`]。
+/// 此前是 CAPTION 小字 + Wrap，与主干实拍不符 ⇒ 换 [`menu_item_text`] 同一枚字。
 fn menu_section_header(text: String, p: Palette) -> View {
-    // `TextBlock` 在本依赖里**没有** `padding` 槽（只有 `Border` 有）⇒ 上下那 2px 落在外壳的
-    // `padding` 上，行高与主干那两行 `MenuFlyoutItem { IsEnabled = false }` 的观感一致。
     Border::new()
-        .padding(th([0.0, 2.0, 0.0, 2.0]))
-        .content(
-            TextBlock::new()
-                .text(text)
-                .font_size(type_ramp::CAPTION.size)
-                .text_wrapping(TextWrapping::Wrap)
-                .foreground(p.text_secondary.clone()),
-        )
+        .margin(th(MENU_ITEM_MARGIN))
+        .min_height(MENU_ROW_MIN_HEIGHT)
+        .padding(th([11.0, 0.0, 11.0, 0.0]))
+        .content(menu_item_text(text).foreground(p.text_disabled.clone()))
+        .into()
 }
 
-/// 主干那张 `MenuFlyoutSeparator`（`MW:13541`）：分叉既有件 = [`Shell::settings_divider`] 那根
-/// `height=size::STROKE` + `p.stroke_subtle` 的线（**不另立数值**，负 margin 那一档不适用在浮层里）。
+/// 主干那张 `MenuFlyoutSeparator`（`MW:13541`）：1px 线 + `MenuFlyoutSeparatorThemePadding`
+/// 生效档 `(-4,1,-4,1)`（generic.xaml:23897，负横向值把线拉通到卡缘）⇒ 分叉侧横向贴满、
+/// 纵向各留 1 DIP。色 = `MenuFlyoutSeparatorBackground`（DividerStrokeColorDefault 档）
+/// = 既有 [`Shell::settings_divider`] 那根 `p.stroke_subtle` 线（**不另立数值**）。
 fn menu_flyout_separator(p: Palette) -> View {
     Border::new()
         .height(size::STROKE)
         .background(p.stroke_subtle.clone())
-        .margin(th([0.0, 4.0, 0.0, 4.0]))
+        .margin(th([0.0, 1.0, 0.0, 1.0]))
         .into()
+}
+
+/// 选择器菜单行的四态脸（主干 `DefaultMenuFlyoutItemStyle` 的资源档：静置 =
+/// `SubtleFillColorTransparent` 即全透明、悬停/按下 = Subtle 二/三档、四态描边全透明）。
+/// `resource_overrides` 只吃 `Color` ⇒ 从 [`Palette`] 拿 scheme 对应的原色（浅深各自正确）。
+/// ⚠ **不**覆 `ButtonPadding`：实测（2026-11-01 弹层对齐刀第二轮）模板 Setter 的
+/// ThemeResource 在挂资源那一刻已经解析成主题值，之后补挂资源不会重算 ⇒ 覆了不生效，
+/// 行高反而被垫高 11 DIP。行的竖向度量改走 `.margin([4,0,4,0]) + .min_height(32)`：
+/// 模板默认 padding（11,5,11,6）+ 18.65 行盒 = 31.65 ≈ 32，横向上 11+4 = 15 与
+/// 主干 plain 项一致，勾点行再加 [`MENU_RADIO_COLUMN`] + [`MENU_RADIO_GAP`] = 45.5。
+fn menu_row_faces(p: &Palette) -> ResourceOverrides {
+    ResourceOverrides::new()
+        .set("ButtonBackground", Color::transparent())
+        .set("ButtonBackgroundPointerOver", p.subtle_hover_color)
+        .set("ButtonBackgroundPressed", p.subtle_pressed_color)
+        .set("ButtonBackgroundDisabled", Color::transparent())
+        .set("ButtonBorderBrush", Color::transparent())
+        .set("ButtonBorderBrushPointerOver", Color::transparent())
+        .set("ButtonBorderBrushPressed", Color::transparent())
+        .set("ButtonBorderBrushDisabled", Color::transparent())
+}
+
+/// 菜单行的那枚字（主干 `MenuFlyoutItem` 模板 TextBlock 的形：14px、`NoWrap`、
+/// `CharacterEllipsis`）。`\n` 在 `NoWrap` 下照样折行 ⇒ 模型行「名字\n说明」两行
+/// 就是这一枚（主干 `AttachModelOptionDescription` 的 `item.Text = $"{Text}\n{desc}"`）。
+fn menu_item_text(text: String) -> TextBlock {
+    TextBlock::new()
+        .text(text)
+        .font_size(type_ramp::BODY.size)
+        .text_wrapping(TextWrapping::NoWrap)
+        .text_trimming(TextTrimming::CharacterEllipsis)
+        .vertical_alignment(VerticalAlignment::Center)
+}
+
+/// `RadioMenuFlyoutItem` 的行内容：定宽勾点列（5×5 实心圆点只在勾选档入树；unchecked 档
+/// 占位仍在 —— 主干模板 CheckGlyph `Opacity=0` 但几何常在，实拍四行文字左缘一条线）
+/// + 文字。列宽 14.5 + 间距 16 ⇒ 文字左缘 = 4(外距)+11(内距)+14.5+16 = 45.5 DIP，
+/// 点心 = 15 + 14.5/2 = 22.25 DIP，两枚都与主干实拍（91px / 点心 44.5px @200%）对齐。
+/// 勾点色 = 主干 `MenuFlyoutSubItemChevron`（TextFillColorSecondary 档，实拍 #D2CECF）。
+fn menu_radio_row_content(text: String, checked: bool, p: &Palette) -> View {
+    // TextBlock 有 View / Element 两条 Into 路 ⇒ 显式钉成 View（E0283）。
+    let text: View = menu_item_text(text).into();
+    let dot_cell: View = Border::new()
+        .width(MENU_RADIO_COLUMN)
+        .content(if checked {
+            Ellipse::new()
+                .width(MENU_RADIO_DOT)
+                .height(MENU_RADIO_DOT)
+                .horizontal_alignment(HorizontalAlignment::Center)
+                .vertical_alignment(VerticalAlignment::Center)
+                .fill(p.text_secondary.clone())
+                .into()
+        } else {
+            blank()
+        })
+        .into();
+    StackPanel::new()
+        .orientation(Orientation::Horizontal)
+        .spacing(MENU_RADIO_GAP)
+        .children((dot_cell, text))
+        .into()
+}
+
+/// 两张选择器卡的落点边距（主干 `Placement=Top` 的分叉等价，实拍钉的两条几何）：
+/// · 竖向：卡下缘 = 触发器上沿 − [`FLYOUT_GAP_ABOVE_TRIGGER`]，触发器上沿 = 点击 y −
+///   半高。Bottom 对齐的 `margin.bottom` = 客户区高 − 卡下缘 ⇒ 客户区高从
+///   [`scroll::client_size`] + [`scroll::client_origin`] 折 DIP（与
+///   [`Shell::overlay_host_box`] 同一条几何通路）。
+/// · 横向：卡中心 = 点击 x（实拍两卡中心与触发器中心差 ≤ 1.5px）⇒ Left 对齐的
+///   `margin.left` = 点击 x − 卡半宽（卡宽定死，见两枚 `*_FLYOUT_WIDTH`）。
+/// 两处任一问不到（无锚 = 单测线程；客户区/DPI 拿不动）⇒ 回落既有贴左下位
+/// （`pad::COMPOSER_SELECTORS`），「没有锚」这一档保持既有形态。
+fn selector_card_margins(anchor: Option<(f64, f64)>, card_w: f64) -> [f64; 4] {
+    let Some((ax, ay)) = anchor else {
+        return pad::COMPOSER_SELECTORS;
+    };
+    let Some((_, dpi)) = scroll::client_origin() else {
+        return pad::COMPOSER_SELECTORS;
+    };
+    let Some((_, px_h)) = scroll::client_size() else {
+        return pad::COMPOSER_SELECTORS;
+    };
+    let client_h = scroll::px_to_dip(px_h, dpi);
+    let left = (ax - card_w / 2.0).max(0.0);
+    let bottom = (client_h - (ay - FLYOUT_TRIGGER_HALF_HEIGHT - FLYOUT_GAP_ABOVE_TRIGGER)).max(0.0);
+    [left, 0.0, 0.0, bottom]
 }
 
 impl Component for Shell {
@@ -18779,6 +19031,7 @@ impl Component for Shell {
             uncapped: Vec::new(),
             section: DEFAULT_SETTINGS_SECTION.to_string(),
             sub: None,
+            settings_entrance: None,
             fields: Vec::new(),
             numbers,
             font_size: type_ramp::BODY.size,
@@ -18899,6 +19152,7 @@ impl Component for Shell {
             // #56：首屏没有展开层（`None` ⇒ 那棵节点不入树），自定义档表空。
             // 待用预设的初值 = 主干 `MW:2297` 那句 `= ("standard", "标准模式")`，**不是 None**。
             selectors: None,
+            selector_anchor: None,
             pending_agent_preset: Some((
                 AGENT_MODE_BUILTINS[0].0.to_string(),
                 AGENT_MODE_BUILTINS[0].1.to_string(),
@@ -18985,9 +19239,12 @@ impl Component for Shell {
             skin_path: mw2_saved_skin_path(&shellfiles::data_home()),
             // #240 播放腿：初值「没在播」（槽里有没有 `.video` 由下面构造尾部的
             // `sync_skin_video` 定夺，与 `arm_skin_poster_tick` 同一拍）。首帧未到、也没有
-            // 取货任务在飞 —— 三个初始值必须自洽，否则第一次 `view` 会走进「武装了但没有泵」。
+            // 取货任务在飞 —— 四个初始值必须自洽，否则第一次 `view` 会走进「武装了但没有泵」。
+            // `ready` 初值 true = 「没有解码在飞」：空格不算忙，前格才接得住首帧。
             skin_video: None,
-            skin_video_frame: None,
+            skin_video_buffers: [None, None],
+            skin_video_ready: [true, true],
+            skin_video_front: 0,
             skin_video_armed: false,
             // #140 刀2：`PetInstallSay` 那行初值是「还没点过那颗」⇒ 不入树（主干是空 Text，同相）。
             pet_status: None,
@@ -19847,6 +20104,18 @@ impl Component for Shell {
             }
             Msg::SelectorClose => {
                 self.selectors = None;
+                // 锚一并清：同 [`scroll::forget_anchor`] 的卫生口径，下次开臂必有新鲜 press。
+                self.selector_anchor = None;
+            }
+            // 触发器面上的按下：只记坐标（开/收那一发在 release 的 [`Msg::SelectorToggle`]）。
+            // 无条件覆写即可——层开着时遮罩盖着触发器，这发进不来；关着时它必属于「下一次开」。
+            Msg::SelectorAnchor(x, y) => {
+                pill_trace(format!(
+                    "ANCHOR raw x={x} y={y} client_origin={:?} client_size={:?}",
+                    scroll::client_origin(),
+                    scroll::client_size()
+                ));
+                self.selector_anchor = Some((x, y));
             }
             // ---- #56 第三颗 `ModelButton` / 第四颗 `PlanChip` 的回写臂 ----------------------
             // 三臂的收层口径与上面 [`Msg::PermissionPick`] 逐字同形：臂首只清输入区选择器
@@ -22279,8 +22548,13 @@ impl Component for Shell {
             Msg::Cap(key, open) => self.set_cap(&key, open),
             Msg::Section(id) => {
                 // 主干 `RenderSectionAsync` 开头就 `ResetSettingsSubPages()`：换分区必回一级页。
+                // 换了分区才播钻取（主干 PlaySettingsDrillIn 挂在导航侧，同节重进不播）。
+                let section_changed = self.section != id;
                 self.section = id;
                 self.sub = None;
+                if section_changed {
+                    self.start_settings_entrance(false, context);
+                }
                 // #160 UK2：主干 `RenderSectionAsync` 的 `case AboutSectionId: RenderAboutSection();`
                 // （`xaml.cs:10659-10661`）每次进这一节都重跑，而 `RenderAboutSection()` 开头就把
                 // `_aboutUpdateStatus = null; _aboutDownloadUrl = null;` 清掉再按初值重建
@@ -22367,12 +22641,40 @@ impl Component for Shell {
                 // 一行密钥都不画（= 主干「还没建页」那一档），绝不留上一次的旧状态。
                 let asks_credentials = id == "web-search";
                 self.sub = Some(id);
+                // 钻取进二级页：主干 OpenSettingsSubPage → PlaySettingsDrillIn（每次进页都播）。
+                self.start_settings_entrance(false, context);
                 if asks_credentials {
                     self.search_credentials = None;
                     self.load_search_credentials(context);
                 }
             }
-            Msg::CloseSub => self.sub = None,
+            Msg::CloseSub => {
+                // 返回一级页：主干 PlaySettingsDrillOut（出右滑左回）——分叉近似为自左滑回。
+                if self.sub.is_some() {
+                    self.start_settings_entrance(true, context);
+                }
+                self.sub = None;
+            }
+            Msg::SettingsEntranceTick => {
+                // 逐帧推进：减一步，还有余步就武装下一帧（32ms 后再回一发）。
+                let more = match self.settings_entrance.as_mut() {
+                    Some((steps, _)) => {
+                        *steps = steps.saturating_sub(1);
+                        *steps > 0
+                    }
+                    None => false,
+                };
+                if more {
+                    context.spawn_background(|_token| {
+                        std::thread::sleep(std::time::Duration::from_millis(
+                            SETTINGS_ENTRANCE_TICK_MS,
+                        ));
+                        Msg::SettingsEntranceTick
+                    });
+                } else {
+                    self.settings_entrance = None;
+                }
+            }
             // ---- #136 A 档（MR3）剩下的两条回执臂 -----------------------------------------
             // 台账 #224 B3 之前这里是**三条**（R1 快照 / R3 那发能力门控 / R2 密钥表）；R3 那臂
             // 随宿主腿整条摘净 ⇒ 只剩两条。两条失败臂**一律静默**：主干两个 `catch` 都不弹错、
@@ -22528,7 +22830,7 @@ impl Component for Shell {
                 self.skin_path = None;
                 // 停泵在**清文件之前**：MF reader 持着 `shell-skin.video` 时 `remove_file`
                 // 会撞共享冲突（`stop_skin_video` 的顺序红线，`skinplay::PumpHandle::stop` 同源）。
-                // 顺带把 `skin_video_frame` 清掉 ⇒ 背景层整棵退回 `surface_alt`。
+                // 顺带把双缓冲三格清掉 ⇒ 背景层整棵退回 `surface_alt`。
                 self.stop_skin_video();
                 mw2_clear_skin_files();
             }
@@ -22570,7 +22872,7 @@ impl Component for Shell {
                     let root = shellfiles::data_home();
                     shellfiles::clear_skin_we_id();
                     // 覆盖导入：旧泵持着旧文件 ⇒ 先停泵再拷（同 `Msg::SkinClear` 的顺序红线）。
-                    // 停泵会把 `skin_video_frame` 也清掉，正好是「新视频首帧未到」要的样子。
+                    // 停泵会把双缓冲三格也清掉，正好是「新视频首帧未到」要的样子。
                     self.stop_skin_video();
                     match mw2_copy_skin_file(&path, &root, MW2_SKIN_VIDEO_FILE) {
                         Ok(_slot) => {
@@ -22623,14 +22925,14 @@ impl Component for Shell {
                 // 皮肤」之后那一帧就会后来居上，把新导进来的图顶掉（残留旧画面）。
                 if self.skin_video.is_some() {
                     match take {
-                        // 有新帧 ⇒ 入那一格。`view` 下一轮就用它（`source_data`），这是换图的
-                        // **唯一**写口；不需要额外标记「脏」，因为 reactor 每轮都重建视图。
-                        FrameTake::Frame(frame) => self.skin_video_frame = Some(frame),
+                        // 有新帧 ⇒ 入双缓冲（隐藏格；忙则跳帧）。这是换图的**唯一**写口；
+                        // 不需要额外标记「脏」，因为 reactor 每轮都重建视图。
+                        FrameTake::Frame(frame) => self.skin_video_ingest(frame),
                         // 等超时：首帧装载 / 循环回绕接缝 / 某一帧解得慢，都不是错误。什么都不做，
                         // 下面照常重上发条即可（**不**停泵 —— 停了就再也起不来，因为起泵只此一处）。
                         FrameTake::Idle => {}
                         // 泵死了：停泵（同步 join，让文件句柄归位）+ 落一行 DIAG + 回落海报。
-                        // `stop_skin_video` 把 `skin_video_frame` 也清了 ⇒ 背景回落 `skin_path`
+                        // `stop_skin_video` 把双缓冲三格也清了 ⇒ 背景回落 `skin_path`
                         // 那颗（视频导入时它是海报帧，见 `Msg::SkinVideoImportPick`）。
                         FrameTake::Dead(error) => {
                             emit_line(&format!("DIAG: 皮肤视频播放失败: {error}"));
@@ -22641,6 +22943,27 @@ impl Component for Shell {
                     if self.skin_video.is_some() {
                         self.arm_skin_video_tick(context);
                     }
+                }
+            }
+            // 双缓冲翻面：隐藏格的新帧解码完成 ⇒ 它顶上，旧前格退到隐藏（它的帧留在格上，
+            // 下一帧来时被覆盖）——「旧帧保持到新帧就绪」的后半句由这一臂兑现。前格在
+            // 翻面之前从不清屏（它的源逐帧同值，reconciler 不发 SetProperty）⇒ 观众
+            // 看到的那一层永远有像素，这就是不闪的根。
+            Msg::SkinVideoReady(index) => {
+                if self.skin_video.is_some() {
+                    self.skin_video_ready[index] = true;
+                    // 格上有帧才翻：翻到一格空格/没解出来的格 = 自己制造空窗。
+                    // 首帧那档 index == front（直接喂前格），天然不翻。
+                    if index != self.skin_video_front && self.skin_video_buffers[index].is_some() {
+                        self.skin_video_front = index;
+                    }
+                }
+            }
+            // 解码失败档（基本不可达，自家 BMP）：只解除「忙碌」，不翻面 —— 下一帧来时
+            // 重试。不解除的话隐藏格永远「忙」，整条腿冻死在旧帧上。
+            Msg::SkinVideoFailed(index) => {
+                if self.skin_video.is_some() {
+                    self.skin_video_ready[index] = true;
                 }
             }
             // #140 刀2：主干 `InstallPetFromCommandAsync` 第 1 档（`Pet.cs:706-726`）：空命令 warn
@@ -25685,7 +26008,7 @@ impl Shell {
             ("page-settings", self.settings_page(context, p)),
         );
         // 皮肤层在场与否还要喂给下面 content 格的底色判据（同一格状态，不出第二份真相）。
-        let backdrop = self.mw2_skin_backdrop();
+        let backdrop = self.mw2_skin_backdrop(context);
         let skin_laid = backdrop.is_some();
         let surface: View = match backdrop {
             Some(backdrop) => Grid::new().children((backdrop, pages)).into(),
@@ -33127,26 +33450,35 @@ impl Shell {
                 // （`MX:1216-1226`）⇒ 这里用横向 `StackPanel{spacing=Space6}` 等价（列只在需要
                 // `*` 吸收余量时才有意义，而这颗的 `TextBlock` 是 `TextTrimming=CharacterEllipsis`
                 // + `NoWrap`，贴合内容）。末位那枚 chevron = 模板内置件的分叉直译（内容承载）。
-                StackPanel::new()
-                    .orientation(Orientation::Horizontal)
-                    .spacing(space::S6)
-                    .vertical_alignment(VerticalAlignment::Center)
-                    .children((
-                        mark_size(AGENT_MODE_GLYPH, size::GLYPH_BODY),
-                        TextBlock::new()
-                            .text(agent_mode_label(
-                                &self.catalog,
-                                self.pending_agent_preset.as_ref(),
-                            ))
-                            .font_size(type_ramp::BODY.size)
-                            .text_wrapping(TextWrapping::NoWrap)
+                // 外面那层透明 `Border` = 弹层定位锚（同 [`Shell::model_trigger`] 那颗的注）：
+                // 只盖内容盒，几何零变化，记下按下点（[`Msg::SelectorAnchor`]）。
+                Border::new()
+                    .background(Color::transparent())
+                    .on_pointer_pressed(context.callback(|info: PointerEventInfo| {
+                        Msg::SelectorAnchor(info.window_x, info.window_y)
+                    }))
+                    .content(
+                        StackPanel::new()
+                            .orientation(Orientation::Horizontal)
+                            .spacing(space::S6)
                             .vertical_alignment(VerticalAlignment::Center)
-                            // 主干那枚 `x:Name="AgentModeLabel"`（`MX:1223`）在 UIA 里就是
-                            // AutomationId（WinUI 的 `AutomationPeer` 在 `AutomationId` 缺席时
-                            // 回落元素名）⇒ 分叉显式挂同名，不自造、不拼串。
-                            .automation_id("AgentModeLabel"),
-                        mark_size(glyph::DROPDOWN_CHEVRON, size::GLYPH_CAPTION),
-                    )),
+                            .children((
+                                mark_size(AGENT_MODE_GLYPH, size::GLYPH_BODY),
+                                TextBlock::new()
+                                    .text(agent_mode_label(
+                                        &self.catalog,
+                                        self.pending_agent_preset.as_ref(),
+                                    ))
+                                    .font_size(type_ramp::BODY.size)
+                                    .text_wrapping(TextWrapping::NoWrap)
+                                    .vertical_alignment(VerticalAlignment::Center)
+                                    // 主干那枚 `x:Name="AgentModeLabel"`（`MX:1223`）在 UIA 里就是
+                                    // AutomationId（WinUI 的 `AutomationPeer` 在 `AutomationId` 缺席时
+                                    // 回落元素名）⇒ 分叉显式挂同名，不自造、不拼串。
+                                    .automation_id("AgentModeLabel"),
+                                mark_size(glyph::DROPDOWN_CHEVRON, size::GLYPH_CAPTION),
+                            )),
+                    ),
             )
             .into();
         Some(button.tooltip(tooltip))
@@ -33179,14 +33511,16 @@ impl Shell {
     }
 
     /// `AgentModeFlyout` 的表体（主干 `MW:4822-4872`）：内置四档 + `agentPresets/list` 的自定义档。
-    /// 抄不动的两件，逐条记在报告 §8：
-    /// · `RadioMenuFlyoutItem` 的**单选点** ⇒ 用 `ButtonStyle::Accent` 那一档底当前档（与
-    ///   [`Shell::file_action_menu`] 表达「这一行是选中的」同一件既有装置），行内文案与 UIA
-    ///   `Name` 保持与主干 `Text` 逐字同串，不加「（当前）」那类推论；
-    /// · 主干 `ShowAt(anchor, Top)` 要把卡片钉在触发器上沿，而分叉读不回元素的屏幕矩形
-    ///   ⇒ 贴内容面**左下**（触发器在动作行左段，`Placement=Top` 的卡片就在它上面）。
-    ///   偏移用主干自己那枚 `ComposerSelectorsMargin`（`Theme/Tokens.xaml:67` = `20,0,16,2`，
-    ///   分叉 `pad::COMPOSER_SELECTORS` 同值），不另造数值。
+    /// 行 = `RadioMenuFlyoutItem` 的分叉等价：**勾点列 + 文字**（[`menu_radio_row_content`]，
+    /// 勾选位 = 5×5 圆点、其余几何照主干模板），不再是 `ButtonStyle::Accent` 强调底——
+    /// 主干实拍（`tmp-cap/flyout-main-agentmode.png`）里当前档就是「点心 + 常色字」，
+    /// 没有整行染色。行文案与 UIA `Name` 保持与主干 `Text` 逐字同串，不加「（当前）」那类推论。
+    ///
+    /// 卡的落点：主干 `ShowAt(anchor, Top)` 把卡片钉在触发器**上沿、水平居中**（实拍：
+    /// 卡中心 = 触发器中心差 ≤ 1.5px、下缘距触发器上沿 5.5 DIP）。分叉读不回元素矩形
+    /// ⇒ 锚 = 触发器面上的真实按下点（两颗触发器内容里的锚 `Border`，
+    /// [`Msg::SelectorAnchor`]），几何全在 [`selector_card_margins`]；卡宽定死为实测量宽
+    /// [`AGENT_MODE_FLYOUT_WIDTH`]（分叉没有 measure 通路，表数据变了会漂，备案）。
     fn agent_mode_menu(&self, context: &mut ViewContext<Shell>, p: Palette) -> View {
         let current = self.pending_agent_preset.as_ref().map(|(id, _)| id.clone());
         let rows = agent_mode_rows(current.as_deref(), &self.agent_presets);
@@ -33204,15 +33538,11 @@ impl Shell {
                 .min_width(0.0)
                 .horizontal_alignment(HorizontalAlignment::Stretch)
                 .horizontal_content_alignment(HorizontalAlignment::Left)
-                .style(row.checked.then_some(ButtonStyle::Accent))
+                .margin(th(MENU_ITEM_MARGIN))
+                .min_height(MENU_ROW_MIN_HEIGHT)
+                .resource_overrides(menu_row_faces(&p))
                 .on_click(context.message(Msg::AgentModePick(row.id.clone(), row.name)))
-                .content(
-                    TextBlock::new()
-                        .text(text)
-                        .font_size(type_ramp::BODY.size)
-                        .text_wrapping(TextWrapping::NoWrap)
-                        .vertical_alignment(VerticalAlignment::Center),
-                )
+                .content(menu_radio_row_content(text, row.checked, &p))
                 .into();
             cells.push(KeyedView::new(format!("agent-mode-{}", row.id), cell));
         }
@@ -33220,11 +33550,15 @@ impl Shell {
             .grid_row(0)
             .horizontal_alignment(HorizontalAlignment::Left)
             .vertical_alignment(VerticalAlignment::Bottom)
-            .margin(th(pad::COMPOSER_SELECTORS))
+            .width(AGENT_MODE_FLYOUT_WIDTH)
+            .margin(th(selector_card_margins(self.selector_anchor, AGENT_MODE_FLYOUT_WIDTH)))
             .background(p.card.clone())
             .border_brush(p.stroke.clone())
             .border_thickness(size::STROKE)
             .corner_radius(radius::MEDIUM)
+            // 主干 `MenuFlyoutPresenterThemePadding` 生效档 `0,2,0,2`（generic.xaml:23894）：
+            // 行块与卡缘只留上下 2 DIP。
+            .padding(th([0.0, 2.0, 0.0, 2.0]))
             .automation_id("AgentModeFlyout")
             .automation_name(self.catalog.l("Agent 模式"))
             .content(
@@ -33527,6 +33861,16 @@ impl Shell {
             ])
     }
 
+    /// 设置页钻取转场：武装 8 步逐帧推进（每步 = [`Shell::settings_entrance`] 剩余步数-1，
+    /// 视图按剩余步数算 margin/opacity）。主干 `PlaySettingsDrillIn/DrillOut` 的分叉等价。
+    fn start_settings_entrance(&mut self, back: bool, context: &ComponentContext<Shell>) {
+        self.settings_entrance = Some((SETTINGS_ENTRANCE_STEPS, back));
+        context.spawn_background(|_token| {
+            std::thread::sleep(std::time::Duration::from_millis(SETTINGS_ENTRANCE_TICK_MS));
+            Msg::SettingsEntranceTick
+        });
+    }
+
     /// 主干 `SettingsHost`：页头只有分区名（TitleTextBlockStyle + 36,24,36,4），
     /// 正文是 `SettingsScroller`(36,12,36,36) 里一个 MaxWidth 1064、Spacing 12 的 StackPanel。
     /// 钻取二级页时页头换成二级页标题并多出返回钮，正文整棵换成 `SettingsSubHost`。
@@ -33541,6 +33885,8 @@ impl Shell {
             None => (section_title.to_string(), self.settings_section(context, p)),
         };
         let back: View = self.settings_back_button(context);
+        // 钻取转场帧：margin(位移) + opacity(淡入) 按剩余步数取值；静止态 = 恒等。
+        let entrance = self.settings_entrance;
         Grid::new()
             .rows([GridLength::Auto, GridLength::STAR])
             .children((
@@ -33575,6 +33921,8 @@ impl Shell {
                             .orientation(Orientation::Vertical)
                             .spacing(12.0)
                             .max_width(size::PAGE_MAX_WIDTH)
+                            .margin(th(settings_entrance_margin(entrance)))
+                            .opacity(settings_entrance_opacity(entrance))
                             .keyed_children(cells),
                     ),
                 ),
@@ -38028,34 +38376,22 @@ impl Shell {
     /// 分叉用 `Image::source_file` + `Stretch::UniformToFill` 压成内容区底格 —— 同判据同宿主范围。
     /// `source_file` 解不了图（坏档）⇒ 回落 `None`，主干该档是 `catch` 后什么都不画（`LoadSavedSkin` 同形）。
     ///
-    /// #240 播放腿接在这一层：有帧时源换成 `source_data(EncodedImage)`（BMP 字节，`skinplay`
-    /// 帧泵按目标帧率喂），没帧时走原来那颗 `source_file`。两条腿**共用同一个宿主**——
-    /// reactor 的 `Image` 一次只持一个 source，所以这不是「择优」而是「分流」，判据只能是
-    /// 「这一帧到没到」：`skin_video_frame` 有值 ⇒ 播放腿在跑且首帧已到；`None` ⇒ 要么还没起泵
-    /// （首帧装载中），要么泵已停（回落海报），两种都该走静图那颗。分流的完整根因
-    /// （为什么 reactor 树里长不出视频控件、为什么选 `source_data` 而不是三个命令式逃生舱）
-    /// 在 `skinplay.rs` 模块头，此处只留接线。
-    ///
-    /// 底衬（2026-10-27 终验清单第 1 项）：reactor 的 `EncodedImage` 换源是
+    /// #240 播放腿接在这一层（**双缓冲**）：泵在册 ⇒ 海报底衬 + 两枚缓冲格叠放；泵不在
+    /// ⇒ 单层静图（原形）。为什么必须双缓冲：reactor 的 `EncodedImage` 换源是
     /// **「先 `ClearValue(Source)` 再异步 StoreAsync + SetSourceAsync」**（`native/winui/mod.rs`
-    /// 的 `SetProperty(ImageSource)` 臂 → `start_encoded_image`）——逐帧喂帧 = 逐帧清屏，
-    /// 异步解码没回来之前 `Image` 整格透明。实测（本机 2586×1671、120ms 采样 50 张，聊天页）
-    /// 约四成时间空窗：背景层在「壁纸 ⇄ 素底」之间闪，设置页截图捕到空窗就成了
-    /// 「设置页无壁纸」（主干 `ImageBrush` 一次成型永不闪，这才是两图差异的根因，
-    /// 不是设置页盖了不透明底）。治法 = 帧层底下垫一颗**永不换源**的静图底衬
-    /// （`skin_path` 的海报帧/图片，`source_file` 的属性值逐帧相同 ⇒ reconciler 判属性未变、
-    /// 不发 SetProperty ⇒ 不吃 ClearValue）：帧层空窗的那几百毫秒由它顶上——同一张图的
-    /// 另一帧，40% 透明度下肉眼无接缝。底衬与帧层同 Stretch 同对齐 ⇒ 逐像素同位。
-    fn mw2_skin_backdrop(&self) -> Option<View> {
+    /// 的 `SetProperty(ImageSource)` 臂 → `start_encoded_image`）——把新帧喂进观众眼前的
+    /// 那颗 `Image`，就是逐帧清屏：实测（本机 2586×1671、120ms 采样 50 张，聊天页）约四成
+    /// 时间空窗，背景层在「壁纸 ⇄ 素底」之间闪（底衬只能兜住素底那一半，帧 ⇄ 海报的
+    /// 交替依旧可见 —— 2026-10-27 的底衬版就是这么修的还是闪）。治法 = 清屏只发生在
+    /// **隐藏格**（opacity 0）上，隐藏格解码完成（[`Msg::SkinVideoReady`]，`on_opened`
+    /// 的解码回执对 `EncodedImage` 节点可达）才翻面 —— **旧帧保持到新帧就绪**，帧层
+    /// 恒有像素；这正对齐主干 `MediaPlayerElement` 那条「视频层恒在、帧连续」的无闪语义
+    /// （`xaml.cs:9296-9313`）。底衬（海报，`source_file` 逐帧同值 ⇒ reconciler 不发
+    /// SetProperty ⇒ 不吃 ClearValue）保留，兜「起泵 → 首帧就绪」那一段；同 Stretch
+    /// 同对齐 ⇒ 逐像素同位。分流判据是 `skin_video.is_some()`（泵在册）而非「有帧」：
+    /// 缓冲格节点必须从起泵那一刻就稳定在树上，中途换结构 = 节点重建 = 白白清一次屏。
+    fn mw2_skin_backdrop(&self, context: &ViewContext<Shell>) -> Option<View> {
         let percent = self.number(SKIN_OPACITY_KEY, size::SKIN_OPACITY_DEFAULT);
-        let image = match self.skin_video_frame.as_ref() {
-            // 有帧：喂帧源。`EncodedImage::new` 吃 `impl Into<Arc<[u8]>>`，这里**克隆 Arc**
-            // 不拷贝像素（一帧 720p ≈ 3.7 MB，逐帧 memcpy 纯属白烧）。
-            Some(frame) => Image::new().source_data(EncodedImage::new(Arc::clone(frame))),
-            // 没帧：回落 `skin_path`（图片皮肤 = 图片本身；视频皮肤 = 海报帧）。`?` 就是
-            // 「槽里什么都没有」那一档 ⇒ 整层不入树，与改前逐字同相。
-            None => Image::new().source_file(self.skin_path.as_ref()?.as_path()).ok()?,
-        };
         // 显式 Stretch（两个方向）：主干 `ImageBrush` 刷 `ContentSurface.Background`
         // 天然铺满宿主矩形（`UniformToFill` 在刷子内做居中裁切）；分叉这一层是
         // `Image` 元素，WinUI 元素默认对齐并不保证撑满宿主（AutoSize/Left/Top 档下
@@ -38066,25 +38402,52 @@ impl Shell {
                 .horizontal_alignment(HorizontalAlignment::Stretch)
                 .vertical_alignment(VerticalAlignment::Stretch)
         };
-        let image = stretched(image);
-        // 底衬：同一判据取 `skin_path` 的静图（海报帧/图片本体）。仅在播放腿在跑时才垫
-        // ——图片皮肤（没帧）那档单层就是它，垫第二层纯属重复。
-        let underlay: Option<View> = if self.skin_video_frame.is_some() {
-            self.skin_path
-                .as_ref()
-                .and_then(|path| Image::new().source_file(path.as_path()).ok())
-                .map(|image| stretched(image).into())
-        } else {
-            None
+        // 静图腿：`skin_path`（图片皮肤 = 图片本身；视频皮肤 = 海报帧）。`?` 就是
+        // 「槽里什么都没有」那一档 ⇒ 整层不入树，与改前逐字同相。
+        let still = || -> Option<View> {
+            let image = Image::new()
+                .source_file(self.skin_path.as_ref()?.as_path())
+                .ok()?;
+            Some(stretched(image).into())
         };
-        // 底衬与帧层的叠放格：显式钉 `View`。`content` 收 `impl Into<View>` ⇒ 匹配臂的
+        // 底衬与缓冲格的叠放格：显式钉 `View`。`content` 收 `impl Into<View>` ⇒ 匹配臂的
         // 目标类型悬空，View/Element 两族画刷转换都满足时裸 `.into()` 就是 E0283
-        // （0.9.0.4 门控实测）；钉死类型后 `children` 本就返 View、`image.into()` 也唯一。
-        let layered: View = match underlay {
-            // 在播且有底衬：静图垫底，帧层压上（同 Stretch 同对齐 ⇒ 同位叠放）。
-            Some(underlay) => Grid::new().children((underlay, image)),
-            // 海报缺席（`ensure_poster` 失败）或图片皮肤：单层，与改前同形。
-            None => image.into(),
+        // （0.9.0.4 门控实测）。
+        let layered: View = if self.skin_video.is_some() {
+            // 播放腿：底衬（海报，兜「起泵 → 首帧就绪」）+ 两枚缓冲格。每格各锁一个
+            // key（keyed_children 保节点身份跨轮不变 —— 节点一换，源就得重喂、清屏
+            // 重演）。`EncodedImage::new` 吃 `impl Into<Arc<[u8]>>`，这里**克隆 Arc**
+            // 不拷贝像素（一帧 720p ≈ 3.7 MB，逐帧 memcpy 纯属白烧）。
+            let mut layers: Vec<KeyedView> = Vec::new();
+            if let Some(underlay) = still() {
+                layers.push(KeyedView::new("skin-video-underlay", underlay));
+            }
+            for (index, frame) in self.skin_video_buffers.iter().enumerate() {
+                let image = match frame {
+                    Some(frame) => Image::new().source_data(EncodedImage::new(Arc::clone(frame))),
+                    None => Image::new(),
+                };
+                // 前格 opacity 1 / 隐藏格 0：清屏与异步解码都发生在 0 的那格上，
+                // 翻面（Ready 那臂）只是换两枚 opacity，观众看到的那层恒有帧。
+                let image = stretched(image).opacity(if self.skin_video_front == index {
+                    1.0
+                } else {
+                    0.0
+                });
+                // 解码回执两档都接：`on_opened` = 翻面信号，`on_failed` = 解忙保险。
+                // 两枚都回 Msg —— 回执必须在 UI 线程落格，才能进下一轮 rebuild。
+                let image = image
+                    .on_opened(context.message(Msg::SkinVideoReady(index)))
+                    .on_failed(context.message(Msg::SkinVideoFailed(index)));
+                // 显式钉 `View`（同上面 layered 那条的 E0283 案）：`Image.into()` 在
+                // `KeyedView::new` 的实参位上 View/Element 两解，裸 `.into()` 编不过。
+                let buffer: View = image.into();
+                layers.push(KeyedView::new(format!("skin-video-buffer-{index}"), buffer));
+            }
+            Grid::new().keyed_children(layers).into()
+        } else {
+            // 泵不在（图片皮肤 / 已停泵回落）：单层静图，与改前同形。
+            still()?
         };
         Some(
             Border::new()
@@ -38237,9 +38600,9 @@ impl Shell {
         let want = root.join(MW2_SKIN_VIDEO_FILE).is_file() && !root.join(MW2_SKIN_IMG_FILE).is_file();
         if want {
             if self.skin_video.is_none() {
-                // 首帧未到 ⇒ 回落海报（那一格还空着），所以先清帧再起泵：不这样做的话
+                // 首帧未到 ⇒ 回落海报（缓冲格还空着），所以先清缓冲再起泵：不这样做的话
                 // 「上一个泵留下的最后一帧」会在新泵首帧之前被画出去，是旧皮肤的画面。
-                self.skin_video_frame = None;
+                self.reset_skin_video_buffers();
                 self.skin_video = Some(skinplay::start_pump(root.join(MW2_SKIN_VIDEO_FILE)));
                 self.arm_skin_video_tick(context);
             }
@@ -38251,7 +38614,7 @@ impl Shell {
     /// 停播放腿：**同步**停泵（join ⇒ MF 让出 `shell-skin.video` 的文件句柄）+ 丢掉最后一帧。
     ///
     /// 不动 `skin_path`：回落海报/图片是调用方的事（`Msg::SkinClear` 那臂连图片槽一起清，
-    /// 图片导入那臂紧接着就把新图片写进 `skin_path`）。这里只管播放腿自己那三格。
+    /// 图片导入那臂紧接着就把新图片写进 `skin_path`）。这里只管播放腿自己那四格。
     ///
     /// ⚠ 顺序红线：**任何写/删 `.video` 槽的动作之前**必须先停泵。MF reader 持着文件时
     /// `std::fs::copy` / `remove_file` 会撞共享冲突 —— 这是把停泵做成同步 join 的唯一原因
@@ -38260,8 +38623,50 @@ impl Shell {
         if let Some(handle) = self.skin_video.take() {
             handle.stop();
         }
-        self.skin_video_frame = None;
+        self.reset_skin_video_buffers();
         self.skin_video_armed = false;
+    }
+
+    /// 双缓冲三格复位（起泵前 / 停泵后共用一份逻辑，单一真相）。
+    ///
+    /// `ready` 初值 `true` = 「没有解码在飞」：空格不算忙 —— 这个初值错了的话，
+    /// 首帧永远喂不进「忙」着的缓冲格，画面冻死在素底上。
+    fn reset_skin_video_buffers(&mut self) {
+        self.skin_video_buffers = [None, None];
+        self.skin_video_ready = [true, true];
+        self.skin_video_front = 0;
+    }
+
+    /// 双缓冲的入帧口（[`Msg::SkinVideoFrame`] `Frame` 档的唯一写腿）。语义 =
+    /// **旧帧保持到新帧就绪**：新帧只进隐藏格，等它解码完成（[`Msg::SkinVideoReady`]）
+    /// 才翻面；前格从不清屏。三道闸各有各的坑：
+    ///
+    /// * 首帧特例（前格还空着）⇒ 直接喂**前格**：它此刻没有源（透明），清它看不见，
+    ///   省一次无意义的翻面。不喂前格的话，第一帧得等「喂隐藏 → 解码 → 翻面」多一拍。
+    /// * 忙则跳帧（隐藏格 `ready = false` = 上一帧还在解码）⇒ 丢掉这帧照旧显示旧帧。
+    ///   **不**改喂别的格：取消在飞的解码（reactor `SetProperty(ImageSource)` 臂先
+    ///   `release_encoded_image_source`）再重喂 = StoreAsync + WIC 每次从头来，那格
+    ///   永远填不满；跳帧则把显示节奏自适应到解码吞吐上（最坏 24 fps → 解多快显示多快），
+    ///   过期帧本无显示价值（`skinplay` 帧槽同判）。
+    /// * 同帧不重喂：新帧字节与隐藏格现值相同 ⇒ reconciler 判 `EncodedImage` 属性未变
+    ///   （按字节判等），不发 SetProperty ⇒ 也不会有解码回执；此时把 `ready` 压下去，
+    ///   这格就永远「忙」—— 画面静止的视频（几秒后才动）会把整条腿冻死。同帧本来
+    ///   就无像可换，直接丢。
+    fn skin_video_ingest(&mut self, frame: std::sync::Arc<[u8]>) {
+        if self.skin_video_buffers[self.skin_video_front].is_none() {
+            self.skin_video_buffers[self.skin_video_front] = Some(frame);
+            self.skin_video_ready[self.skin_video_front] = false;
+            return;
+        }
+        let hidden = 1 - self.skin_video_front;
+        if !self.skin_video_ready[hidden] {
+            return;
+        }
+        if self.skin_video_buffers[hidden].as_deref() == Some(&*frame) {
+            return;
+        }
+        self.skin_video_buffers[hidden] = Some(frame);
+        self.skin_video_ready[hidden] = false;
     }
 
     /// 播放腿的上发条：睡一觉等下一帧，回来回一条 [`Msg::SkinVideoFrame`]。
@@ -51780,8 +52185,17 @@ mod agent_mode_selector_tests {
         );
         assert!(menu.contains("Msg::AgentModePick("), "行没接 action ⇒ 又是画出来的死控件");
         assert!(
-            menu.contains("row.checked.then_some(ButtonStyle::Accent)"),
-            "`RadioMenuFlyoutItem` 的勾选位在 reactor 永久抄不动 ⇒ 当前档要用强调底表达"
+            menu.contains("menu_radio_row_content(text, row.checked, &p)"),
+            "`RadioMenuFlyoutItem` 的勾选位照主干实拍落成勾点列 + 文字（`tmp-cap/flyout-main-\
+             agentmode.png`：当前档 = 点 5×5 + 常色字，整行不染色）"
+        );
+        assert!(
+            !menu.contains("ButtonStyle::Accent"),
+            "主干实拍没有整行强调底 ⇒ Accent 脸不许回潮"
+        );
+        assert!(
+            menu.contains("selector_card_margins(self.selector_anchor, AGENT_MODE_FLYOUT_WIDTH)"),
+            "卡落点 = 触发器按下锚（Placement=Top 的分叉等价），不是贴左下"
         );
         // 两条文案通路：`builtin` 旗分岔，且只有一处过表。
         assert!(menu.contains("if row.builtin"));
@@ -56160,8 +56574,9 @@ mod mw6_model_plan_tests {
     }
 
     /// **L-M3**：层本体两区两分隔（`MW:13524-13575`）—— 区头是**画出来的字**不是按住的钮
-    /// （本仓硬规矩），当前档只有 `ButtonStyle::Accent` 一枚脸且行内**不加**「（当前）」，
-    /// 且层只发 Msg（目录重拉在 `SelectorToggle` 那一臂）。
+    /// （本仓硬规矩），档位行 = 勾点列 + 文字、模型行 = **无**当前标记（主干是普通
+    /// `MenuFlyoutItem`，`MC:13536`；实拍 `tmp-cap/flyout-main-model.png` 两处都没有强调底），
+    /// 行内**不加**「（当前）」，且层只发 Msg（目录重拉在 `SelectorToggle` 那一臂）。
     #[test]
     fn the_model_flyout_paints_two_sections_and_marks_only_the_current_row() {
         let source = include_str!("main.rs");
@@ -56173,16 +56588,93 @@ mod mw6_model_plan_tests {
         );
         assert!(menu.contains(concat!("ModelOption_", "{}")), "行 id = 主干那枚显示名（MX 家族口径）");
         assert!(menu.contains(concat!("EffortOption_", "{}")));
-        assert_eq!(menu.matches(concat!(".then_some(ButtonStyle::", "Accent)")).count(), 2, "两区各一枚脸");
-        assert!(!menu.contains("（当前）"), "RadioMenuFlyoutItem 的 checked 不可移植 ⇒ 不往文案里塞推论");
+        assert!(
+            !menu.contains("ButtonStyle::Accent"),
+            "主干实拍没有整行强调底 ⇒ 模型行无标记、档位行走勾点列（menu_radio_row_content）"
+        );
+        assert_eq!(
+            menu.matches("menu_radio_row_content(").count(),
+            1,
+            "勾点行只有档位那一族（模型行是普通 MenuFlyoutItem，无勾选位）"
+        );
+        assert!(
+            menu.contains("row.id == state.effort"),
+            "档位行的勾选判据 = 主干 `IsChecked = id == _reasoningEffort` 那一枚"
+        );
+        assert!(
+            menu.contains("model_option_description(catalog, &row.provider, &row.id, &row.description)"),
+            "模型行的说明 = 主干 `MC:24-52` 那条 -flash/-pro 合成规则，不是裸 catalog 字段"
+        );
+        assert!(!menu.contains("（当前）"), "勾选呈现走勾点位，不往文案里塞推论");
         assert!(!menu.contains("is_enabled(false)"), "区头不许画成按住的钮");
         assert_eq!(menu.matches("menu_section_header(").count(), 3, "模型区头 + 推理区头 + 两档说明");
         assert_eq!(menu.matches("menu_flyout_separator(").count(), 1);
         assert!(menu.contains("模型"), "两枚区头文案都过表");
         assert!(menu.contains("推理等级"));
+        assert!(
+            menu.contains("selector_card_margins(self.selector_anchor, MODEL_FLYOUT_WIDTH)"),
+            "卡落点 = 触发器按下锚（Placement=Top 的分叉等价），不是贴左下"
+        );
         for forbidden in [".call(", "spawn_background", "execute_command", "settings/mutate"] {
             assert!(!menu.contains(forbidden), "层本体里不该有 {forbidden}：它只发 Msg");
         }
+    }
+
+    /// **L-M3b**：弹层形制常数 = 主干实拍的量测值（`tmp-cap/flyout-main-{agentmode,model}.png`，
+    /// DPI 200%，px÷2=DIP）。这些数字一漂，弹层就跟主干形不再对齐 ⇒ 抬任何一个都要重拍
+    /// 两壳的弹出态证据、重对一次像素。
+    #[test]
+    fn the_flyout_geometry_constants_match_the_mainline_pixel_evidence() {
+        assert_eq!(
+            MENU_ITEM_MARGIN,
+            [4.0, 0.0, 4.0, 0.0],
+            "横向 4 = 主干 MenuFlyoutItemMargin；竖向归 0（模板 padding 已含 11，见常量注）"
+        );
+        assert_eq!(
+            MENU_ITEM_PADDING,
+            [11.0, 4.0, 11.0, 5.0],
+            "主干 MenuFlyoutItemThemePadding 的 NarrowPadding 档（桌面非触态；只喂 Border）"
+        );
+        assert_eq!(MENU_ROW_MIN_HEIGHT, 32.0, "实拍行距 64px@200%");
+        assert_eq!(MENU_RADIO_DOT, 5.0, "实拍勾点 10px@200%");
+        assert_eq!(MENU_RADIO_COLUMN, 14.5, "CheckGlyph FontIcon@12 的字形步进");
+        assert_eq!(MENU_RADIO_GAP, 16.0, "CheckGlyph.Margin 右距");
+        assert_eq!(AGENT_MODE_FLYOUT_WIDTH, 115.5, "实拍卡宽 231px@200%");
+        assert_eq!(MODEL_FLYOUT_WIDTH, 575.5, "实拍卡宽 1151px@200%");
+        assert_eq!(FLYOUT_GAP_ABOVE_TRIGGER, 5.5, "实拍卡下缘到触发器上沿 11px@200%");
+        assert_eq!(FLYOUT_TRIGGER_HALF_HEIGHT, 16.0, "DefaultButtonStyle MinHeight 32 的一半");
+    }
+
+    /// **L-M3c**：模型行说明的合成规则（主干 `MC:24-52`）：`-flash`/`-pro` 后缀优先于
+    /// catalog 字段，两段英文原文逐字命中也过表，其余原样。
+    #[test]
+    fn the_model_row_description_follows_the_mainline_synthesis_rule() {
+        let zh = zh();
+        assert_eq!(
+            model_option_description(&zh, "deepseek-official", "mimo-v2.6-flash", ""),
+            zh.l("快速、高效且经济；适合目标明确、常规或并行任务。"),
+            "后缀规则命中 ⇒ catalog 没给 description 也写两行"
+        );
+        assert_eq!(
+            model_option_description(&zh, "deepseek-official", "deepseek-v4-pro", "别的原文"),
+            zh.l("更强的自主编码、知识与复杂推理能力；适合复杂或质量优先的任务，但成本更高。"),
+            "后缀规则优先于 catalog 的 description（主干那两个 if 先 return）"
+        );
+        assert_eq!(
+            model_option_description(&zh, "p", "glm-5.2", "Fast, efficient, and economical; suited to focused, routine, or parallel tasks."),
+            zh.l("快速、高效且经济；适合目标明确、常规或并行任务。"),
+            "英文原文逐字命中 ⇒ 过表（主干 MC:42-48 那个 match）"
+        );
+        assert_eq!(
+            model_option_description(&zh, "p", "glm-5.2", ""),
+            "",
+            "无后缀无描述 ⇒ 单行"
+        );
+        assert_eq!(
+            model_option_description(&zh, "p", "kimi-k3", "some catalog blurb"),
+            "some catalog blurb",
+            "未命中的原文直出（主干 `_ => desc`）"
+        );
     }
 
     /// **L-M4**：两发 RPC 各只有**一处**落点（整文件计数，注释里那些反引号串不算）。
@@ -56525,7 +57017,8 @@ mod mr3_oneway_rpc_tests {
         // 注释 + 3 行 `if`。两枚锚之间**没有**新插臂（`Msg::UsageLiveTick` 仍是紧邻的下一臂）
         // ⇒ 尾锚无处可挪、换锚反而丢形，40→**48** 按实测放宽；真漂（窗卷进后续臂，一臂就
         // ~9 行、卷到 UsageStats 再 +30）依旧远超 48，下限 8 照旧挡起点锚塌掉。
-        assert!((8..=48).contains(&arm.lines().count()), "Section 臂锚漂了");
+        // 2026-11-04 转场刀再 +5（changed 闸 + start_settings_entrance 两行 + 注释）⇒ 48→**50**。
+        assert!((8..=50).contains(&arm.lines().count()), "Section 臂锚漂了");
         assert!(
             arm.contains(concat!("self.", "ensure_settings_snapshot(context)")),
             "换分区没去拉快照 ⇒ 三档读法的 ② 档永远不可达"
@@ -66657,25 +67150,26 @@ mod skin_video_play_tests {
     const E_VID: &str = concat!("Msg::SkinPoster(Ok(Some(poster))) =", "> {");
     const A_RECEIPT: &str = concat!("Msg::SkinVideoFrame(", "take) => {");
     const E_RECEIPT: &str = concat!("Msg::PetInstall =", "> {");
+    const A_INGEST: &str = concat!("fn skin_video_", "ingest(");
+    const E_INGEST: &str = concat!("fn arm_skin_", "video_tick(");
     // 开机那一拍：起点锚必须**早于**两发调用（`window` 是先切头再在余量里找尾，
     // 拿调用点本身当起点锚的话，它在余量里已经不在场了 —— 实测踩过）。
     const A_BOOT: &str = concat!("// #240 视频皮肤海报：主干开机", "");
     const E_BOOT: &str = concat!("// 键盘钩子 = 分叉唯一的按键通路", "");
 
-    // ---------------- ① 背景层的分流：有帧走帧源，没帧回落静图 ------------------
+    // ---------------- ① 背景层的分流：泵在册走双缓冲，不在册回落静图 ------------------
 
-    /// `mw2_skin_backdrop` 是播放腿唯一的**出画**口。分流的判据只能是「这一帧到没到」：
-    /// 帧槽有值 ⇒ 喂 `source_data(EncodedImage)`（BMP 字节，`skinplay` 帧泵按目标帧率换）；
-    /// `None` ⇒ 回落 `skin_path` 那颗静图（图片皮肤 = 图片本身，视频皮肤 = 海报帧）。
-    /// 两条腿共用同一个宿主（reactor 的 `Image` 一次只持一个 source），所以这不是「择优」
-    /// 而是「分流」—— 写成 if-else 链、或反过来先看 `skin_path`，都会让首帧那阵子画错东西。
+    /// `mw2_skin_backdrop` 是播放腿唯一的**出画**口。分流的判据只能是「泵在不在册」：
+    /// 在册 ⇒ 海报底衬 + 两枚缓冲格（清屏只发生在隐藏格上，前格恒有帧）；不在册 ⇒
+    /// 回落 `skin_path` 那颗静图（图片皮肤 = 图片本身，视频皮肤 = 海报帧）。
+    /// 写成 if-else 链、或反过来先看 `skin_path`，都会让首帧那阵子画错东西。
     #[test]
     fn the_backdrop_feeds_the_frame_source_and_falls_back_to_the_still_image() {
         let source = include_str!("main.rs");
         let body = code_window(source, A_BACKDROP, E_BACKDROP);
         assert!(
-            body.contains("match self.skin_video_frame.as_ref()"),
-            "背景层的分流判据不见了：那必须是 skin_video_frame 一个 match，没有第二个判据"
+            body.contains(concat!("if self.skin_video.", "is_some() {")),
+            "背景层的分流判据不见了：那必须是「泵在册与否」一个分流，没有第二个判据"
         );
         assert!(
             body.contains(concat!("source_data(EncodedImage::", "new(")),
@@ -66689,6 +67183,43 @@ mod skin_video_play_tests {
         assert!(
             body.contains(concat!("source_file(self.skin_path.as_ref()?", ".as_path())")),
             "没帧那一支没回落静图：首帧未到/泵已死时会露出底下 surface_alt，不是设计"
+        );
+    }
+
+    // ---------------- ①b 双缓冲的出画形状：两枚 key 稳定的缓冲格 + on_opened 回执 ----------
+
+    /// 不闪的三根支柱，缺一根就退回「逐帧清屏」：
+    /// ① 两枚缓冲格各有**稳定 key**（keyed_children 保节点身份跨轮不变 —— 节点一换，
+    ///    源就得重喂、清屏重演）；
+    /// ② opacity 按 front 分 1/0（清屏与异步解码只许发生在 0 的那格上）；
+    /// ③ `on_opened` 接 [`Msg::SkinVideoReady`] —— 解码完成的翻面信号。
+    #[test]
+    fn the_backdrop_double_buffers_with_stable_keys_and_a_decode_ready_flip() {
+        let source = include_str!("main.rs");
+        let body = code_window(source, A_BACKDROP, E_BACKDROP);
+        assert!(
+            body.contains(concat!("for (index, frame) in self.skin_video_", "buffers.iter().enumerate()")),
+            "缓冲格不是从双缓冲数组长出来的：少一格 = 退回单层逐帧清屏"
+        );
+        assert!(
+            body.contains(concat!("skin-video-buffer-", "{index}")),
+            "缓冲格没有稳定 key：节点身份跨轮漂移 ⇒ 每轮重建 = 每轮清屏"
+        );
+        assert!(
+            body.contains(concat!("if self.skin_video_", "front == index")),
+            "opacity 没按 front 分：新帧喂进了观众眼前的那格 = 逐帧清屏闪"
+        );
+        assert!(
+            body.contains(concat!(".on_opened(context.message(Msg::SkinVideo", "Ready(index)))")),
+            "on_opened 没接翻面回执：解码完成的信号收不到，隐藏格永远「忙」"
+        );
+        assert!(
+            body.contains(concat!(".on_failed(context.message(Msg::SkinVideo", "Failed(index)))")),
+            "on_failed 没接解忙回执：解码失败一格就冻死整条腿"
+        );
+        assert!(
+            body.contains(concat!("KeyedView::new(", "\"skin-video-underlay\"")),
+            "海报底衬丢了：「起泵 → 首帧就绪」那一段没有回落底"
         );
     }
 
@@ -66755,10 +67286,10 @@ mod skin_video_play_tests {
             )),
             "起泵判据变了：必须是「.video 在册 且 .img 缺席」这一个合取，别拆成两个 if"
         );
-        // 起泵前先清帧格：不这么做，「上一个泵留下的最后一帧」会在新泵首帧之前画出去。
+        // 起泵前先清缓冲：不这么做，「上一个泵留下的最后一帧」会在新泵首帧之前画出去。
         let clear_at = body
-            .find(concat!("self.skin_video_fr", "ame = None;"))
-            .unwrap_or_else(|| panic!("sync_skin_video 里没有清帧格"));
+            .find(concat!("self.reset_skin_video_", "buffers();"))
+            .unwrap_or_else(|| panic!("sync_skin_video 里没有清缓冲"));
         let start_at = body
             .find(concat!("skinplay::", "start_pump("))
             .unwrap_or_else(|| panic!("sync_skin_video 里没有起泵"));
@@ -66825,14 +67356,14 @@ mod skin_video_play_tests {
         );
     }
 
-    // ---------------- ⑤ 写口唯一性：帧格三处、闸位三处、装泵一处 ------------------
+    // ---------------- ⑤ 写口唯一性：缓冲三格、闸位三处、装泵一处 ------------------
 
     /// 这几组计数锁的是「单一真相」：任何一处多出来，就意味着有第二条腿在偷偷改播放状态，
     /// 而那种分歧在运行期只表现为「背景偶尔不换图」—— 极难定位。
     ///
     /// ⚠ 计数针自己也会被数进来：`concat!` 的两个片段之间隔着 `", "`，所以**整串**在源码里
-    /// 不出现；但 `concat!("self.skin_video_frame =", "")` 这种空尾缀会让整串原样落在
-    /// 本文件里，把自己数成第 4 发（2026-10-12 实测红过）。所以下面每一枚都在**词中**断开。
+    /// 不出现；但 `concat!("self.skin_video_front =", "")` 这种空尾缀会让整串原样落在
+    /// 本文件里，把自己数成多发（2026-10-12 实测红过）。所以下面每一枚都在**词中**断开。
     #[test]
     fn the_playback_state_has_exactly_one_writer_per_slot() {
         let source = include_str!("main.rs");
@@ -66847,10 +67378,46 @@ mod skin_video_play_tests {
             1,
             "泵把手只能由 stop_skin_video 一处摘下（stop 消费把手，两处就会漏 join）"
         );
+        // 双缓冲三格的**整格**复位只能一处（reset_skin_video_buffers），调用点两处
+        // （起泵前 / 停泵后）—— 复位逻辑两份 = 两份「空格不算忙」的初值约定，必漂。
         assert_eq!(
-            code.matches(concat!("self.skin_video_fr", "ame =")).count(),
-            3,
-            "帧格只能有三个写口：起泵清帧 / 停泵清帧 / 回执入帧"
+            code.matches(concat!("self.skin_video_buffers =", " [None, None]")).count(),
+            1,
+            "缓冲格整格复位只能由 reset_skin_video_buffers 一处写"
+        );
+        assert_eq!(
+            code.matches(concat!("self.skin_video_ready =", " [true, true]")).count(),
+            1,
+            "忙碌旗整格复位只能由 reset_skin_video_buffers 一处写"
+        );
+        assert_eq!(
+            code.matches(concat!("self.reset_skin_video_", "buffers();")).count(),
+            2,
+            "复位只能有两个调用点：sync_skin_video 起泵前 / stop_skin_video 停泵后"
+        );
+        // 入帧的两条腿（首帧喂前格 / 常态喂隐藏格）各只许一处。
+        assert_eq!(
+            code.matches(concat!("self.skin_video_buffers[self.skin_video_", "front] = Some(frame)"))
+                .count(),
+            1,
+            "首帧直喂前格只许一处（skin_video_ingest 的首帧特例）"
+        );
+        assert_eq!(
+            code.matches(concat!("self.skin_video_buffers[hidden] =", " Some(frame)")).count(),
+            1,
+            "常态入帧只许喂隐藏格一处（前格清屏 = 闪）"
+        );
+        // 翻面只许一处（SkinVideoReady 臂）；复位里的归零是另一枚针（上面的整格复位）。
+        assert_eq!(
+            code.matches(concat!("self.skin_video_front =", " index;")).count(),
+            1,
+            "翻面只许由 SkinVideoReady 一处写"
+        );
+        // 「解忙」两档（Ready 成功 / Failed 失败）各一处 —— 多出来的多半是绕过了 ingest。
+        assert_eq!(
+            code.matches(concat!("self.skin_video_ready[index] =", " true")).count(),
+            2,
+            "解忙只能有 SkinVideoReady / SkinVideoFailed 两处"
         );
         assert_eq!(
             code.matches(concat!("self.skin_video_ar", "med =")).count(),
@@ -66887,11 +67454,11 @@ mod skin_video_play_tests {
 
     // ---------------- ⑦ 收尾与上发条各自的四件事 ------------------
 
-    /// `stop_skin_video` 是播放腿唯一的收口：摘把手（`take` → `stop` 同步 join）、清帧格、
-    /// 复闸位。少任何一件都对应一个具体的坏味道：漏 `take` = 把手被 Drop 时静默停但
-    /// 闸位还架着；漏清帧 = 停泵后背景还停在最后一帧；漏复闸 = 下一次起泵时上不了发条。
+    /// `stop_skin_video` 是播放腿唯一的收口：摘把手（`take` → `stop` 同步 join）、清缓冲
+    /// 三格、复闸位。少任何一件都对应一个具体的坏味道：漏 `take` = 把手被 Drop 时静默停
+    /// 但闸位还架着；漏清缓冲 = 停泵后背景还停在最后一帧；漏复闸 = 下一次起泵时上不了发条。
     #[test]
-    fn stopping_the_pump_releases_all_three_cells() {
+    fn stopping_the_pump_releases_all_cells() {
         let source = include_str!("main.rs");
         let body = code_window(source, A_STOP, E_STOP);
         assert!(
@@ -66903,8 +67470,8 @@ mod skin_video_play_tests {
             "停泵没调 PumpHandle::stop：没有同步 join，MF 还持着文件句柄"
         );
         assert!(
-            body.contains(concat!("self.skin_video_fr", "ame = None;")),
-            "停泵没清帧格：背景会停在视频最后一帧，而不是回落海报"
+            body.contains(concat!("self.reset_skin_video_", "buffers();")),
+            "停泵没清双缓冲三格：背景会停在视频最后一帧，而不是回落海报"
         );
         assert!(
             body.contains(concat!("self.skin_video_ar", "med = false;")),
@@ -66937,6 +67504,51 @@ mod skin_video_play_tests {
         assert!(
             body.contains(concat!("Msg::SkinVideoFrame(slot.", "take_frame())")),
             "取货任务没走 FrameSlot::take_frame：等多久的口径从 lib 侧漏到了壳里"
+        );
+    }
+
+    // ---------------- ⑧ 双缓冲入帧：忙跳帧、同帧不重喂、翻面有闸 ------------------
+
+    /// 「旧帧保持到新帧就绪」的三道闸，缺一道都有名字很具体的坏味道：
+    /// 忙不跳帧 = 每帧取消在飞的解码（reactor 换源先 `release_encoded_image_source`），
+    /// 那格永远填不满；同帧重喂 = `ready` 被压下后没有回执来抬（reconciler 判属性未变
+    /// 不发 SetProperty ⇒ 没有解码回执），静止画面冻死整条腿；翻面没闸 = 迟到的回执把
+    /// `front` 翻到没解码的空格上，自己制造空窗。
+    #[test]
+    fn the_ingest_skips_when_busy_and_the_flip_is_gated() {
+        let source = include_str!("main.rs");
+        let ingest = code_window(source, A_INGEST, E_INGEST);
+        // 首帧特例在前：前格还空着 ⇒ 直接喂前格（它此刻透明，清它看不见），省一拍翻面。
+        let boot_at = ingest
+            .find(concat!("self.skin_video_buffers[self.skin_video_", "front] = Some(frame)"))
+            .unwrap_or_else(|| panic!("入帧没有首帧特例"));
+        // 忙则跳帧：忙检必须先于隐藏格写口（顺序反了 = 每帧都取消在飞的解码）。
+        let busy_at = ingest
+            .find(concat!("if !self.skin_video_re", "ady[hidden] {"))
+            .unwrap_or_else(|| panic!("入帧没有「忙」检"));
+        let feed_at = ingest
+            .find(concat!("self.skin_video_buffers[hidden] =", " Some(frame)"))
+            .unwrap_or_else(|| panic!("入帧没有隐藏格写口"));
+        assert!(
+            boot_at < busy_at && busy_at < feed_at,
+            "入帧的三道闸顺序反了：首帧特例 → 忙检 → 入帧，缺一道或换了位都有具体坏味道"
+        );
+        // 同帧不重喂：字节与隐藏格现值相同直接丢（没有回执来解忙，压 ready = 冻死）。
+        assert!(
+            ingest.contains(concat!("as_deref() ==", " Some(&*frame)")),
+            "同帧重喂没被闸住：静止画面会把 ready 压死后无人抬起，整条腿冻死"
+        );
+        // 翻面双闸（泵活着 + 不是前格 + 格上有帧）必须先于翻面写口。
+        let receipt = code_window(source, A_RECEIPT, E_RECEIPT);
+        let gate_at = receipt
+            .find(concat!("if index != self.skin_video_", "front && self.skin_video_buffers[index].is_some()"))
+            .unwrap_or_else(|| panic!("翻面没有双闸"));
+        let flip_at = receipt
+            .find(concat!("self.skin_video_front =", " index;"))
+            .unwrap_or_else(|| panic!("回执区没有翻面写口"));
+        assert!(
+            gate_at < flip_at,
+            "翻面排在双闸之前：空格/迟到回执会把 front 翻到没解码的格上闪"
         );
     }
 }
@@ -67295,6 +67907,61 @@ mod r3_parity_tests {
             source.matches(concat!("\"section-", "desc\"")).count(),
             1,
             "段说明的键字面量回到多处：顶距只有一处真相（共用颗）"
+        );
+    }
+
+    // ---------------- 转场刀：设置页钻取上浮 ----------------
+
+    /// 主干 `PlaySettingsDrillIn/DrillOut`（`MW:9751/9802`）的分叉等价 = margin+opacity
+    /// 逐帧近似（reactor 0.100 无 TranslateY/Storyboard，`ExitTransition` 只有 fade）。
+    /// 锁四件事：①三常量（步数/间隔/位移=主干 `SettingsDrillSlideOffset`）；②视图把
+    /// 转场帧喂给正文容器；③三触发臂（换分区按 changed 闸、进二级页、返回）+ tick
+    /// 推进（减步+再武装）；④返回方向落在曲线上（自左）。
+    /// 变异：摘掉任一触发臂 / 把位移常量改小 / tick 不再武装 ⇒ 相应 assert 翻红。
+    #[test]
+    fn the_settings_drill_in_animates_margin_and_opacity_in_eight_steps() {
+        let source = include_str!("main.rs");
+        assert!(
+            source.contains("const SETTINGS_ENTRANCE_STEPS: u8 = 8;"),
+            "步数常量漂了"
+        );
+        assert!(
+            source.contains("const SETTINGS_ENTRANCE_TICK_MS: u64 = 32;"),
+            "步间隔漂了"
+        );
+        assert!(
+            source.contains("const SETTINGS_DRILL_OFFSET: f64 = 120.0;"),
+            "位移峰值（主干 SettingsDrillSlideOffset）漂了"
+        );
+        assert!(
+            source.contains(".margin(th(settings_entrance_margin(entrance)))")
+                && source.contains(".opacity(settings_entrance_opacity(entrance))"),
+            "settings_page 没把转场帧喂给正文容器"
+        );
+        let section_arm = fn_body(source, "Msg::Section(id) => {", "Msg::OpenSub(id)");
+        assert!(
+            section_arm.contains("let section_changed = self.section != id;")
+                && section_arm.contains("self.start_settings_entrance(false, context);"),
+            "换分区臂没按 changed 闸播上浮（同节重进不许播）"
+        );
+        let open_arm = fn_body(source, "self.sub = Some(id);", "Msg::CloseSub =>");
+        assert!(
+            open_arm.contains("self.start_settings_entrance(false, context);"),
+            "钻取进二级页没播上浮"
+        );
+        let close_arm = fn_body(source, "Msg::CloseSub => {", "Msg::SettingsEntranceTick => {");
+        assert!(
+            close_arm.contains("self.start_settings_entrance(true, context);"),
+            "返回一级页没播自左滑回"
+        );
+        let tick = fn_body(source, "Msg::SettingsEntranceTick => {", "fn start_settings_entrance");
+        assert!(
+            tick.contains("saturating_sub(1)") && tick.contains("SETTINGS_ENTRANCE_TICK_MS"),
+            "tick 推进缺减步/缺再武装"
+        );
+        assert!(
+            source.contains("if back {\n                [-off, 0.0, 0.0, 0.0]\n            }"),
+            "返回方向（自左）没落在曲线上"
         );
     }
 }
