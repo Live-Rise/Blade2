@@ -1,0 +1,70 @@
+|Window|Blade²
+  |Pane|Non Client Input Sink Window
+  |Pane|AppWindow Custom Title Bar
+    Minimize|Button|Minimize
+    Maximize|Button|Maximize
+    Close|Button|Close
+  |Pane|
+    |Pane|
+      |TitleBar|内核: 已连接 http://127.0.0.1:23519/?token=T6lg2JvFQjVBa_oXMCN0MRHUTdMuXkelUnXv9uuP3cE (pid 30792)
+      ShellBackButton|Button|返回
+      |Image|
+      |Text|Blade²
+      SessionSearchBox|Edit|搜索会话
+      SettingsSection_general|Button|通用设置
+        |Text|通用设置
+      SettingsSection_personalization|Button|个性化
+        |Text|个性化
+      SettingsSection_models|Button|模型
+        |Text|模型
+      SettingsSection_plugins|Button|插件
+        |Text|插件
+      SettingsSection_skills|Button|技能
+        |Text|技能
+      SettingsSection_memory|Button|记忆
+        |Text|记忆
+      SettingsSection_pet|Button|宠物
+        |Text|宠物
+      SettingsSection_agent-presets|Button|Agent 预设
+        |Text|Agent 预设
+      SettingsSection_computer-control|Button|电脑控制
+        |Text|电脑控制
+      SettingsSection_browser-control|Button|浏览器控制
+        |Text|浏览器控制
+      SettingsSection_usage|Button|使用统计
+        |Text|使用统计
+      SettingsSection_about|Button|关于
+        |Text|关于
+      SettingsItem|Button|设置
+        |Text|设置
+      |Image|
+      |Image|
+      |Text|插件
+      |Pane|
+        |Text|配置和查看本部署已安装的插件。
+        PluginsNav_shell|Button|终端
+          |Text|终端
+          |Text|命令超时、单流输出上限。
+        PluginsNav_agentLoop|Button|Agent 循环
+          |Text|Agent 循环
+          |Text|同一步内最多同时运行多少个可并行的调用。
+        PluginsNav_subagent|Button|Subagent
+          |Text|Subagent
+          |Text|控制 Agent 为 Subagent 选择模型的权限。
+        PluginsNav_webSearch|Button|网页搜索
+          |Text|网页搜索
+          |Text|DeepSeek 搜索提供方：密钥、接口地址、搜索次数。
+        PluginsNav_autoApproval|Button|自动审查
+          |Text|自动审查
+          |Text|越界工具调用的自动授权审查开关。
+        PluginsNav_defaults|Button|默认插件
+          |Text|默认插件
+          |Text|默认插件组合的安装与挂载状态。
+        VerticalScrollBar|ScrollBar|垂直
+      LayoutSplitterSidebar|Group|调整侧栏宽度
+  TitleBar|TitleBar|Blade²
+    SystemMenuBar|MenuBar|系统菜单栏
+      Item 1|MenuItem|系统
+    Minimize|Button|最小化
+    Maximize|Button|最大化
+    Close|Button|关闭

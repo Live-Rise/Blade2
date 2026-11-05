@@ -1,0 +1,66 @@
+|Window|Blade²
+  |Pane|Non Client Input Sink Window
+  |Pane|AppWindow Custom Title Bar
+    Minimize|Button|Minimize
+    Maximize|Button|Maximize
+    Close|Button|Close
+  |Pane|
+    |Pane|
+      ShellBackButton|Button|返回
+      |Text|Blade²
+      SessionSearchBox|Group|搜索会话
+        TextBox|Edit|搜索会话
+          |Text|搜索会话…
+      Nav|Custom|
+        PaneRoot|Window|
+          MenuItemsScrollViewer|Pane|
+            MenuItemsHost|Group|
+              SettingsSection_general|ListItem|通用设置
+              SettingsSection_personalization|ListItem|个性化
+              SettingsSection_models|ListItem|模型
+              SettingsSection_plugins|ListItem|插件
+              SettingsSection_skills|ListItem|技能
+              SettingsSection_memory|ListItem|记忆
+              SettingsSection_pet|ListItem|宠物
+              SettingsSection_agent-presets|ListItem|Agent 预设
+              SettingsSection_computer-control|ListItem|电脑控制
+              SettingsSection_browser-control|ListItem|浏览器控制
+              SettingsSection_usage|ListItem|使用统计
+              SettingsSection_about|ListItem|关于
+          FooterItemsScrollViewer|Pane|
+            FooterMenuItemsHost|Group|
+              SettingsItem|ListItem|设置
+        SettingsPageHeader|Text|关于
+        ConnectionStatusBar|Group|连接状态
+        SettingsScroller|Pane|
+          SettingsHost|Group|设置内容列
+            |Text|Blade² 的版本信息与更新。更新通过覆盖安装新版本 MSIX 完成（安装前需先退出应用）。
+            |Text|版本
+            |Text|当前版本
+            |Text|壳版本（打包形态与安装包版本一致）
+            |Text|0.9.0.4
+            |Text|内核版本
+            |Text|随包发行的 dsh 内核版本
+            |Text|0.2.1-rc.3
+            |Text|内核加载
+            |Text|本次启动内核引导里程碑（末行为整链进度百分比）
+            |Text|默认插件就绪
+认证完成
+事件通道就绪
+工作区清单就绪
+会话与模型就绪
+引导完成
+100%
+            |Text|品牌与声明
+            |Text|版本通道
+            |Text|DSH 本地构建
+            |Text|预览版
+            |Text|内测声明
+            |Text|DeepSeek Harness 目前的 0.1 版本仍处在面向 Harness 开发者进行测试的阶段，还有许多地方需要持续改进和打磨，希望听取广大开发者的反馈建议。预计 DeepSeek Harness 的核心插件以及基础 API 都会在接下来的一段时间内快速迭代、持续演化。
+            |Text|我们期待与全球开发者一起，在开源、开放、可复用、可组合的基础设施之上，共同探索智能上限。欢迎全球 Harness 开发者加入 DSH 插件生态。
+            |Text|更新
+            |Text|更新源：github.com/Live-Rise/Blade2
+            |Text|GitHub Release
+            |Text|https://github.com/Live-Rise/Blade2/releases/latest
+            AboutCheckUpdateButton|Button|检查更新
+          VerticalScrollBar|ScrollBar|垂直

@@ -1,0 +1,64 @@
+|Window|Blade²
+  |Pane|Non Client Input Sink Window
+  |Pane|AppWindow Custom Title Bar
+    Minimize|Button|Minimize
+    Maximize|Button|Maximize
+    Close|Button|Close
+  |Pane|
+    |Pane|
+      |TitleBar|连接状态
+      ShellBackButton|Button|返回
+      |Image|
+      |Text|Blade²
+      SessionSearchBox|Edit|搜索会话
+      SettingsSection_general|Button|通用设置
+        |Text|通用设置
+      SettingsSection_personalization|Button|个性化
+        |Text|个性化
+      SettingsSection_models|Button|模型
+        |Text|模型
+      SettingsSection_plugins|Button|插件
+        |Text|插件
+      SettingsSection_skills|Button|技能
+        |Text|技能
+      SettingsSection_memory|Button|记忆
+        |Text|记忆
+      SettingsSection_pet|Button|宠物
+        |Text|宠物
+      SettingsSection_agent-presets|Button|Agent 预设
+        |Text|Agent 预设
+      SettingsSection_computer-control|Button|电脑控制
+        |Text|电脑控制
+      SettingsSection_browser-control|Button|浏览器控制
+        |Text|浏览器控制
+      SettingsSection_usage|Button|使用统计
+        |Text|使用统计
+      SettingsSection_about|Button|关于
+        |Text|关于
+      SettingsItem|Button|设置
+        |Text|设置
+      |Image|
+      |Image|
+      |Text|记忆
+      |Pane|
+        |Text|记忆通过内核 dsh-mcp-client 挂载 MCP 参考记忆服务器（@modelcontextprotocol/server-memory），模型可跨会话写入与召回信息。开关编辑内核 profile patch 的 disabled 标志，由内核热重载即时生效。
+        |Text|持久记忆
+        |Text|关闭后模型不再写入或读取记忆；已有记忆文件保留不动。
+        |Text|已启用（内核热重载后生效）
+        |Text|开
+        Setting_memory_enabled|Button|启用持久记忆
+        |Text|记忆存储
+        |Text|知识图谱 JSONL（由记忆服务器自身管理，删除即清空记忆）：
+        |Text|C:\Users\Admin\.dsh-mcp-reference-memory.jsonl
+        |Text|记忆内容
+        |Text|直接编辑记忆文件（JSONL）。停止输入或点到别处即自动保存；自然语言行会自动转成记忆实体；模型写入时自动重新载入。
+        MemoryContentEditor|Edit|记忆文件内容
+        |Text|共 0 行 · 停止输入后自动保存
+        VerticalScrollBar|ScrollBar|垂直
+      LayoutSplitterSidebar|Group|调整侧栏宽度
+  TitleBar|TitleBar|Blade²
+    SystemMenuBar|MenuBar|系统菜单栏
+      Item 1|MenuItem|系统
+    Minimize|Button|最小化
+    Maximize|Button|最大化
+    Close|Button|关闭

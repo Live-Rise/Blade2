@@ -1,0 +1,71 @@
+|Window|Blade²
+  |Pane|Non Client Input Sink Window
+  |Pane|AppWindow Custom Title Bar
+    Minimize|Button|Minimize
+    Maximize|Button|Maximize
+    Close|Button|Close
+  |Pane|
+    |Pane|
+      TitleBar|TitleBar|
+      |Text|Blade²
+      SessionSearchBox|Group|搜索会话
+        TextBox|Edit|搜索会话
+          |Text|搜索会话…
+      Nav|Custom|
+        PaneRoot|Window|
+          MenuItemsScrollViewer|Pane|
+            MenuItemsHost|Group|
+              NewSessionItem|ListItem|新建会话
+              WorkspaceSectionItem|ListItem|工作区
+                WorkspaceSectionHeaderText|Text|工作区
+                WorkspaceViewOptionsButton|Button|视图选项
+                AddWorkspaceButton|Button|添加工作区
+              Workspace_65e43817-78b2-4eaf-b9fa-b6e614607474|ListItem|DshWinUI
+              Workspace_50141382-d003-41d8-b9a5-51d1be06e0d9|ListItem|Documents
+              UngroupedSessionsItem|ListItem|未分组会话
+                Session_session-a0ce46c2-cfe0-4a03-845f-35abad2a4b0f|ListItem|导出谱面生成skill分享安装
+                  |Text|导出谱面生成skill分享安装
+                  |Text|3天前
+                  SessionMore_session-a0ce46c2-cfe0-4a03-845f-35abad2a4b0f|Button|会话操作：导出谱面生成skill分享安装
+                Session_session-006eae2c-2ef1-4c58-8e85-97d6838f772a|ListItem|下载智慧教育平台消防视频
+                  |Text|下载智慧教育平台消防视频
+                  |Text|4天前
+                  SessionMore_session-006eae2c-2ef1-4c58-8e85-97d6838f772a|Button|会话操作：下载智慧教育平台消防视频
+                Session_session-b0a5bc18-111c-4b43-bf02-561be5285377|ListItem|生成谱面链接视频
+                  |Text|生成谱面链接视频
+                  |Text|5天前
+                  SessionMore_session-b0a5bc18-111c-4b43-bf02-561be5285377|Button|会话操作：生成谱面链接视频
+                Session_session-ac4e837e-fcc8-4b5b-b7fe-10742cf073e8|ListItem|糖果摸取问题最少取数
+                  |Text|糖果摸取问题最少取数
+                  |Text|8天前
+                  SessionMore_session-ac4e837e-fcc8-4b5b-b7fe-10742cf073e8|Button|会话操作：糖果摸取问题最少取数
+                Session_session-9521ef0b-5c9c-4727-b552-6d1838869bc0|ListItem|糖果抽取保证问题
+                  |Text|糖果抽取保证问题
+                  |Text|8天前
+                  SessionMore_session-9521ef0b-5c9c-4727-b552-6d1838869bc0|Button|会话操作：糖果抽取保证问题
+                ExpandGroup_|ListItem|展开其余 181 个会话
+          FooterItemsScrollViewer|Pane|
+            FooterMenuItemsHost|Group|
+              SettingsItem|ListItem|设置
+        ChatList|List|对话消息列表
+        ChatHero|Group|空态：开始一段新的会话
+          HeroMarkImage|Image|
+          |Text|开始一段新的会话
+        InputBox|Edit|消息输入框
+        ComposerAddButton|Button|添加附件或操作
+        WorkspacePickerButton|Button|选择工作区
+          WorkspaceChipLabel|Text|选择工作区
+        AgentModeButton|Button|Agent 模式
+          AgentModeLabel|Text|标准模式
+        PermissionButton|Button|访问模式，当前：工作区内修改
+          PermissionLabel|Text|工作区内修改
+        ModelButton|Button|模型与推理等级，当前 MiMo-V2.6-Pro High
+          ModelEffortLabel|Text|MiMo-V2.6-Pro High
+        SendButton|Button|发送消息
+        LayoutSplitterSidebar|Group|调整侧栏宽度
+  TitleBar|TitleBar|Blade²
+    SystemMenuBar|MenuBar|系统菜单栏
+      Item 1|MenuItem|系统
+    Minimize|Button|最小化
+    Maximize|Button|最大化
+    Close|Button|关闭

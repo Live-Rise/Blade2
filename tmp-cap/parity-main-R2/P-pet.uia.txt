@@ -1,0 +1,116 @@
+|Window|Blade²
+  |Pane|Non Client Input Sink Window
+  |Pane|AppWindow Custom Title Bar
+    Minimize|Button|Minimize
+    Maximize|Button|Maximize
+    Close|Button|Close
+  |Pane|
+    |Pane|
+      ShellBackButton|Button|返回
+      |Text|Blade²
+      SessionSearchBox|Group|搜索会话
+        TextBox|Edit|搜索会话
+          |Text|搜索会话…
+      Nav|Custom|
+        PaneRoot|Window|
+          MenuItemsScrollViewer|Pane|
+            MenuItemsHost|Group|
+              SettingsSection_general|ListItem|通用设置
+              SettingsSection_personalization|ListItem|个性化
+              SettingsSection_models|ListItem|模型
+              SettingsSection_plugins|ListItem|插件
+              SettingsSection_skills|ListItem|技能
+              SettingsSection_memory|ListItem|记忆
+              SettingsSection_pet|ListItem|宠物
+              SettingsSection_agent-presets|ListItem|Agent 预设
+              SettingsSection_computer-control|ListItem|电脑控制
+              SettingsSection_browser-control|ListItem|浏览器控制
+              SettingsSection_usage|ListItem|使用统计
+              SettingsSection_about|ListItem|关于
+          FooterItemsScrollViewer|Pane|
+            FooterMenuItemsHost|Group|
+              SettingsItem|ListItem|设置
+        SettingsPageHeader|Text|宠物
+        ConnectionStatusBar|Group|连接状态
+        SettingsScroller|Pane|
+          SettingsHost|Group|设置内容列
+            |Text|桌面宠物由内核插件 @linxin666/dsh-pet 提供（Codex Pet 兼容）：聊天窗口里常驻一只宠物，模型干活时它跟着动，点它可以逗一逗。宠物素材装在 $DSH_HOME/pets，重启内核后收录。
+            |Text|显示
+            |Text|宠物显示在聊天窗口右下角，跟着模型的工作状态切换动画；点它可以互动。
+            |Text|显示宠物
+            |Text|关掉后窗口里不再显示，插件其余功能照常
+            PetVisibleToggle|Button|显示宠物
+            |Text|宠物大小
+            |Text|单元格高度的像素值，拖动即时生效
+            PetSizeSlider|Slider|宠物大小
+            |Text|160 px
+            |Text|Arima Kana
+            |Text|Codex 宠物
+            |Text|Arima Kana as portrayed in the manga Oshi no Ko: a 17-year-old genius former child actress and the lead singer of the new B-Komachi.
+            PetUse_kana|Button|使用宠物 Arima Kana
+            |Text|Asuka
+            |Text|Codex 宠物
+            |Text|A fiery chibi mecha pilot digital pet inspired by Asuka from Evangelion.
+            PetUse_asuka|Button|使用宠物 Asuka
+            |Text|Denia
+            |Text|Codex 宠物
+            |Text|A compact Codex digital pet based on Denia, a pink-haired fantasy girl with ornate blue, black, white, pink, and red details.
+            PetUse_denia|Button|使用宠物 Denia
+            |Text|Fern
+            |Text|本机安装
+            |Text|A poised purple-haired anime companion in a tiny black triangle top and oversized tan cable-knit cardigan.
+            PetUse_fern|Button|使用宠物 Fern
+            PetRemove_fern|Button|删除宠物 Fern
+            |Text|Little Ameath
+            |Text|Codex 宠物
+            |Text|A tiny pink winged pixel chibi companion with crystalline blue-white wings and a halo ornament.
+            PetUse_little-ameath|Button|使用宠物 Little Ameath
+            |Text|Perlica / 佩丽卡
+            |Text|Codex 宠物
+            |Text|A chibi silver-haired animal-eared tactical girl with blue eyes, a white tech coat, black gloves and boots, and small yellow utility accents.
+            PetUse_perlica|Button|使用宠物 Perlica / 佩丽卡
+            |Text|梦羽
+            |Text|使用中 · 本机安装
+            |Text|A Perlica-proportioned chibi pet of Mengyu, with pink twin tails, pink eyes, a black-and-pink sailor outfit, a cross hair clip, and asymmetric legwear.
+            PetUse_mengyu|Button|使用宠物 梦羽
+            PetRemove_mengyu|Button|删除宠物 梦羽
+            |Text|樱井麻衣
+            |Text|Codex 宠物
+            |Text|Q版动漫风格的樱井麻衣 Codex 桌宠。
+            PetUse_sakura-ch|Button|使用宠物 樱井麻衣
+            |Image|
+            |Text|鲸鱼娘（精致版）
+            |Text|插件内置
+            |Text|基于鲸鱼娘形象进行 AI 辅助二次创作、修复与细节精修的内置变体。
+            PetUse_whale-girl-refined|Button|使用宠物 鲸鱼娘（精致版）
+            |Text|安装宠物
+            |Text|兼容 Codex 宠物包（pet.json + 图集）。拖放 zip 到下方区域，或粘贴安装命令。
+            |Text|拖放以安装
+            |Text|把 Codex 宠物 zip 从文件资源管理器拖到这里即可安装
+            PetBrowseButton|Button|浏览并安装宠物压缩包
+            PetCommandBox|Edit|宠物安装命令行
+            PetInstallButton|Button|按命令行安装宠物
+            |Text|
+            |Text|诊断
+            |Text|宠物不显示时先看这里：插件在不在、注册表报了什么、壳能不能画。
+            |Text|宠物插件已安装并选入内核 bundle。
+            |Text|[warning] C:\Users\Admin\.codex\pets\asuka: C:\Users\Admin\.codex\pets\asuka: v1 compat read: no license field; run scripts/dsh-pet-migrate-v2 to migrate this pet
+            |Text|[warning] C:\Users\Admin\.codex\pets\asuka: C:\Users\Admin\.codex\pets\asuka: v1 compat read: manifest treated as renderer "sprite2d"; run scripts/dsh-pet-migrate-v2 to migrate
+            |Text|[warning] C:\Users\Admin\.codex\pets\denia: C:\Users\Admin\.codex\pets\denia: v1 compat read: no license field; run scripts/dsh-pet-migrate-v2 to migrate this pet
+            |Text|[warning] C:\Users\Admin\.codex\pets\denia: C:\Users\Admin\.codex\pets\denia: v1 compat read: manifest treated as renderer "sprite2d"; run scripts/dsh-pet-migrate-v2 to migrate
+            |Text|[warning] C:\Users\Admin\.codex\pets\kana: C:\Users\Admin\.codex\pets\kana: v1 compat read: no license field; run scripts/dsh-pet-migrate-v2 to migrate this pet
+            |Text|[warning] C:\Users\Admin\.codex\pets\kana: C:\Users\Admin\.codex\pets\kana: v1 compat read: manifest treated as renderer "sprite2d"; run scripts/dsh-pet-migrate-v2 to migrate
+            |Text|[warning] C:\Users\Admin\.codex\pets\little-ameath: C:\Users\Admin\.codex\pets\little-ameath: v1 compat read: no license field; run scripts/dsh-pet-migrate-v2 to migrate this pet
+            |Text|[warning] C:\Users\Admin\.codex\pets\little-ameath: C:\Users\Admin\.codex\pets\little-ameath: v1 compat read: manifest treated as renderer "sprite2d"; run scripts/dsh-pet-migrate-v2 to migrate
+            |Text|[warning] C:\Users\Admin\.codex\pets\mengyu: C:\Users\Admin\.codex\pets\mengyu: v1 compat read: no license field; run scripts/dsh-pet-migrate-v2 to migrate this pet
+            |Text|[warning] C:\Users\Admin\.codex\pets\mengyu: C:\Users\Admin\.codex\pets\mengyu: v1 compat read: manifest treated as renderer "sprite2d"; run scripts/dsh-pet-migrate-v2 to migrate
+            |Text|[warning] C:\Users\Admin\.codex\pets\perlica: C:\Users\Admin\.codex\pets\perlica: v1 compat read: no license field; run scripts/dsh-pet-migrate-v2 to migrate this pet
+            |Text|[warning] C:\Users\Admin\.codex\pets\perlica: C:\Users\Admin\.codex\pets\perlica: v1 compat read: manifest treated as renderer "sprite2d"; run scripts/dsh-pet-migrate-v2 to migrate
+            |Text|[warning] C:\Users\Admin\.codex\pets\sakura-ch: C:\Users\Admin\.codex\pets\sakura-ch: v1 compat read: no license field; run scripts/dsh-pet-migrate-v2 to migrate this pet
+            |Text|[warning] C:\Users\Admin\.codex\pets\sakura-ch: C:\Users\Admin\.codex\pets\sakura-ch: v1 compat read: manifest treated as renderer "sprite2d"; run scripts/dsh-pet-migrate-v2 to migrate
+            |Text|[warning] C:\Users\Admin\AppData\Local\Blade2\pets\fern: C:\Users\Admin\AppData\Local\Blade2\pets\fern: v1 compat read: no license field; run scripts/dsh-pet-migrate-v2 to migrate this pet
+            |Text|[warning] C:\Users\Admin\AppData\Local\Blade2\pets\fern: C:\Users\Admin\AppData\Local\Blade2\pets\fern: v1 compat read: manifest treated as renderer "sprite2d"; run scripts/dsh-pet-migrate-v2 to migrate
+            |Text|[warning] C:\Users\Admin\AppData\Local\Blade2\pets\mengyu: C:\Users\Admin\AppData\Local\Blade2\pets\mengyu: v1 compat read: no license field; run scripts/dsh-pet-migrate-v2 to migrate this pet
+            |Text|[warning] C:\Users\Admin\AppData\Local\Blade2\pets\mengyu: C:\Users\Admin\AppData\Local\Blade2\pets\mengyu: v1 compat read: manifest treated as renderer "sprite2d"; run scripts/dsh-pet-migrate-v2 to migrate
+            |Text|若宠物位置显示不出来：Windows 需要 WebP 映像扩展才能解 .webp 图集，缺失时壳会退到预览 GIF，再不行就连精灵一起隐藏。
+          VerticalScrollBar|ScrollBar|垂直

@@ -1,0 +1,59 @@
+|Window|Blade²
+  |Pane|Non Client Input Sink Window
+  |Pane|AppWindow Custom Title Bar
+    Minimize|Button|Minimize
+    Maximize|Button|Maximize
+    Close|Button|Close
+  |Pane|
+    |Pane|
+      ShellBackButton|Button|返回
+      |Text|Blade²
+      SessionSearchBox|Group|搜索会话
+        TextBox|Edit|搜索会话
+          |Text|搜索会话…
+      Nav|Custom|
+        PaneRoot|Window|
+          MenuItemsScrollViewer|Pane|
+            MenuItemsHost|Group|
+              SettingsSection_general|ListItem|通用设置
+              SettingsSection_personalization|ListItem|个性化
+              SettingsSection_models|ListItem|模型
+              SettingsSection_plugins|ListItem|插件
+              SettingsSection_skills|ListItem|技能
+              SettingsSection_memory|ListItem|记忆
+              SettingsSection_pet|ListItem|宠物
+              SettingsSection_agent-presets|ListItem|Agent 预设
+              SettingsSection_computer-control|ListItem|电脑控制
+              SettingsSection_browser-control|ListItem|浏览器控制
+              SettingsSection_usage|ListItem|使用统计
+              SettingsSection_about|ListItem|关于
+          FooterItemsScrollViewer|Pane|
+            FooterMenuItemsHost|Group|
+              SettingsItem|ListItem|设置
+        SettingsPageHeader|Text|Agent 预设
+        ConnectionStatusBar|Group|连接状态
+        SettingsScroller|Pane|
+          SettingsHost|Group|设置内容列
+            |Text|预设即一个会话的 Agent 所运行的插件组装——它的工具、提示词与能力。可用「创造模式」让 Agent 帮你创建，或直接在预设目录放置文件。
+            |Text|标准模式（加载失败）
+            |Text|skill-filesystem (@deepseek-ai/dsh-skill-filesystem): never started
+            |Text|id: standard
+            ViewPresetComposition_standard|Button|查看预设 标准模式 的组装
+            UsePresetForSession_standard|Button|当前会话使用预设 标准模式
+            |Text|PTC 模式（加载失败）
+            |Text|skill-filesystem (@deepseek-ai/dsh-skill-filesystem): never started
+            |Text|id: ptc
+            ViewPresetComposition_ptc|Button|查看预设 PTC 模式 的组装
+            UsePresetForSession_ptc|Button|当前会话使用预设 PTC 模式
+            |Text|极简模式 · 内置
+            |Text|id: minimal
+            ViewPresetComposition_minimal|Button|查看预设 极简模式 的组装
+            UsePresetForSession_minimal|Button|当前会话使用预设 极简模式
+            SetDefaultPreset_minimal|Button|设为默认预设 极简模式
+            |Text|创造模式（加载失败）
+            |Text|skill-filesystem (@deepseek-ai/dsh-skill-filesystem): never started
+            |Text|id: cordis
+            ViewPresetComposition_cordis|Button|查看预设 创造模式 的组装
+            UsePresetForSession_cordis|Button|当前会话使用预设 创造模式
+            |Text|预设目录
+            PresetCreatorDraftButton|Button|用「创造模式」创作自定义预设

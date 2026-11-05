@@ -1,0 +1,267 @@
+|Window|Blade²
+  |Pane|Non Client Input Sink Window
+  |Pane|AppWindow Custom Title Bar
+    Minimize|Button|Minimize
+    Maximize|Button|Maximize
+    Close|Button|Close
+  |Pane|
+    |Pane|
+      TitleBar|TitleBar|
+      ShellBackButton|Button|返回
+      |Text|Blade²
+      SessionSearchBox|Group|搜索会话
+        TextBox|Edit|搜索会话
+          |Text|搜索会话…
+      Nav|Custom|
+        PaneRoot|Window|
+          MenuItemsScrollViewer|Pane|
+            MenuItemsHost|Group|
+              SettingsSection_general|ListItem|通用设置
+              SettingsSection_personalization|ListItem|个性化
+              SettingsSection_models|ListItem|模型
+              SettingsSection_plugins|ListItem|插件
+              SettingsSection_skills|ListItem|技能
+              SettingsSection_memory|ListItem|记忆
+              SettingsSection_pet|ListItem|宠物
+              SettingsSection_agent-presets|ListItem|Agent 预设
+              SettingsSection_computer-control|ListItem|电脑控制
+              SettingsSection_browser-control|ListItem|浏览器控制
+              SettingsSection_usage|ListItem|使用统计
+              SettingsSection_about|ListItem|关于
+          FooterItemsScrollViewer|Pane|
+            FooterMenuItemsHost|Group|
+              SettingsItem|ListItem|设置
+        SettingsPageHeader|Text|使用统计
+        ConnectionStatusBar|Group|连接状态
+        SettingsScroller|Pane|
+          SettingsHost|Group|设置内容列
+            StatsKpiRow|Group|使用统计概览
+              |Text|累计 Token 数
+              StatsKpiTotalTokens|Text|—
+              StatsKpiTotalTokensHint|Text|—
+              |Text|峰值 Token 数
+              StatsKpiPeakTokens|Text|—
+              StatsKpiPeakTokensHint|Text|—
+              |Text|最长聊天时长
+              StatsKpiLongestChat|Text|—
+              StatsKpiLongestChatHint|Text|—
+              |Text|当前连续天数
+              StatsKpiCurrentStreak|Text|—
+              StatsKpiCurrentStreakHint|Text|—
+              |Text|最长连续天数
+              StatsKpiLongestStreak|Text|—
+              StatsKpiLongestStreakHint|Text|—
+            |Text|Token 活动
+            StatsHeatMetricBar|Group|Token 活动统计口径
+              PART_ItemsView|List|
+                PART_ScrollPresenter|Pane|
+                  |ListItem|每日
+                    PART_TextVisual|Text|每日
+                  |ListItem|每周
+                    PART_TextVisual|Text|每周
+                  |ListItem|累计
+                    PART_TextVisual|Text|累计
+            StatsHeatScroller|Pane|
+              |Group|2026-05-04：0 tokens
+              |Group|2026-05-05：0 tokens
+              |Group|2026-05-06：0 tokens
+              |Group|2026-05-07：0 tokens
+              |Group|2026-05-08：0 tokens
+              |Group|2026-05-09：0 tokens
+              |Group|2026-05-10：0 tokens
+              |Group|2026-05-11：0 tokens
+              |Group|2026-05-12：0 tokens
+              |Group|2026-05-13：0 tokens
+              |Group|2026-05-14：0 tokens
+              |Group|2026-05-15：0 tokens
+              |Group|2026-05-16：0 tokens
+              |Group|2026-05-17：0 tokens
+              |Group|2026-05-18：0 tokens
+              |Group|2026-05-19：0 tokens
+              |Group|2026-05-20：0 tokens
+              |Group|2026-05-21：0 tokens
+              |Group|2026-05-22：0 tokens
+              |Group|2026-05-23：0 tokens
+              |Group|2026-05-24：0 tokens
+              |Group|2026-05-25：0 tokens
+              |Group|2026-05-26：0 tokens
+              |Group|2026-05-27：0 tokens
+              |Group|2026-05-28：0 tokens
+              |Group|2026-05-29：0 tokens
+              |Group|2026-05-30：0 tokens
+              |Group|2026-05-31：0 tokens
+              |Group|2026-06-01：0 tokens
+              |Group|2026-06-02：0 tokens
+              |Group|2026-06-03：0 tokens
+              |Group|2026-06-04：0 tokens
+              |Group|2026-06-05：0 tokens
+              |Group|2026-06-06：0 tokens
+              |Group|2026-06-07：0 tokens
+              |Group|2026-06-08：0 tokens
+              |Group|2026-06-09：0 tokens
+              |Group|2026-06-10：0 tokens
+              |Group|2026-06-11：0 tokens
+              |Group|2026-06-12：0 tokens
+              |Group|2026-06-13：0 tokens
+              |Group|2026-06-14：0 tokens
+              |Group|2026-06-15：0 tokens
+              |Group|2026-06-16：0 tokens
+              |Group|2026-06-17：0 tokens
+              |Group|2026-06-18：0 tokens
+              |Group|2026-06-19：0 tokens
+              |Group|2026-06-20：0 tokens
+              |Group|2026-06-21：0 tokens
+              |Group|2026-06-22：0 tokens
+              |Group|2026-06-23：0 tokens
+              |Group|2026-06-24：0 tokens
+              |Group|2026-06-25：0 tokens
+              |Group|2026-06-26：0 tokens
+              |Group|2026-06-27：0 tokens
+              |Group|2026-06-28：0 tokens
+              |Group|2026-06-29：0 tokens
+              |Group|2026-06-30：0 tokens
+              |Group|2026-07-01：0 tokens
+              |Group|2026-07-02：0 tokens
+              |Group|2026-07-03：0 tokens
+              |Group|2026-07-04：0 tokens
+              |Group|2026-07-05：0 tokens
+              |Group|2026-07-06：0 tokens
+              |Group|2026-07-07：0 tokens
+              |Group|2026-07-08：0 tokens
+              |Group|2026-07-09：0 tokens
+              |Group|2026-07-10：0 tokens
+              |Group|2026-07-11：0 tokens
+              |Group|2026-07-12：0 tokens
+              |Group|2026-07-13：0 tokens
+              |Group|2026-07-14：0 tokens
+              |Group|2026-07-15：0 tokens
+              |Group|2026-07-16：0 tokens
+              |Group|2026-07-17：0 tokens
+              |Group|2026-07-18：0 tokens
+              |Group|2026-07-19：0 tokens
+              |Group|2026-07-20：0 tokens
+              |Group|2026-07-21：0 tokens
+              |Group|2026-07-22：0 tokens
+              |Group|2026-07-23：0 tokens
+              |Group|2026-07-24：0 tokens
+              |Group|2026-07-25：0 tokens
+              |Group|2026-07-26：0 tokens
+              |Group|2026-07-27：0 tokens
+              |Group|2026-07-28：0 tokens
+              |Group|2026-07-29：0 tokens
+              |Group|2026-07-30：0 tokens
+              |Group|2026-07-31：0 tokens
+              |Group|2026-08-01：0 tokens
+              |Group|2026-08-02：0 tokens
+              |Group|2026-08-03：0 tokens
+              |Group|2026-08-04：0 tokens
+              |Group|2026-08-05：0 tokens
+              |Group|2026-08-06：0 tokens
+              |Group|2026-08-07：0 tokens
+              |Group|2026-08-08：0 tokens
+              |Group|2026-08-09：0 tokens
+              |Group|2026-08-10：0 tokens
+              |Group|2026-08-11：0 tokens
+              |Group|2026-08-12：0 tokens
+              |Group|2026-08-13：0 tokens
+              |Group|2026-08-14：0 tokens
+              |Group|2026-08-15：0 tokens
+              |Group|2026-08-16：0 tokens
+              |Group|2026-08-17：0 tokens
+              |Group|2026-08-18：0 tokens
+              |Group|2026-08-19：0 tokens
+              |Group|2026-08-20：0 tokens
+              |Group|2026-08-21：0 tokens
+              |Group|2026-08-22：0 tokens
+              |Group|2026-08-23：0 tokens
+              |Group|2026-08-24：0 tokens
+              |Group|2026-08-25：0 tokens
+              |Group|2026-08-26：0 tokens
+              |Group|2026-08-27：0 tokens
+              |Group|2026-08-28：0 tokens
+              |Group|2026-08-29：0 tokens
+              |Group|2026-08-30：0 tokens
+              |Group|2026-08-31：0 tokens
+              |Group|2026-09-01：0 tokens
+              |Group|2026-09-02：0 tokens
+              |Group|2026-09-03：0 tokens
+              |Group|2026-09-04：0 tokens
+              |Group|2026-09-05：0 tokens
+              |Group|2026-09-06：0 tokens
+              |Group|2026-09-07：0 tokens
+              |Group|2026-09-08：0 tokens
+              |Group|2026-09-09：0 tokens
+              |Group|2026-09-10：0 tokens
+              |Group|2026-09-11：0 tokens
+              |Group|2026-09-12：0 tokens
+              |Group|2026-09-13：0 tokens
+              |Group|2026-09-14：0 tokens
+              |Group|2026-09-15：0 tokens
+              |Group|2026-09-16：0 tokens
+              |Group|2026-09-17：0 tokens
+              |Group|2026-09-18：0 tokens
+              |Group|2026-09-19：0 tokens
+              |Group|2026-09-20：0 tokens
+              |Group|2026-09-21：0 tokens
+              |Group|2026-09-22：0 tokens
+              |Group|2026-09-23：0 tokens
+              |Group|2026-09-24：0 tokens
+              |Group|2026-09-25：0 tokens
+              |Group|2026-09-26：0 tokens
+              |Group|2026-09-27：0 tokens
+              |Group|2026-09-28：0 tokens
+              |Group|2026-09-29：0 tokens
+              |Group|2026-09-30：0 tokens
+              |Group|2026-10-01：0 tokens
+              |Group|2026-10-02：0 tokens
+              |Group|2026-10-03：0 tokens
+              |Group|2026-10-04：0 tokens
+              |Group|2026-10-05：0 tokens
+              |Group|2026-10-06：0 tokens
+              |Group|2026-10-07：0 tokens
+              |Group|2026-10-08：0 tokens
+              |Group|2026-10-09：0 tokens
+              |Group|2026-10-10：0 tokens
+              |Group|2026-10-11：0 tokens
+              |Group|2026-10-12：0 tokens
+              |Group|2026-10-13：0 tokens
+              |Group|2026-10-14：0 tokens
+              |Group|2026-10-15：0 tokens
+              |Group|2026-10-16：0 tokens
+              |Group|2026-10-17：0 tokens
+              |Group|2026-10-18：0 tokens
+              |Group|2026-10-19：0 tokens
+              |Group|2026-10-20：0 tokens
+              |Group|2026-10-21：0 tokens
+              |Group|2026-10-22：0 tokens
+              |Group|2026-10-23：0 tokens
+              |Group|2026-10-24：0 tokens
+              |Group|2026-10-25：0 tokens
+              |Group|2026-10-26：0 tokens
+              |Group|2026-10-27：0 tokens
+              |Group|2026-10-28：0 tokens
+            |Text|少
+            |Text|多
+            |Text|时间范围
+            StatsRangeBar|Group|统计时间范围
+              PART_ItemsView|List|
+                PART_ScrollPresenter|Pane|
+                  |ListItem|近 7 天
+                    PART_TextVisual|Text|近 7 天
+                  |ListItem|近 30 天
+                    PART_TextVisual|Text|近 30 天
+            |Text|每日 Token 趋势图
+            StatsTrendCanvas|Group|每日 Token 趋势图：近 7 天暂无用量
+              |Text|所选时间范围内暂无用量记录
+            |Text|模型用量
+            StatsModelTotal|Text|
+            StatsModelLegend|Group|模型用量
+            StatsModelEmptyHint|Text|所选时间范围内暂无用量记录
+            StatsSourceNote|Text|
+          VerticalScrollBar|ScrollBar|垂直
+  TitleBar|TitleBar|Blade²
+    SystemMenuBar|MenuBar|系统菜单栏
+      Item 1|MenuItem|系统
+    Minimize|Button|最小化
+    Maximize|Button|最大化
+    Close|Button|关闭

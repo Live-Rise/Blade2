@@ -1,0 +1,74 @@
+=== ADD center=(621,1515) base=#E2DBDB ===
+ADD deg=  0 fillEnd= 27.5 minLum= 220.8 atR= 16.5 bgStart=  2.0
+ADD deg= 10 fillEnd= 26.5 minLum= 221.1 atR= 17.0 bgStart=  2.0
+ADD deg= 20 fillEnd= 27.0 minLum= 220.8 atR=  4.5 bgStart=  2.0
+ADD deg= 30 fillEnd= 27.0 minLum= 220.8 atR=  4.5 bgStart=  2.0
+ADD deg= 40 fillEnd= 27.0 minLum= 221.1 atR=  2.0 bgStart=  2.0
+ADD deg= 50 fillEnd= 21.0 minLum= 221.1 atR=  2.0 bgStart=  2.0
+ADD deg= 60 fillEnd= 27.0 minLum= 220.8 atR= 12.5 bgStart=  2.0
+ADD deg= 70 fillEnd= 27.0 minLum= 220.8 atR= 22.0 bgStart=  2.0
+ADD deg= 80 fillEnd= 26.5 minLum= 221.1 atR=  2.0 bgStart=  2.0
+ADD deg= 90 fillEnd= 27.5 minLum= 221.1 atR=  2.0 bgStart=  2.0
+ADD deg=100 fillEnd= 26.5 minLum=  23.3 atR=  3.0 bgStart=  2.0
+ADD deg=110 fillEnd= 27.0 minLum=  23.3 atR=  2.0 bgStart=  7.5
+ADD deg=120 fillEnd= 27.0 minLum=  23.3 atR=  2.0 bgStart=  5.0
+ADD deg=130 fillEnd= 27.0 minLum=  23.3 atR=  2.0 bgStart=  4.0
+ADD deg=140 fillEnd= 27.0 minLum=  79.0 atR=  2.0 bgStart=  3.5
+ADD deg=150 fillEnd= 28.0 minLum=  79.0 atR=  2.0 bgStart=  3.0
+ADD deg=160 fillEnd= 28.0 minLum=  79.0 atR=  2.0 bgStart=  3.0
+ADD deg=170 fillEnd= 27.5 minLum=  79.0 atR=  2.0 bgStart=  3.0
+ADD deg=180 fillEnd= 28.0 minLum=  79.0 atR=  2.0 bgStart=  2.5
+ADD deg=190 fillEnd= 27.5 minLum=  23.3 atR=  3.0 bgStart= 14.0
+ADD deg=200 fillEnd= 28.0 minLum=  23.3 atR=  2.0 bgStart=  7.5
+ADD deg=210 fillEnd= 28.0 minLum=  23.3 atR=  2.0 bgStart=  5.0
+ADD deg=220 fillEnd= 28.0 minLum=  23.3 atR=  2.0 bgStart=  4.0
+ADD deg=230 fillEnd= 26.5 minLum=  23.3 atR=  2.0 bgStart=  4.0
+ADD deg=240 fillEnd= 25.5 minLum=  23.3 atR=  2.0 bgStart=  5.0
+ADD deg=250 fillEnd= 26.0 minLum=  23.3 atR=  2.0 bgStart=  7.5
+ADD deg=260 fillEnd= 27.5 minLum=  23.3 atR=  3.0 bgStart= 14.0
+ADD deg=270 fillEnd= 28.0 minLum=  79.0 atR=  2.0 bgStart=  2.5
+ADD deg=280 fillEnd= 27.5 minLum=  79.0 atR=  2.0 bgStart=  3.0
+ADD deg=290 fillEnd= 28.0 minLum=  79.0 atR=  2.0 bgStart=  3.0
+ADD deg=300 fillEnd= 28.0 minLum=  79.0 atR=  2.0 bgStart=  3.0
+ADD deg=310 fillEnd= 28.0 minLum=  79.0 atR=  2.0 bgStart=  3.5
+ADD deg=320 fillEnd= 28.0 minLum=  23.3 atR=  2.0 bgStart=  4.0
+ADD deg=330 fillEnd= 27.0 minLum=  23.3 atR=  2.0 bgStart=  5.0
+ADD deg=340 fillEnd= 27.5 minLum=  23.3 atR=  2.0 bgStart=  7.5
+ADD deg=350 fillEnd= 27.5 minLum=  23.3 atR=  3.0 bgStart=  2.0
+=== SEND center=(2455,1515) base=#C69E9E ===
+SEND deg=  0 fillEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart= 34.0
+SEND deg= 10 fillEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart= 33.5
+SEND deg= 20 fillEnd= 31.0 minLum= 170.0 atR=  2.0 bgStart= 34.0
+SEND deg= 30 fillEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart= 33.0
+SEND deg= 40 fillEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart= 33.5
+SEND deg= 50 fillEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart= 33.5
+SEND deg= 60 fillEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart= 33.0
+SEND deg= 70 fillEnd= 31.0 minLum= 142.2 atR= 32.5 bgStart= 34.0
+SEND deg= 80 fillEnd= 30.5 minLum= 102.2 atR= 32.0 bgStart= 34.5
+SEND deg= 90 fillEnd= 31.5 minLum= 102.2 atR= 32.0 bgStart= 34.0
+SEND deg=100 fillEnd= 30.5 minLum= 102.2 atR= 32.0 bgStart=  3.0
+SEND deg=110 fillEnd= 31.0 minLum= 121.5 atR= 32.5 bgStart=  2.0
+SEND deg=120 fillEnd= 31.5 minLum= 170.0 atR=  5.0 bgStart=  2.0
+SEND deg=130 fillEnd= 31.5 minLum= 170.0 atR=  4.0 bgStart=  2.0
+SEND deg=140 fillEnd= 31.5 minLum= 170.0 atR=  3.5 bgStart=  2.0
+SEND deg=150 fillEnd= 32.5 minLum= 170.0 atR=  3.0 bgStart=  2.0
+SEND deg=160 fillEnd= 32.0 minLum= 170.0 atR=  3.0 bgStart=  2.0
+SEND deg=170 fillEnd= 33.0 minLum= 170.0 atR=  3.0 bgStart=  2.0
+SEND deg=180 fillEnd= 32.0 minLum= 170.0 atR=  2.5 bgStart=  2.0
+SEND deg=190 fillEnd= 33.0 minLum= 170.0 atR=  3.0 bgStart=  2.0
+SEND deg=200 fillEnd= 33.5 minLum= 170.0 atR=  3.0 bgStart=  2.0
+SEND deg=210 fillEnd= 32.5 minLum= 170.0 atR=  3.0 bgStart=  2.0
+SEND deg=220 fillEnd= 33.0 minLum= 170.0 atR=  3.5 bgStart=  2.0
+SEND deg=230 fillEnd= 33.0 minLum= 170.0 atR=  4.0 bgStart=  2.0
+SEND deg=240 fillEnd= 32.5 minLum= 170.0 atR=  5.0 bgStart=  2.0
+SEND deg=250 fillEnd= 33.5 minLum= 170.0 atR=  7.5 bgStart=  2.0
+SEND deg=260 fillEnd= 33.0 minLum= 170.0 atR=  2.0 bgStart=  3.0
+SEND deg=270 fillEnd= 32.0 minLum= 170.0 atR=  2.0 bgStart= 10.5
+SEND deg=280 fillEnd= 33.0 minLum= 170.0 atR=  2.0 bgStart=  9.0
+SEND deg=290 fillEnd= 32.0 minLum= 170.0 atR=  2.0 bgStart=  8.0
+SEND deg=300 fillEnd= 32.5 minLum= 170.0 atR=  2.0 bgStart=  8.0
+SEND deg=310 fillEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart=  7.5
+SEND deg=320 fillEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart=  7.5
+SEND deg=330 fillEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart=  8.0
+SEND deg=340 fillEnd= 32.0 minLum= 170.0 atR=  2.0 bgStart=  8.0
+SEND deg=350 fillEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart=  9.0

@@ -1,0 +1,74 @@
+|Window|Blade²
+  |Pane|Non Client Input Sink Window
+  |Pane|AppWindow Custom Title Bar
+    Minimize|Button|Minimize
+    Maximize|Button|Maximize
+    Close|Button|Close
+  |Pane|
+    |Pane|
+      |TitleBar|连接状态
+      ShellBackButton|Button|返回
+      |Image|
+      |Text|Blade²
+      SessionSearchBox|Edit|搜索会话
+      SettingsSection_general|Button|通用设置
+        |Text|通用设置
+      SettingsSection_personalization|Button|个性化
+        |Text|个性化
+      SettingsSection_models|Button|模型
+        |Text|模型
+      SettingsSection_plugins|Button|插件
+        |Text|插件
+      SettingsSection_skills|Button|技能
+        |Text|技能
+      SettingsSection_memory|Button|记忆
+        |Text|记忆
+      SettingsSection_pet|Button|宠物
+        |Text|宠物
+      SettingsSection_agent-presets|Button|Agent 预设
+        |Text|Agent 预设
+      SettingsSection_computer-control|Button|电脑控制
+        |Text|电脑控制
+      SettingsSection_browser-control|Button|浏览器控制
+        |Text|浏览器控制
+      SettingsSection_usage|Button|使用统计
+        |Text|使用统计
+      SettingsSection_about|Button|关于
+        |Text|关于
+      SettingsItem|Button|设置
+        |Text|设置
+      |Image|
+      |Image|
+      |Text|技能
+      |Pane|
+        |Text|Blade² 已安装的全部技能。技能是带说明的指令包：在输入框键入 /名称 即可调用，模型也可能在合适的时机自行调用。
+        |Text|已安装技能
+        |Text|按内核 @deepseek-ai/dsh-skill-filesystem 的根目录与优先级扫描，与内核看到的是同一份真相。
+        |Text|共 1 个技能：用户 1 个
+        |Text|同名技能只生效优先级最高的一个：项目 > 预设 > 用户；被遮蔽的条目在列表里标注。
+        SkillsAddButton|Button|添加技能
+          |Text|添加技能
+        |Text|项目
+        |Text|C:\Users\Admin\Documents\.dsh\skills
+        |Text|（这个目录里还没有技能）
+        |Text|项目（兼容）
+        |Text|C:\Users\Admin\Documents\.agents\skills
+        |Text|（这个目录里还没有技能）
+        |Text|预设
+        |Text|（本部署没有预设自带技能）
+        |Text|（这个目录里还没有技能）
+        |Text|用户
+        |Text|C:\Users\Admin\AppData\Local\Blade2\skills
+        |Text|anime-mania-mapset
+        |Text|从 YouTube 下载一首热门二次元/动漫歌曲（≤3分钟），生成 osu! mania 三难度谱面，官方星级校验 + 静音区检查后交付 .osu。Use when 用户说「下载歌曲并生成谱面」「找一首二次元歌做 mania」「再跑一遍 mania 流程」「生成三难度」「谱面 SOP」「anime mania mapset」，或给了 YouTube 链接并要求生成谱面/更新谱面 skill。默认只处理一首歌；难度每次必须与上次不同。Do not use for osu!standard-only maps、模型训练或无关媒体整理。
+        |Text|用户（兼容）
+        |Text|C:\Users\Admin\.agents\skills
+        |Text|（这个目录里还没有技能）
+        VerticalScrollBar|ScrollBar|垂直
+      LayoutSplitterSidebar|Group|调整侧栏宽度
+  TitleBar|TitleBar|Blade²
+    SystemMenuBar|MenuBar|系统菜单栏
+      Item 1|MenuItem|系统
+    Minimize|Button|最小化
+    Maximize|Button|最大化
+    Close|Button|关闭

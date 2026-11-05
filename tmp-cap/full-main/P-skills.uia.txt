@@ -1,0 +1,66 @@
+|Window|Blade²
+  |Pane|Non Client Input Sink Window
+  |Pane|AppWindow Custom Title Bar
+    Minimize|Button|Minimize
+    Maximize|Button|Maximize
+    Close|Button|Close
+  |Pane|
+    |Pane|
+      TitleBar|TitleBar|
+      ShellBackButton|Button|返回
+      |Text|Blade²
+      SessionSearchBox|Group|搜索会话
+        TextBox|Edit|搜索会话
+          |Text|搜索会话…
+      Nav|Custom|
+        PaneRoot|Window|
+          MenuItemsScrollViewer|Pane|
+            MenuItemsHost|Group|
+              SettingsSection_general|ListItem|通用设置
+              SettingsSection_personalization|ListItem|个性化
+              SettingsSection_models|ListItem|模型
+              SettingsSection_plugins|ListItem|插件
+              SettingsSection_skills|ListItem|技能
+              SettingsSection_memory|ListItem|记忆
+              SettingsSection_pet|ListItem|宠物
+              SettingsSection_agent-presets|ListItem|Agent 预设
+              SettingsSection_computer-control|ListItem|电脑控制
+              SettingsSection_browser-control|ListItem|浏览器控制
+              SettingsSection_usage|ListItem|使用统计
+              SettingsSection_about|ListItem|关于
+          FooterItemsScrollViewer|Pane|
+            FooterMenuItemsHost|Group|
+              SettingsItem|ListItem|设置
+        SettingsPageHeader|Text|技能
+        ConnectionStatusBar|Group|连接状态
+        SettingsScroller|Pane|
+          SettingsHost|Group|设置内容列
+            |Text|Blade² 已安装的全部技能。技能是带说明的指令包：在输入框键入 /名称 即可调用，模型也可能在合适的时机自行调用。
+            |Text|已安装技能
+            |Text|按内核 @deepseek-ai/dsh-skill-filesystem 的根目录与优先级扫描，与内核看到的是同一份真相。
+            |Text|共 0 个技能：
+            |Text|同名技能只生效优先级最高的一个：项目 > 预设 > 用户；被遮蔽的条目在列表里标注。
+            SkillsAddButton|Button|添加技能
+            |Text|
+            |Text|还没有安装任何技能。用上面的「添加技能」写第一个，或在项目的 .dsh/skills 目录里放一个。
+            |Text|项目技能需要先选中一个会话：它们按会话所在的项目目录解析。
+            |Text|项目
+            |Text|项目技能需要先选中一个会话：它们按会话所在的项目目录解析。
+            |Text|项目（兼容）
+            |Text|
+            |Text|预设
+            |Text|（本部署没有预设自带技能）
+            |Text|（这个目录里还没有技能）
+            |Text|用户
+            |Text|C:\Users\Admin\AppData\Local\Blade2\skills
+            |Text|（这个目录里还没有技能）
+            |Text|用户（兼容）
+            |Text|C:\Users\Admin\.agents\skills
+            |Text|（这个目录里还没有技能）
+          VerticalScrollBar|ScrollBar|垂直
+  TitleBar|TitleBar|Blade²
+    SystemMenuBar|MenuBar|系统菜单栏
+      Item 1|MenuItem|系统
+    Minimize|Button|最小化
+    Maximize|Button|最大化
+    Close|Button|关闭

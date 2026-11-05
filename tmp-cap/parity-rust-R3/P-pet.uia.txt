@@ -1,0 +1,127 @@
+|Window|Blade²
+  |Pane|Non Client Input Sink Window
+  |Pane|AppWindow Custom Title Bar
+    Minimize|Button|Minimize
+    Maximize|Button|Maximize
+    Close|Button|Close
+  |Pane|
+    |Pane|
+      |TitleBar|连接状态
+      ShellBackButton|Button|返回
+      |Image|
+      |Text|Blade²
+      SessionSearchBox|Edit|搜索会话
+      SettingsSection_general|Button|通用设置
+        |Text|通用设置
+      SettingsSection_personalization|Button|个性化
+        |Text|个性化
+      SettingsSection_models|Button|模型
+        |Text|模型
+      SettingsSection_plugins|Button|插件
+        |Text|插件
+      SettingsSection_skills|Button|技能
+        |Text|技能
+      SettingsSection_memory|Button|记忆
+        |Text|记忆
+      SettingsSection_pet|Button|宠物
+        |Text|宠物
+      SettingsSection_agent-presets|Button|Agent 预设
+        |Text|Agent 预设
+      SettingsSection_computer-control|Button|电脑控制
+        |Text|电脑控制
+      SettingsSection_browser-control|Button|浏览器控制
+        |Text|浏览器控制
+      SettingsSection_usage|Button|使用统计
+        |Text|使用统计
+      SettingsSection_about|Button|关于
+        |Text|关于
+      SettingsItem|Button|设置
+        |Text|设置
+      |Image|
+      |Image|
+      |Text|宠物
+      |Pane|
+        |Text|桌面宠物由内核插件 @linxin666/dsh-pet 提供（Codex Pet 兼容）：聊天窗口里常驻一只宠物，模型干活时它跟着动，点它可以逗一逗。宠物素材装在 $DSH_HOME/pets，重启内核后收录。
+        |Text|显示
+        |Text|宠物显示在聊天窗口右下角，跟着模型的工作状态切换动画；点它可以逗一逗。
+        |Text|显示宠物
+        |Text|关掉后窗口里不再显示，插件其余功能照常
+        |Text|关
+        Setting_pet_visible|Button|显示宠物
+        |Text|宠物大小
+        |Text|单元格高度的像素值，拖动即时生效
+        PetSizeSlider|Slider|宠物大小
+        |Text|128 px
+        |Text|宠物库
+        |Text|已收录的宠物（插件内置 + ~/.codex/pets + 本机安装的）。切换立即生效。
+        |Text|Arima Kana
+        |Text|Codex 宠物
+        |Text|Arima Kana as portrayed in the manga Oshi no Ko: a 17-year-old genius former child actress and the lead singer of the new B-Komachi.
+        PetUse_kana|Button|使用宠物 Arima Kana
+          |Text|使用
+        |Text|Asuka
+        |Text|Codex 宠物
+        |Text|A fiery chibi mecha pilot digital pet inspired by Asuka from Evangelion.
+        PetUse_asuka|Button|使用宠物 Asuka
+          |Text|使用
+        |Text|Denia
+        |Text|Codex 宠物
+        |Text|A compact Codex digital pet based on Denia, a pink-haired fantasy girl with ornate blue, black, white, pink, and red details.
+        PetUse_denia|Button|使用宠物 Denia
+          |Text|使用
+        |Text|Fern
+        |Text|本机安装
+        |Text|A poised purple-haired anime companion in a tiny black triangle top and oversized tan cable-knit cardigan.
+        PetUse_fern|Button|使用宠物 Fern
+          |Text|使用
+        PetRemove_fern|Button|删除宠物 Fern
+          |Text|删除
+        |Text|Little Ameath
+        |Text|Codex 宠物
+        |Text|A tiny pink winged pixel chibi companion with crystalline blue-white wings and a halo ornament.
+        PetUse_little-ameath|Button|使用宠物 Little Ameath
+          |Text|使用
+        |Text|Perlica / 佩丽卡
+        |Text|Codex 宠物
+        |Text|A chibi silver-haired animal-eared tactical girl with blue eyes, a white tech coat, black gloves and boots, and small yellow utility accents.
+        PetUse_perlica|Button|使用宠物 Perlica / 佩丽卡
+          |Text|使用
+        |Text|梦羽
+        |Text|使用中 · 本机安装
+        |Text|A Perlica-proportioned chibi pet of Mengyu, with pink twin tails, pink eyes, a black-and-pink sailor outfit, a cross hair clip, and asymmetric legwear.
+        PetUse_mengyu|Button|使用宠物 梦羽
+          |Text|使用中
+        PetRemove_mengyu|Button|删除宠物 梦羽
+          |Text|删除
+        |Text|樱井麻衣
+        |Text|Codex 宠物
+        |Text|Q版动漫风格的樱井麻衣 Codex 桌宠。
+        PetUse_sakura-ch|Button|使用宠物 樱井麻衣
+          |Text|使用
+        |Text|鲸鱼娘（精致版）
+        |Text|插件内置
+        |Text|基于鲸鱼娘形象进行 AI 辅助二次创作、修复与细节精修的内置变体。
+        PetUse_whale-girl-refined|Button|使用宠物 鲸鱼娘（精致版）
+          |Text|使用
+        |Text|安装宠物
+        |Text|兼容 Codex 宠物包（pet.json + 图集）。拖放 zip 到下方区域，或粘贴安装命令。
+        |Text|拖放以安装
+        |Text|把 Codex 宠物 zip 从文件资源管理器拖到这里即可安装
+        PetBrowseButton|Button|浏览并安装宠物压缩包
+          |Text|浏览并安装
+        |Text|安装命令
+        Setting_pet_command|Edit|安装命令
+        PetInstallButton|Button|按命令行安装宠物
+          |Text|安装
+        |Text|诊断
+        |Text|宠物不显示时先看这里：插件在不在、注册表报了什么、壳能不能画。
+        |Text|正在读取注册表诊断…
+        |Text|若宠物位置显示不出来：Windows 需要 WebP 映像扩展才能解 .webp 图集，缺失时壳会退到预览 GIF，再不行就连精灵一起隐藏。
+        VerticalScrollBar|ScrollBar|垂直
+      LayoutSplitterSidebar|Group|调整侧栏宽度
+  TitleBar|TitleBar|Blade²
+    SystemMenuBar|MenuBar|系统菜单栏
+      Item 1|MenuItem|系统
+    Minimize|Button|最小化
+    Maximize|Button|最大化
+    Close|Button|关闭

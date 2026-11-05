@@ -1,0 +1,11 @@
+Add-Type -AssemblyName System.Drawing
+$bmp = [System.Drawing.Bitmap]::FromFile('E:\Syncthing\DshWinUI\tmp-cap\parity-main-R3\S0-default.png')
+$rect = New-Object System.Drawing.Rectangle(0, 480, 560, 600)
+$crop = $bmp.Clone($rect, $bmp.PixelFormat)
+$crop.Save('E:\Syncthing\DshWinUI\tmp-cap\pxprobe\main-s0-sidebar.png', [System.Drawing.Imaging.ImageFormat]::Png)
+$crop.Dispose(); $bmp.Dispose()
+$bmp2 = [System.Drawing.Bitmap]::FromFile('E:\Syncthing\DshWinUI\tmp-cap\parity-rust-R3\S0-default.png')
+$rect2 = New-Object System.Drawing.Rectangle(0, 480, 560, 640)
+$crop2 = $bmp2.Clone($rect2, $bmp2.PixelFormat)
+$crop2.Save('E:\Syncthing\DshWinUI\tmp-cap\pxprobe\rust-s0-sidebar.png', [System.Drawing.Imaging.ImageFormat]::Png)
+$crop2.Dispose(); $bmp2.Dispose()

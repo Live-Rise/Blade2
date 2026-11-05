@@ -1,0 +1,73 @@
+base=#C69E9E
+deg=  0 pinkEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart= 34.0
+deg=  5 pinkEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart= 34.0
+deg= 10 pinkEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart= 33.5
+deg= 15 pinkEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart= 34.0
+deg= 20 pinkEnd= 31.0 minLum= 170.0 atR=  2.0 bgStart= 34.0
+deg= 25 pinkEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart= 33.0
+deg= 30 pinkEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart= 33.0
+deg= 35 pinkEnd= 32.0 minLum= 170.0 atR=  2.0 bgStart= 34.0
+deg= 40 pinkEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart= 33.5
+deg= 45 pinkEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart= 33.5
+deg= 50 pinkEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart= 33.5
+deg= 55 pinkEnd= 32.0 minLum= 170.0 atR=  2.0 bgStart= 34.0
+deg= 60 pinkEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart= 33.0
+deg= 65 pinkEnd= 31.0 minLum= 167.6 atR= 32.0 bgStart= 34.0
+deg= 70 pinkEnd= 31.0 minLum= 142.2 atR= 32.5 bgStart= 34.0
+deg= 75 pinkEnd= 31.5 minLum= 121.5 atR= 32.0 bgStart= 34.0
+deg= 80 pinkEnd= 30.5 minLum= 102.2 atR= 32.0 bgStart= 34.5
+deg= 85 pinkEnd= 30.5 minLum= 102.2 atR= 32.0 bgStart= 34.0
+deg= 90 pinkEnd= 31.5 minLum= 102.2 atR= 32.0 bgStart= 34.0
+deg= 95 pinkEnd= 31.5 minLum= 102.2 atR= 32.0 bgStart=  6.0
+deg=100 pinkEnd= 30.5 minLum= 102.2 atR= 32.0 bgStart=  3.0
+deg=105 pinkEnd= 31.5 minLum= 126.4 atR= 32.0 bgStart=  2.0
+deg=110 pinkEnd= 31.0 minLum= 121.5 atR= 32.5 bgStart=  2.0
+deg=115 pinkEnd= 31.5 minLum= 152.4 atR= 33.0 bgStart=  2.0
+deg=120 pinkEnd= 31.5 minLum= 170.0 atR=  5.0 bgStart=  2.0
+deg=125 pinkEnd= 32.0 minLum= 170.0 atR=  4.5 bgStart=  2.0
+deg=130 pinkEnd= 31.5 minLum= 170.0 atR=  4.0 bgStart=  2.0
+deg=135 pinkEnd= 31.5 minLum= 170.0 atR=  4.0 bgStart=  2.0
+deg=140 pinkEnd= 31.5 minLum= 170.0 atR=  3.5 bgStart=  2.0
+deg=145 pinkEnd= 32.0 minLum= 170.0 atR=  3.5 bgStart=  2.0
+deg=150 pinkEnd= 32.5 minLum= 170.0 atR=  3.0 bgStart=  2.0
+deg=155 pinkEnd= 32.5 minLum= 170.0 atR=  3.0 bgStart=  2.0
+deg=160 pinkEnd= 32.0 minLum= 170.0 atR=  3.0 bgStart=  2.0
+deg=165 pinkEnd= 32.5 minLum= 170.0 atR=  3.0 bgStart=  2.0
+deg=170 pinkEnd= 33.0 minLum= 170.0 atR=  3.0 bgStart=  2.0
+deg=175 pinkEnd= 32.5 minLum= 170.0 atR=  3.0 bgStart=  2.0
+deg=180 pinkEnd= 32.0 minLum= 170.0 atR=  2.5 bgStart=  2.0
+deg=185 pinkEnd= 32.5 minLum= 170.0 atR=  3.0 bgStart=  2.0
+deg=190 pinkEnd= 33.0 minLum= 170.0 atR=  3.0 bgStart=  2.0
+deg=195 pinkEnd= 32.5 minLum= 170.0 atR=  3.0 bgStart=  2.0
+deg=200 pinkEnd= 33.5 minLum= 170.0 atR=  3.0 bgStart=  2.0
+deg=205 pinkEnd= 32.5 minLum= 170.0 atR=  3.0 bgStart=  2.0
+deg=210 pinkEnd= 32.5 minLum= 170.0 atR=  3.0 bgStart=  2.0
+deg=215 pinkEnd= 33.5 minLum= 170.0 atR=  3.5 bgStart=  2.0
+deg=220 pinkEnd= 33.0 minLum= 170.0 atR=  3.5 bgStart=  2.0
+deg=225 pinkEnd= 33.0 minLum= 170.0 atR=  4.0 bgStart=  2.0
+deg=230 pinkEnd= 33.0 minLum= 170.0 atR=  4.0 bgStart=  2.0
+deg=235 pinkEnd= 33.5 minLum= 170.0 atR=  4.5 bgStart=  2.0
+deg=240 pinkEnd= 32.5 minLum= 170.0 atR=  5.0 bgStart=  2.0
+deg=245 pinkEnd= 32.5 minLum= 170.0 atR=  6.0 bgStart=  2.0
+deg=250 pinkEnd= 33.5 minLum= 170.0 atR=  7.5 bgStart=  2.0
+deg=255 pinkEnd= 32.5 minLum= 170.0 atR= 10.0 bgStart=  2.0
+deg=260 pinkEnd= 33.0 minLum= 170.0 atR=  2.0 bgStart=  3.0
+deg=265 pinkEnd= 32.5 minLum= 170.0 atR=  2.0 bgStart=  6.0
+deg=270 pinkEnd= 32.0 minLum= 170.0 atR=  2.0 bgStart= 10.5
+deg=275 pinkEnd= 32.5 minLum= 170.0 atR=  2.0 bgStart= 10.0
+deg=280 pinkEnd= 33.0 minLum= 170.0 atR=  2.0 bgStart=  9.0
+deg=285 pinkEnd= 32.5 minLum= 170.0 atR=  2.0 bgStart=  9.0
+deg=290 pinkEnd= 32.0 minLum= 170.0 atR=  2.0 bgStart=  8.0
+deg=295 pinkEnd= 32.5 minLum= 170.0 atR=  2.0 bgStart=  8.5
+deg=300 pinkEnd= 32.5 minLum= 170.0 atR=  2.0 bgStart=  8.0
+deg=305 pinkEnd= 32.0 minLum= 170.0 atR=  2.0 bgStart=  8.0
+deg=310 pinkEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart=  7.5
+deg=315 pinkEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart=  8.0
+deg=320 pinkEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart=  7.5
+deg=325 pinkEnd= 32.0 minLum= 170.0 atR=  2.0 bgStart=  8.0
+deg=330 pinkEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart=  8.0
+deg=335 pinkEnd= 32.5 minLum= 170.0 atR=  2.0 bgStart=  8.5
+deg=340 pinkEnd= 32.0 minLum= 170.0 atR=  2.0 bgStart=  8.0
+deg=345 pinkEnd= 32.5 minLum= 170.0 atR=  2.0 bgStart=  9.0
+deg=350 pinkEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart=  9.0
+deg=355 pinkEnd= 31.5 minLum= 170.0 atR=  2.0 bgStart= 10.0

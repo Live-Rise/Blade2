@@ -1,0 +1,51 @@
+|Window|Blade²
+  |Pane|Non Client Input Sink Window
+  |Pane|AppWindow Custom Title Bar
+    Minimize|Button|Minimize
+    Maximize|Button|Maximize
+    Close|Button|Close
+  |Pane|
+    |Pane|
+      ShellBackButton|Button|返回
+      |Text|Blade²
+      SessionSearchBox|Group|搜索会话
+        TextBox|Edit|搜索会话
+          |Text|搜索会话…
+      Nav|Custom|
+        PaneRoot|Window|
+          MenuItemsScrollViewer|Pane|
+            MenuItemsHost|Group|
+              SettingsSection_general|ListItem|通用设置
+              SettingsSection_personalization|ListItem|个性化
+              SettingsSection_models|ListItem|模型
+              SettingsSection_plugins|ListItem|插件
+              SettingsSection_skills|ListItem|技能
+              SettingsSection_memory|ListItem|记忆
+              SettingsSection_pet|ListItem|宠物
+              SettingsSection_agent-presets|ListItem|Agent 预设
+              SettingsSection_computer-control|ListItem|电脑控制
+              SettingsSection_browser-control|ListItem|浏览器控制
+              SettingsSection_usage|ListItem|使用统计
+              SettingsSection_about|ListItem|关于
+          FooterItemsScrollViewer|Pane|
+            FooterMenuItemsHost|Group|
+              SettingsItem|ListItem|设置
+        SettingsPageHeader|Text|电脑控制
+        ConnectionStatusBar|Group|连接状态
+        SettingsScroller|Pane|
+          SettingsHost|Group|设置内容列
+            |Text|电脑控制由内核 dsh-computer-use 注册表与 Cua Driver provider（@deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp）提供：模型可截图并操作鼠标、键盘完成桌面任务。开关编辑内核 profile patch 的 disabled 标志，由内核热重载即时生效。
+            |Text|电脑控制
+            |Text|开启后模型获得桌面操作能力（截图、鼠标、键盘）；关闭后相关工具从模型视野移除。
+            Setting_computer-control_enabled|Button|启用电脑控制
+            |Text|已启用（内核热重载后生效）
+            |Text|Cua Driver（桌面驱动）
+            |Text|电脑操作的执行驱动：需在本机安装 cua-driver 命令行工具后启用，默认停用。
+            Setting_computer-use-cua-driver_enabled|Button|启用 Cua Driver 桌面驱动
+            |Text|已停用
+            |Text|挂载状态
+            |Text|Blade² 随内核插件机制默认启用；安装由引导器幂等完成，失败时下次启动自动重试。
+            |Text|电脑控制注册表
+            |Text|已启用
+            |Text|Cua Driver 驱动
+            |Text|默认停用（需先安装 Cua Driver）

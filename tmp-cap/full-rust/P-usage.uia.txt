@@ -1,0 +1,78 @@
+|Window|Blade²
+  |Pane|Non Client Input Sink Window
+  |Pane|AppWindow Custom Title Bar
+    Minimize|Button|Minimize
+    Maximize|Button|Maximize
+    Close|Button|Close
+  |Pane|
+    |Pane|
+      |TitleBar|内核: 已连接 http://127.0.0.1:23519/?token=T6lg2JvFQjVBa_oXMCN0MRHUTdMuXkelUnXv9uuP3cE (pid 30792)
+      ShellBackButton|Button|返回
+      |Image|
+      |Text|Blade²
+      SessionSearchBox|Edit|搜索会话
+      SettingsSection_general|Button|通用设置
+        |Text|通用设置
+      SettingsSection_personalization|Button|个性化
+        |Text|个性化
+      SettingsSection_models|Button|模型
+        |Text|模型
+      SettingsSection_plugins|Button|插件
+        |Text|插件
+      SettingsSection_skills|Button|技能
+        |Text|技能
+      SettingsSection_memory|Button|记忆
+        |Text|记忆
+      SettingsSection_pet|Button|宠物
+        |Text|宠物
+      SettingsSection_agent-presets|Button|Agent 预设
+        |Text|Agent 预设
+      SettingsSection_computer-control|Button|电脑控制
+        |Text|电脑控制
+      SettingsSection_browser-control|Button|浏览器控制
+        |Text|浏览器控制
+      SettingsSection_usage|Button|使用统计
+        |Text|使用统计
+      SettingsSection_about|Button|关于
+        |Text|关于
+      SettingsItem|Button|设置
+        |Text|设置
+      |Image|
+      |Text|使用统计
+      |Pane|
+        |Text|累计 Token 数
+        StatsKpiTotalTokens|Text|—
+        StatsKpiTotalTokensHint|Text|—
+        |Text|峰值 Token 数
+        StatsKpiPeakTokens|Text|—
+        StatsKpiPeakTokensHint|Text|—
+        |Text|最长聊天时长
+        StatsKpiLongestChat|Text|—
+        StatsKpiLongestChatHint|Text|—
+        |Text|当前连续天数
+        StatsKpiCurrentStreak|Text|—
+        StatsKpiCurrentStreakHint|Text|—
+        |Text|最长连续天数
+        StatsKpiLongestStreak|Text|—
+        StatsKpiLongestStreakHint|Text|—
+        |Text|Token 活动
+        StatsHeatMetricBar|Group|Token 活动统计口径
+          StatsHeatMetricItem_0|Button|每日
+            |Text|每日
+          StatsHeatMetricItem_1|Button|每周
+            |Text|每周
+          StatsHeatMetricItem_2|Button|累计
+            |Text|累计
+        |Text|少
+        |Text|多
+        |Text|时间范围
+        StatsRangeBar|Group|统计时间范围
+          StatsRangeItem_7|Button|近 7 天
+            |Text|近 7 天
+          StatsRangeItem_30|Button|近 30 天
+            |Text|近 30 天
+        |Text|每日 Token 趋势图
+        |Text|模型用量
+        |Text|
+        VerticalScrollBar|ScrollBar|垂直
+      LayoutSplitterSidebar|Group|调整侧栏宽度

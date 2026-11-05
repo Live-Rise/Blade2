@@ -1,0 +1,91 @@
+|Window|Blade²
+  |Pane|Non Client Input Sink Window
+  |Pane|AppWindow Custom Title Bar
+    Minimize|Button|Minimize
+    Maximize|Button|Maximize
+    Close|Button|Close
+  |Pane|
+    |Pane|
+      |TitleBar|连接状态
+      ShellBackButton|Button|返回
+      |Image|
+      |Text|Blade²
+      SessionSearchBox|Edit|搜索会话
+      SettingsSection_general|Button|通用设置
+        |Text|通用设置
+      SettingsSection_personalization|Button|个性化
+        |Text|个性化
+      SettingsSection_models|Button|模型
+        |Text|模型
+      SettingsSection_plugins|Button|插件
+        |Text|插件
+      SettingsSection_skills|Button|技能
+        |Text|技能
+      SettingsSection_memory|Button|记忆
+        |Text|记忆
+      SettingsSection_pet|Button|宠物
+        |Text|宠物
+      SettingsSection_agent-presets|Button|Agent 预设
+        |Text|Agent 预设
+      SettingsSection_computer-control|Button|电脑控制
+        |Text|电脑控制
+      SettingsSection_browser-control|Button|浏览器控制
+        |Text|浏览器控制
+      SettingsSection_usage|Button|使用统计
+        |Text|使用统计
+      SettingsSection_about|Button|关于
+        |Text|关于
+      SettingsItem|Button|设置
+        |Text|设置
+      |Image|
+      |Image|
+      |Text|个性化
+      |Pane|
+        |Text|指令决定它怎么回应你，材质与皮肤决定它看起来是什么样。
+        |Text|自定义指令
+        |Text|写给所有对话的长期说明：怎么称呼你、用什么语气、有哪些固定约束。对所有会话始终生效。
+        PersonalizationInstructionsEditor|Edit|指令内容
+        |Text|有未保存的修改…
+        |Text|窗口材质
+        |Text|侧栏与顶栏透出的系统材质：Mica 柔和、亚克力更透；系统不支持时自动回退。
+        |Text|材质
+        |Text|切换后立即生效，重启后保持
+        Setting_shell_material|ComboBox|窗口材质
+        |Text|消息气泡
+        |Text|气泡背景：半透明直接透出背后画面，亚克力是系统材质；两项都即时生效。
+        |Text|气泡材质
+        |Text|半透明最透，亚克力是系统材质，跟随跟窗口材质走
+        Setting_shell_bubbleMaterial|ComboBox|气泡材质
+        |Text|气泡不透明度
+        |Text|数值越大气泡自身越实，背后画面透出越少
+        Setting_shell_bubbleOpacity|Slider|气泡不透明度
+        |Text|60%
+        |Text|背景皮肤
+        |Text|导入图片或视频作为写代码时的内容区背景，用滑杆调到既能看出图、又不吃正文的浓度
+        |Text|背景图
+        |Text|png / jpg / webp / bmp · mp4 / webm / mov（视频静音循环，与图片二选一）
+        SkinImportButton|Button|导入背景皮肤
+          |Text|导入图片
+        SkinVideoImportButton|Button|导入视频背景皮肤
+          |Text|导入视频
+        SkinClearButton|Button|清除背景皮肤
+          |Text|清除皮肤
+        SkinWeNavCard|Button|Wallpaper Engine
+          |Text|Wallpaper Engine
+          |Text|用本机 Wallpaper Engine 订阅的壁纸做背景（视频静音循环），与上面导入的图片/视频二选一
+        |Text|背景透明度
+        |Text|拖动即时生效；没有导入图片时先记下，导入后按这个浓度显示
+        SkinOpacitySlider|Slider|背景透明度
+        |Text|40%
+        |Text|失焦暂停视频
+        |Text|视频背景只在窗口聚焦时播放；切到别的程序时自动暂停，回焦继续
+        |Text|开
+        Setting_skin_video_pause_on_blur|Button|窗口失焦时暂停视频背景
+        VerticalScrollBar|ScrollBar|垂直
+      LayoutSplitterSidebar|Group|调整侧栏宽度
+  TitleBar|TitleBar|Blade²
+    SystemMenuBar|MenuBar|系统菜单栏
+      Item 1|MenuItem|系统
+    Minimize|Button|最小化
+    Maximize|Button|最大化
+    Close|Button|关闭

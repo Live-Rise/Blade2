@@ -1,0 +1,75 @@
+|Window|Blade²
+  |Pane|Non Client Input Sink Window
+  |Pane|AppWindow Custom Title Bar
+    Minimize|Button|Minimize
+    Maximize|Button|Maximize
+    Close|Button|Close
+  |Pane|
+    |Pane|
+      TitleBar|TitleBar|
+      ShellBackButton|Button|返回
+      |Text|Blade²
+      SessionSearchBox|Group|搜索会话
+        TextBox|Edit|搜索会话
+          |Text|搜索会话…
+      Nav|Custom|
+        PaneRoot|Window|
+          MenuItemsScrollViewer|Pane|
+            MenuItemsHost|Group|
+              SettingsSection_general|ListItem|通用设置
+              SettingsSection_personalization|ListItem|个性化
+              SettingsSection_models|ListItem|模型
+              SettingsSection_plugins|ListItem|插件
+              SettingsSection_skills|ListItem|技能
+              SettingsSection_memory|ListItem|记忆
+              SettingsSection_pet|ListItem|宠物
+              SettingsSection_agent-presets|ListItem|Agent 预设
+              SettingsSection_computer-control|ListItem|电脑控制
+              SettingsSection_browser-control|ListItem|浏览器控制
+              SettingsSection_usage|ListItem|使用统计
+              SettingsSection_about|ListItem|关于
+          FooterItemsScrollViewer|Pane|
+            FooterMenuItemsHost|Group|
+              SettingsItem|ListItem|设置
+        SettingsPageHeader|Text|模型
+        ConnectionStatusBar|Group|连接状态
+        SettingsScroller|Pane|
+          SettingsHost|Group|设置内容列
+            |Text|填入各提供方的 API 密钥即可使用其模型。
+            |Text|DeepSeek
+            ProviderKeyConfiguredDot|Group|API 密钥已配置
+            ProviderEdit_deepseek-official|Button|编辑 DeepSeek
+            |Text|DeepSeek Account
+            ProviderEdit_deepseek-account|Button|编辑 DeepSeek Account
+            |Text|xiaomi-token-plan-cn
+            ProviderKeyConfiguredDot|Group|API 密钥已配置
+            ProviderEdit_xiaomi-token-plan-cn|Button|编辑 xiaomi-token-plan-cn
+            ProviderRemove_xiaomi-token-plan-cn|Button|删除 xiaomi-token-plan-cn
+            |Text|StepFun
+            |Text|自定义
+            ProviderKeyConfiguredDot|Group|API 密钥已配置
+            ProviderEdit_stepfun|Button|编辑 StepFun
+            ProviderRemove_stepfun|Button|删除 StepFun
+            |Text|Cline
+            |Text|自定义
+            ProviderKeyConfiguredDot|Group|API 密钥已配置
+            ProviderEdit_cline|Button|编辑 Cline
+            ProviderRemove_cline|Button|删除 Cline
+            |Text|SenseNova
+            |Text|自定义
+            ProviderKeyConfiguredDot|Group|API 密钥已配置
+            ProviderEdit_sensenova|Button|编辑 SenseNova
+            ProviderRemove_sensenova|Button|删除 SenseNova
+            AddProviderButton|Button|添加提供方
+              |Text|添加提供方
+            |Text|默认模型
+            |Text|一键恢复适配器默认模型目录与内核默认模型。自定义提供方的模型列表不受影响。
+            |Text|恢复默认模型
+            |Text|将默认模型与模型目录恢复为内核默认。
+            RestoreDefaultModelButton|Button|恢复默认模型
+  TitleBar|TitleBar|Blade²
+    SystemMenuBar|MenuBar|系统菜单栏
+      Item 1|MenuItem|系统
+    Minimize|Button|最小化
+    Maximize|Button|最大化
+    Close|Button|关闭

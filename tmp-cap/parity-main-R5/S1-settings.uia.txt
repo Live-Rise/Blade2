@@ -1,0 +1,95 @@
+|Window|Blade²
+  |Pane|Non Client Input Sink Window
+  |Pane|AppWindow Custom Title Bar
+    Minimize|Button|Minimize
+    Maximize|Button|Maximize
+    Close|Button|Close
+  |Pane|
+    |Pane|
+      TitleBar|TitleBar|
+      ShellBackButton|Button|返回
+      |Text|Blade²
+      SessionSearchBox|Group|搜索会话
+        TextBox|Edit|搜索会话
+          |Text|搜索会话…
+      Nav|Custom|
+        PaneRoot|Window|
+          MenuItemsScrollViewer|Pane|
+            MenuItemsHost|Group|
+              SettingsSection_general|ListItem|通用设置
+              SettingsSection_personalization|ListItem|个性化
+              SettingsSection_models|ListItem|模型
+              SettingsSection_plugins|ListItem|插件
+              SettingsSection_skills|ListItem|技能
+              SettingsSection_memory|ListItem|记忆
+              SettingsSection_pet|ListItem|宠物
+              SettingsSection_agent-presets|ListItem|Agent 预设
+              SettingsSection_computer-control|ListItem|电脑控制
+              SettingsSection_browser-control|ListItem|浏览器控制
+              SettingsSection_usage|ListItem|使用统计
+              SettingsSection_about|ListItem|关于
+          FooterItemsScrollViewer|Pane|
+            FooterMenuItemsHost|Group|
+              SettingsItem|ListItem|设置
+        SettingsPageHeader|Text|通用设置
+        ConnectionStatusBar|Group|连接状态
+        SettingsScroller|Pane|
+          SettingsHost|Group|设置内容列
+            |Text|新会话的默认权限、外观与对话偏好。
+            |Text|权限
+            |Text|选择新会话的默认访问模式
+            |Text|默认权限
+            |Text|仅可查看 / 工作区内修改 / 完全权限
+            Setting_permission_defaultPreset|ComboBox|默认权限模式
+            |Text|外观
+            |Text|主题与会话正文字号
+            |Text|外观
+            |Text|浅色 / 深色 / 跟随系统
+            Setting_ui-theme_preference|ComboBox|外观
+            |Text|字号大小
+            |Text|仅影响会话内容的字号
+            FontSizeDecreaseButton|Button|减小字号
+            FontSizeValue|Text|当前字号 15px
+            FontSizeIncreaseButton|Button|增大字号
+            |Text|对话
+            |Text|已完成轮次的展示方式与繁忙时的发送行为
+            |Text|对话显示
+            |Text|标准显示过程内容；紧凑只保留结果
+            Setting_ui-chat_transcriptView|ComboBox|对话显示
+            |Text|繁忙时的发送行为
+            |Text|智能体运行时 Enter 键和发送按钮的行为；Ctrl+Enter 使用另一行为
+            Setting_ui-conversation_busyEnter|ComboBox|繁忙时的发送行为
+            |Text|语言
+            |Text|界面显示语言
+            |Text|语言
+            Setting_locale_preference|ComboBox|语言
+            |Text|系统通知
+            |Text|任务完成、审批请求等关键时刻的 Windows 通知
+            |Text|启用系统通知
+            |Text|窗口不在前台时提醒；点击通知可回到 Blade²
+            Setting_tray_notifications|Button|启用系统通知
+            |Text|托盘与退出
+            |Text|最小化 / 关闭窗口时的去向
+            |Text|显示托盘图标
+            |Text|关闭后仍可从托盘恢复窗口；托盘右键菜单可退出
+            Setting_tray_showIcon|Button|显示托盘图标
+            |Text|最小化时隐藏到托盘
+            |Text|点最小化按钮后窗口藏进托盘，不占任务栏
+            Setting_tray_minimizeToTray|Button|最小化时隐藏到托盘
+            |Text|关闭时最小化到托盘
+            |Text|点关闭按钮后窗口藏进托盘继续运行，用托盘菜单退出
+            Setting_tray_closeToTray|Button|关闭时最小化到托盘
+            |Text|设置文件
+            |Text|设置文档
+            |Text|把内核侧设置文档落到本地并用默认编辑器打开。
+            OpenSettingsDocumentButton|Button|打开设置文档
+            |Text|恢复默认
+            |Text|清空本页用户设置：ui-theme、locale、ui-chat、ui-conversation、permission。
+            ResetSettingsSectionButton|Button|恢复本页默认
+          VerticalScrollBar|ScrollBar|垂直
+  TitleBar|TitleBar|Blade²
+    SystemMenuBar|MenuBar|系统菜单栏
+      Item 1|MenuItem|系统
+    Minimize|Button|最小化
+    Maximize|Button|最大化
+    Close|Button|关闭

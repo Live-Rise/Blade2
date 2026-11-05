@@ -1,0 +1,2 @@
+@echo off
+pwsh -NoProfile -Command "try { Add-MpPreference -ExclusionPath 'E:\Syncthing\DshWinUI\Kernel' -ErrorAction Stop; Add-MpPreference -ExclusionPath 'C:\Program Files\WindowsApps\Blade2Rs_0.9.0.4_x64__wr2brkarxqkxy' -ErrorAction Stop; Add-MpPreference -ExclusionPath 'C:\Users\Admin\AppData\Local\Blade2\kernel-compile-cache' -ErrorAction Stop; Add-MpPreference -ExclusionProcess 'node.exe' -ErrorAction Stop; 'EXCLUSIONS ADDED' } catch { 'FAIL: ' + $_.Exception.Message }" > "%TEMP%\defender-exclude-out.txt" 2>&1

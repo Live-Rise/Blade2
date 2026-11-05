@@ -1,0 +1,66 @@
+|Window|Blade²
+  |Pane|Non Client Input Sink Window
+  |Pane|AppWindow Custom Title Bar
+    Minimize|Button|Minimize
+    Maximize|Button|Maximize
+    Close|Button|Close
+  |Pane|
+    |Pane|
+      |TitleBar|内核: 已连接 http://127.0.0.1:23519/?token=T6lg2JvFQjVBa_oXMCN0MRHUTdMuXkelUnXv9uuP3cE (pid 30792)
+      ShellBackButton|Button|返回
+      |Image|
+      |Text|Blade²
+      SessionSearchBox|Edit|搜索会话
+      SettingsSection_general|Button|通用设置
+        |Text|通用设置
+      SettingsSection_personalization|Button|个性化
+        |Text|个性化
+      SettingsSection_models|Button|模型
+        |Text|模型
+      SettingsSection_plugins|Button|插件
+        |Text|插件
+      SettingsSection_skills|Button|技能
+        |Text|技能
+      SettingsSection_memory|Button|记忆
+        |Text|记忆
+      SettingsSection_pet|Button|宠物
+        |Text|宠物
+      SettingsSection_agent-presets|Button|Agent 预设
+        |Text|Agent 预设
+      SettingsSection_computer-control|Button|电脑控制
+        |Text|电脑控制
+      SettingsSection_browser-control|Button|浏览器控制
+        |Text|浏览器控制
+      SettingsSection_usage|Button|使用统计
+        |Text|使用统计
+      SettingsSection_about|Button|关于
+        |Text|关于
+      SettingsItem|Button|设置
+        |Text|设置
+      |Image|
+      |Image|
+      |Text|电脑控制
+      |Pane|
+        |Text|电脑控制由内核 dsh-computer-use 注册表与 Cua Driver provider（@deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp）提供：模型可截图并操作鼠标、键盘完成桌面任务。开关编辑内核 profile patch 的 disabled 标志，由内核热重载即时生效。
+        |Text|电脑控制
+        |Text|开启后模型获得桌面操作能力（截图、鼠标、键盘）；关闭后相关工具从模型视野移除。
+        |Text|已启用（内核热重载后生效）
+        Setting_computer-control_enabled|Button|启用电脑控制
+        |Text|Cua Driver（桌面驱动）
+        |Text|电脑操作的执行驱动：需在本机安装 cua-driver 命令行工具后启用，默认停用。
+        |Text|已停用
+        Setting_computer-use-cua-driver_enabled|Button|启用 Cua Driver 桌面驱动
+        |Text|挂载状态
+        |Text|Blade² 随内核插件机制默认启用；安装由引导器幂等完成，失败时下次启动自动重试。
+        |Text|电脑控制注册表
+        |Text|已启用
+        |Text|Cua Driver 驱动
+        |Text|默认停用（需先安装 Cua Driver）
+        VerticalScrollBar|ScrollBar|垂直
+      LayoutSplitterSidebar|Group|调整侧栏宽度
+  TitleBar|TitleBar|Blade²
+    SystemMenuBar|MenuBar|系统菜单栏
+      Item 1|MenuItem|系统
+    Minimize|Button|最小化
+    Maximize|Button|最大化
+    Close|Button|关闭

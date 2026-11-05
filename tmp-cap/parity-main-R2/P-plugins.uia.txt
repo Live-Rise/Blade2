@@ -1,0 +1,93 @@
+|Window|Blade²
+  |Pane|Non Client Input Sink Window
+  |Pane|AppWindow Custom Title Bar
+    Minimize|Button|Minimize
+    Maximize|Button|Maximize
+    Close|Button|Close
+  |Pane|
+    |Pane|
+      ShellBackButton|Button|返回
+      |Text|Blade²
+      SessionSearchBox|Group|搜索会话
+        TextBox|Edit|搜索会话
+          |Text|搜索会话…
+      Nav|Custom|
+        PaneRoot|Window|
+          MenuItemsScrollViewer|Pane|
+            MenuItemsHost|Group|
+              SettingsSection_general|ListItem|通用设置
+              SettingsSection_personalization|ListItem|个性化
+              SettingsSection_models|ListItem|模型
+              SettingsSection_plugins|ListItem|插件
+              SettingsSection_skills|ListItem|技能
+              SettingsSection_memory|ListItem|记忆
+              SettingsSection_pet|ListItem|宠物
+              SettingsSection_agent-presets|ListItem|Agent 预设
+              SettingsSection_computer-control|ListItem|电脑控制
+              SettingsSection_browser-control|ListItem|浏览器控制
+              SettingsSection_usage|ListItem|使用统计
+              SettingsSection_about|ListItem|关于
+          FooterItemsScrollViewer|Pane|
+            FooterMenuItemsHost|Group|
+              SettingsItem|ListItem|设置
+        SettingsPageHeader|Text|插件
+        ConnectionStatusBar|Group|连接状态
+        SettingsScroller|Pane|
+          SettingsHost|Group|设置内容列
+            |Text|配置和查看本部署已安装的插件。
+            PluginsTabBar|Group|插件视图
+              PART_ItemsView|List|
+                PART_ScrollPresenter|Pane|
+                  PluginsTabConfig|ListItem|插件配置
+                    PART_TextVisual|Text|插件配置
+                  PluginsTabInventory|ListItem|插件列表
+                    PART_TextVisual|Text|插件列表
+            PluginsNav_shell|Button|终端
+              |Text|终端
+              |Text|命令超时、单流输出上限。
+            PluginsNav_agentLoop|Button|Agent 循环
+              |Text|Agent 循环
+              |Text|同一步内最多同时运行多少个可并行的调用。
+            PluginsNav_subagent|Button|Subagent
+              |Text|Subagent
+              |Text|控制 Agent 为 Subagent 选择模型的权限。
+            PluginsNav_webSearch|Button|网页搜索
+              |Text|网页搜索
+              |Text|DeepSeek 搜索提供方：密钥、接口地址、搜索次数。
+            PluginsNav_autoReview|Button|自动审查
+              |Text|自动审查
+              |Text|越界工具调用的自动授权审查开关。
+            PluginsNav_defaults|Button|默认插件
+              |Text|默认插件
+              |Text|默认插件组合的安装与挂载状态。
+            PluginsNav_generic_agent-preset-registry|Button|agent-preset-registry
+              |Text|agent-preset-registry
+              |Text|由 settings/describe 泛化渲染的附加插件设置。
+            PluginsNav_generic_pwsh-sandbox|Button|pwsh-sandbox
+              |Text|pwsh-sandbox
+              |Text|由 settings/describe 泛化渲染的附加插件设置。
+            PluginsNav_generic_session-log-deepseek|Button|session-log-deepseek
+              |Text|session-log-deepseek
+              |Text|由 settings/describe 泛化渲染的附加插件设置。
+            PluginsNav_generic_subagent|Button|subagent
+              |Text|subagent
+              |Text|由 settings/describe 泛化渲染的附加插件设置。
+            PluginsNav_generic_subagent-model-selection-settings|Button|subagent-model-selection-settings
+              |Text|subagent-model-selection-settings
+              |Text|由 settings/describe 泛化渲染的附加插件设置。
+            PluginsNav_generic_ui-settings|Button|ui-settings
+              |Text|ui-settings
+              |Text|由 settings/describe 泛化渲染的附加插件设置。
+            PluginsNav_generic_ui-settings-account|Button|ui-settings-account
+              |Text|ui-settings-account
+              |Text|由 settings/describe 泛化渲染的附加插件设置。
+            PluginsNav_generic_ui-settings-general|Button|ui-settings-general
+              |Text|ui-settings-general
+              |Text|由 settings/describe 泛化渲染的附加插件设置。
+            PluginsNav_generic_web|Button|web
+              |Text|web
+              |Text|由 settings/describe 泛化渲染的附加插件设置。
+            PluginsNav_generic_web-deepseek-api|Button|web-deepseek-api
+              |Text|web-deepseek-api
+              |Text|由 settings/describe 泛化渲染的附加插件设置。
+          VerticalScrollBar|ScrollBar|垂直

@@ -1,0 +1,1366 @@
+===== P-about =====
+  主干独有 29 项 / 重写线独有 33 项
+  [仅主干] |Text|默认插件就绪
+  [仅主干] |Text|搜索会话…
+  [仅主干] 100%
+  [仅主干] 认证完成
+  [仅主干] ConnectionStatusBar|Group|连接状态
+  [仅主干] FooterItemsScrollViewer|Pane|
+  [仅主干] FooterMenuItemsHost|Group|
+  [仅主干] MenuItemsHost|Group|
+  [仅主干] MenuItemsScrollViewer|Pane|
+  [仅主干] Nav|Custom|
+  [仅主干] PaneRoot|Window|
+  [仅主干] SessionSearchBox|Group|搜索会话
+  [仅主干] SettingsHost|Group|设置内容列
+  [仅主干] SettingsItem|ListItem|设置
+  [仅主干] SettingsPageHeader|Text|关于
+  [仅主干] SettingsScroller|Pane|
+  [仅主干] SettingsSection_about|ListItem|关于
+  [仅主干] SettingsSection_agent-presets|ListItem|Agent 预设
+  [仅主干] SettingsSection_browser-control|ListItem|浏览器控制
+  [仅主干] SettingsSection_computer-control|ListItem|电脑控制
+  [仅主干] SettingsSection_general|ListItem|通用设置
+  [仅主干] SettingsSection_memory|ListItem|记忆
+  [仅主干] SettingsSection_models|ListItem|模型
+  [仅主干] SettingsSection_personalization|ListItem|个性化
+  [仅主干] SettingsSection_pet|ListItem|宠物
+  [仅主干] SettingsSection_plugins|ListItem|插件
+  [仅主干] SettingsSection_skills|ListItem|技能
+  [仅主干] SettingsSection_usage|ListItem|使用统计
+  [仅主干] TextBox|Edit|搜索会话
+  [仅重写] |Image|
+  [仅重写] |Text|插件
+  [仅重写] |Text|宠物
+  [仅重写] |Text|电脑控制
+  [仅重写] |Text|个性化
+  [仅重写] |Text|关于
+  [仅重写] |Text|记忆
+  [仅重写] |Text|技能
+  [仅重写] |Text|检查更新
+  [仅重写] |Text|浏览器控制
+  [仅重写] |Text|模型
+  [仅重写] |Text|认证完成
+  [仅重写] |Text|设置
+  [仅重写] |Text|使用统计
+  [仅重写] |Text|通用设置
+  [仅重写] |Text|Agent 预设
+  [仅重写] |TitleBar|连接状态
+  [仅重写] 83%
+  [仅重写] LayoutSplitterSidebar|Group|调整侧栏宽度
+  [仅重写] SessionSearchBox|Edit|搜索会话
+  [仅重写] SettingsItem|Button|设置
+  [仅重写] SettingsSection_about|Button|关于
+  [仅重写] SettingsSection_agent-presets|Button|Agent 预设
+  [仅重写] SettingsSection_browser-control|Button|浏览器控制
+  [仅重写] SettingsSection_computer-control|Button|电脑控制
+  [仅重写] SettingsSection_general|Button|通用设置
+  [仅重写] SettingsSection_memory|Button|记忆
+  [仅重写] SettingsSection_models|Button|模型
+  [仅重写] SettingsSection_personalization|Button|个性化
+  [仅重写] SettingsSection_pet|Button|宠物
+  [仅重写] SettingsSection_plugins|Button|插件
+  [仅重写] SettingsSection_skills|Button|技能
+  [仅重写] SettingsSection_usage|Button|使用统计
+===== P-agent-presets =====
+  主干独有 26 项 / 重写线独有 35 项
+  [仅主干] |Text|搜索会话…
+  [仅主干] ConnectionStatusBar|Group|连接状态
+  [仅主干] FooterItemsScrollViewer|Pane|
+  [仅主干] FooterMenuItemsHost|Group|
+  [仅主干] MenuItemsHost|Group|
+  [仅主干] MenuItemsScrollViewer|Pane|
+  [仅主干] Nav|Custom|
+  [仅主干] PaneRoot|Window|
+  [仅主干] SessionSearchBox|Group|搜索会话
+  [仅主干] SettingsHost|Group|设置内容列
+  [仅主干] SettingsItem|ListItem|设置
+  [仅主干] SettingsPageHeader|Text|Agent 预设
+  [仅主干] SettingsScroller|Pane|
+  [仅主干] SettingsSection_about|ListItem|关于
+  [仅主干] SettingsSection_agent-presets|ListItem|Agent 预设
+  [仅主干] SettingsSection_browser-control|ListItem|浏览器控制
+  [仅主干] SettingsSection_computer-control|ListItem|电脑控制
+  [仅主干] SettingsSection_general|ListItem|通用设置
+  [仅主干] SettingsSection_memory|ListItem|记忆
+  [仅主干] SettingsSection_models|ListItem|模型
+  [仅主干] SettingsSection_personalization|ListItem|个性化
+  [仅主干] SettingsSection_pet|ListItem|宠物
+  [仅主干] SettingsSection_plugins|ListItem|插件
+  [仅主干] SettingsSection_skills|ListItem|技能
+  [仅主干] SettingsSection_usage|ListItem|使用统计
+  [仅主干] TextBox|Edit|搜索会话
+  [仅重写] |Image|
+  [仅重写] |Text|插件
+  [仅重写] |Text|查看
+  [仅重写] |Text|宠物
+  [仅重写] |Text|当前会话使用
+  [仅重写] |Text|电脑控制
+  [仅重写] |Text|个性化
+  [仅重写] |Text|关于
+  [仅重写] |Text|记忆
+  [仅重写] |Text|技能
+  [仅重写] |Text|浏览器控制
+  [仅重写] |Text|模型
+  [仅重写] |Text|设为默认
+  [仅重写] |Text|设置
+  [仅重写] |Text|使用统计
+  [仅重写] |Text|通用设置
+  [仅重写] |Text|用「创造模式」创作自定义预设
+  [仅重写] |Text|Agent 预设
+  [仅重写] |TitleBar|连接状态
+  [仅重写] LayoutSplitterSidebar|Group|调整侧栏宽度
+  [仅重写] SessionSearchBox|Edit|搜索会话
+  [仅重写] SettingsItem|Button|设置
+  [仅重写] SettingsSection_about|Button|关于
+  [仅重写] SettingsSection_agent-presets|Button|Agent 预设
+  [仅重写] SettingsSection_browser-control|Button|浏览器控制
+  [仅重写] SettingsSection_computer-control|Button|电脑控制
+  [仅重写] SettingsSection_general|Button|通用设置
+  [仅重写] SettingsSection_memory|Button|记忆
+  [仅重写] SettingsSection_models|Button|模型
+  [仅重写] SettingsSection_personalization|Button|个性化
+  [仅重写] SettingsSection_pet|Button|宠物
+  [仅重写] SettingsSection_plugins|Button|插件
+  [仅重写] SettingsSection_skills|Button|技能
+  [仅重写] SettingsSection_usage|Button|使用统计
+  [仅重写] VerticalScrollBar|ScrollBar|垂直
+===== P-browser-control =====
+  主干独有 26 项 / 重写线独有 30 项
+  [仅主干] |Text|搜索会话…
+  [仅主干] ConnectionStatusBar|Group|连接状态
+  [仅主干] FooterItemsScrollViewer|Pane|
+  [仅主干] FooterMenuItemsHost|Group|
+  [仅主干] MenuItemsHost|Group|
+  [仅主干] MenuItemsScrollViewer|Pane|
+  [仅主干] Nav|Custom|
+  [仅主干] PaneRoot|Window|
+  [仅主干] SessionSearchBox|Group|搜索会话
+  [仅主干] SettingsHost|Group|设置内容列
+  [仅主干] SettingsItem|ListItem|设置
+  [仅主干] SettingsPageHeader|Text|浏览器控制
+  [仅主干] SettingsScroller|Pane|
+  [仅主干] SettingsSection_about|ListItem|关于
+  [仅主干] SettingsSection_agent-presets|ListItem|Agent 预设
+  [仅主干] SettingsSection_browser-control|ListItem|浏览器控制
+  [仅主干] SettingsSection_computer-control|ListItem|电脑控制
+  [仅主干] SettingsSection_general|ListItem|通用设置
+  [仅主干] SettingsSection_memory|ListItem|记忆
+  [仅主干] SettingsSection_models|ListItem|模型
+  [仅主干] SettingsSection_personalization|ListItem|个性化
+  [仅主干] SettingsSection_pet|ListItem|宠物
+  [仅主干] SettingsSection_plugins|ListItem|插件
+  [仅主干] SettingsSection_skills|ListItem|技能
+  [仅主干] SettingsSection_usage|ListItem|使用统计
+  [仅主干] TextBox|Edit|搜索会话
+  [仅重写] |Image|
+  [仅重写] |Text|插件
+  [仅重写] |Text|宠物
+  [仅重写] |Text|电脑控制
+  [仅重写] |Text|个性化
+  [仅重写] |Text|关于
+  [仅重写] |Text|记忆
+  [仅重写] |Text|技能
+  [仅重写] |Text|模型
+  [仅重写] |Text|设置
+  [仅重写] |Text|使用统计
+  [仅重写] |Text|通用设置
+  [仅重写] |Text|Agent 预设
+  [仅重写] |TitleBar|连接状态
+  [仅重写] LayoutSplitterSidebar|Group|调整侧栏宽度
+  [仅重写] SessionSearchBox|Edit|搜索会话
+  [仅重写] SettingsItem|Button|设置
+  [仅重写] SettingsSection_about|Button|关于
+  [仅重写] SettingsSection_agent-presets|Button|Agent 预设
+  [仅重写] SettingsSection_browser-control|Button|浏览器控制
+  [仅重写] SettingsSection_computer-control|Button|电脑控制
+  [仅重写] SettingsSection_general|Button|通用设置
+  [仅重写] SettingsSection_memory|Button|记忆
+  [仅重写] SettingsSection_models|Button|模型
+  [仅重写] SettingsSection_personalization|Button|个性化
+  [仅重写] SettingsSection_pet|Button|宠物
+  [仅重写] SettingsSection_plugins|Button|插件
+  [仅重写] SettingsSection_skills|Button|技能
+  [仅重写] SettingsSection_usage|Button|使用统计
+  [仅重写] VerticalScrollBar|ScrollBar|垂直
+===== P-computer-control =====
+  主干独有 26 项 / 重写线独有 30 项
+  [仅主干] |Text|搜索会话…
+  [仅主干] ConnectionStatusBar|Group|连接状态
+  [仅主干] FooterItemsScrollViewer|Pane|
+  [仅主干] FooterMenuItemsHost|Group|
+  [仅主干] MenuItemsHost|Group|
+  [仅主干] MenuItemsScrollViewer|Pane|
+  [仅主干] Nav|Custom|
+  [仅主干] PaneRoot|Window|
+  [仅主干] SessionSearchBox|Group|搜索会话
+  [仅主干] SettingsHost|Group|设置内容列
+  [仅主干] SettingsItem|ListItem|设置
+  [仅主干] SettingsPageHeader|Text|电脑控制
+  [仅主干] SettingsScroller|Pane|
+  [仅主干] SettingsSection_about|ListItem|关于
+  [仅主干] SettingsSection_agent-presets|ListItem|Agent 预设
+  [仅主干] SettingsSection_browser-control|ListItem|浏览器控制
+  [仅主干] SettingsSection_computer-control|ListItem|电脑控制
+  [仅主干] SettingsSection_general|ListItem|通用设置
+  [仅主干] SettingsSection_memory|ListItem|记忆
+  [仅主干] SettingsSection_models|ListItem|模型
+  [仅主干] SettingsSection_personalization|ListItem|个性化
+  [仅主干] SettingsSection_pet|ListItem|宠物
+  [仅主干] SettingsSection_plugins|ListItem|插件
+  [仅主干] SettingsSection_skills|ListItem|技能
+  [仅主干] SettingsSection_usage|ListItem|使用统计
+  [仅主干] TextBox|Edit|搜索会话
+  [仅重写] |Image|
+  [仅重写] |Text|插件
+  [仅重写] |Text|宠物
+  [仅重写] |Text|个性化
+  [仅重写] |Text|关于
+  [仅重写] |Text|记忆
+  [仅重写] |Text|技能
+  [仅重写] |Text|浏览器控制
+  [仅重写] |Text|模型
+  [仅重写] |Text|设置
+  [仅重写] |Text|使用统计
+  [仅重写] |Text|通用设置
+  [仅重写] |Text|Agent 预设
+  [仅重写] |TitleBar|连接状态
+  [仅重写] LayoutSplitterSidebar|Group|调整侧栏宽度
+  [仅重写] SessionSearchBox|Edit|搜索会话
+  [仅重写] SettingsItem|Button|设置
+  [仅重写] SettingsSection_about|Button|关于
+  [仅重写] SettingsSection_agent-presets|Button|Agent 预设
+  [仅重写] SettingsSection_browser-control|Button|浏览器控制
+  [仅重写] SettingsSection_computer-control|Button|电脑控制
+  [仅重写] SettingsSection_general|Button|通用设置
+  [仅重写] SettingsSection_memory|Button|记忆
+  [仅重写] SettingsSection_models|Button|模型
+  [仅重写] SettingsSection_personalization|Button|个性化
+  [仅重写] SettingsSection_pet|Button|宠物
+  [仅重写] SettingsSection_plugins|Button|插件
+  [仅重写] SettingsSection_skills|Button|技能
+  [仅重写] SettingsSection_usage|Button|使用统计
+  [仅重写] VerticalScrollBar|ScrollBar|垂直
+===== P-general =====
+  主干独有 27 项 / 重写线独有 35 项
+  [仅主干] |Text|搜索会话…
+  [仅主干] ConnectionStatusBar|Group|连接状态
+  [仅主干] FooterItemsScrollViewer|Pane|
+  [仅主干] FooterMenuItemsHost|Group|
+  [仅主干] MenuItemsHost|Group|
+  [仅主干] MenuItemsScrollViewer|Pane|
+  [仅主干] Nav|Custom|
+  [仅主干] PaneRoot|Window|
+  [仅主干] SessionSearchBox|Group|搜索会话
+  [仅主干] Setting_permission_defaultPreset|ComboBox|默认权限模式
+  [仅主干] SettingsHost|Group|设置内容列
+  [仅主干] SettingsItem|ListItem|设置
+  [仅主干] SettingsPageHeader|Text|通用设置
+  [仅主干] SettingsScroller|Pane|
+  [仅主干] SettingsSection_about|ListItem|关于
+  [仅主干] SettingsSection_agent-presets|ListItem|Agent 预设
+  [仅主干] SettingsSection_browser-control|ListItem|浏览器控制
+  [仅主干] SettingsSection_computer-control|ListItem|电脑控制
+  [仅主干] SettingsSection_general|ListItem|通用设置
+  [仅主干] SettingsSection_memory|ListItem|记忆
+  [仅主干] SettingsSection_models|ListItem|模型
+  [仅主干] SettingsSection_personalization|ListItem|个性化
+  [仅主干] SettingsSection_pet|ListItem|宠物
+  [仅主干] SettingsSection_plugins|ListItem|插件
+  [仅主干] SettingsSection_skills|ListItem|技能
+  [仅主干] SettingsSection_usage|ListItem|使用统计
+  [仅主干] TextBox|Edit|搜索会话
+  [仅重写] |Image|
+  [仅重写] |Text|＋
+  [仅重写] |Text|−
+  [仅重写] |Text|插件
+  [仅重写] |Text|宠物
+  [仅重写] |Text|打开设置文档
+  [仅重写] |Text|电脑控制
+  [仅重写] |Text|个性化
+  [仅重写] |Text|关于
+  [仅重写] |Text|恢复本页默认
+  [仅重写] |Text|记忆
+  [仅重写] |Text|技能
+  [仅重写] |Text|浏览器控制
+  [仅重写] |Text|模型
+  [仅重写] |Text|设置
+  [仅重写] |Text|使用统计
+  [仅重写] |Text|通用设置
+  [仅重写] |Text|Agent 预设
+  [仅重写] |TitleBar|连接状态
+  [仅重写] LayoutSplitterSidebar|Group|调整侧栏宽度
+  [仅重写] SessionSearchBox|Edit|搜索会话
+  [仅重写] Setting_permission_defaultPreset|ComboBox|默认权限
+  [仅重写] SettingsItem|Button|设置
+  [仅重写] SettingsSection_about|Button|关于
+  [仅重写] SettingsSection_agent-presets|Button|Agent 预设
+  [仅重写] SettingsSection_browser-control|Button|浏览器控制
+  [仅重写] SettingsSection_computer-control|Button|电脑控制
+  [仅重写] SettingsSection_general|Button|通用设置
+  [仅重写] SettingsSection_memory|Button|记忆
+  [仅重写] SettingsSection_models|Button|模型
+  [仅重写] SettingsSection_personalization|Button|个性化
+  [仅重写] SettingsSection_pet|Button|宠物
+  [仅重写] SettingsSection_plugins|Button|插件
+  [仅重写] SettingsSection_skills|Button|技能
+  [仅重写] SettingsSection_usage|Button|使用统计
+===== P-memory =====
+  主干独有 26 项 / 重写线独有 30 项
+  [仅主干] |Text|搜索会话…
+  [仅主干] ConnectionStatusBar|Group|连接状态
+  [仅主干] FooterItemsScrollViewer|Pane|
+  [仅主干] FooterMenuItemsHost|Group|
+  [仅主干] MenuItemsHost|Group|
+  [仅主干] MenuItemsScrollViewer|Pane|
+  [仅主干] Nav|Custom|
+  [仅主干] PaneRoot|Window|
+  [仅主干] SessionSearchBox|Group|搜索会话
+  [仅主干] SettingsHost|Group|设置内容列
+  [仅主干] SettingsItem|ListItem|设置
+  [仅主干] SettingsPageHeader|Text|记忆
+  [仅主干] SettingsScroller|Pane|
+  [仅主干] SettingsSection_about|ListItem|关于
+  [仅主干] SettingsSection_agent-presets|ListItem|Agent 预设
+  [仅主干] SettingsSection_browser-control|ListItem|浏览器控制
+  [仅主干] SettingsSection_computer-control|ListItem|电脑控制
+  [仅主干] SettingsSection_general|ListItem|通用设置
+  [仅主干] SettingsSection_memory|ListItem|记忆
+  [仅主干] SettingsSection_models|ListItem|模型
+  [仅主干] SettingsSection_personalization|ListItem|个性化
+  [仅主干] SettingsSection_pet|ListItem|宠物
+  [仅主干] SettingsSection_plugins|ListItem|插件
+  [仅主干] SettingsSection_skills|ListItem|技能
+  [仅主干] SettingsSection_usage|ListItem|使用统计
+  [仅主干] TextBox|Edit|搜索会话
+  [仅重写] |Image|
+  [仅重写] |Text|插件
+  [仅重写] |Text|宠物
+  [仅重写] |Text|电脑控制
+  [仅重写] |Text|个性化
+  [仅重写] |Text|关于
+  [仅重写] |Text|记忆
+  [仅重写] |Text|技能
+  [仅重写] |Text|浏览器控制
+  [仅重写] |Text|模型
+  [仅重写] |Text|设置
+  [仅重写] |Text|使用统计
+  [仅重写] |Text|通用设置
+  [仅重写] |Text|Agent 预设
+  [仅重写] |TitleBar|连接状态
+  [仅重写] LayoutSplitterSidebar|Group|调整侧栏宽度
+  [仅重写] SessionSearchBox|Edit|搜索会话
+  [仅重写] SettingsItem|Button|设置
+  [仅重写] SettingsSection_about|Button|关于
+  [仅重写] SettingsSection_agent-presets|Button|Agent 预设
+  [仅重写] SettingsSection_browser-control|Button|浏览器控制
+  [仅重写] SettingsSection_computer-control|Button|电脑控制
+  [仅重写] SettingsSection_general|Button|通用设置
+  [仅重写] SettingsSection_memory|Button|记忆
+  [仅重写] SettingsSection_models|Button|模型
+  [仅重写] SettingsSection_personalization|Button|个性化
+  [仅重写] SettingsSection_pet|Button|宠物
+  [仅重写] SettingsSection_plugins|Button|插件
+  [仅重写] SettingsSection_skills|Button|技能
+  [仅重写] SettingsSection_usage|Button|使用统计
+===== P-models =====
+  主干独有 26 项 / 重写线独有 33 项
+  [仅主干] |Text|搜索会话…
+  [仅主干] ConnectionStatusBar|Group|连接状态
+  [仅主干] FooterItemsScrollViewer|Pane|
+  [仅主干] FooterMenuItemsHost|Group|
+  [仅主干] MenuItemsHost|Group|
+  [仅主干] MenuItemsScrollViewer|Pane|
+  [仅主干] Nav|Custom|
+  [仅主干] PaneRoot|Window|
+  [仅主干] SessionSearchBox|Group|搜索会话
+  [仅主干] SettingsHost|Group|设置内容列
+  [仅主干] SettingsItem|ListItem|设置
+  [仅主干] SettingsPageHeader|Text|模型
+  [仅主干] SettingsScroller|Pane|
+  [仅主干] SettingsSection_about|ListItem|关于
+  [仅主干] SettingsSection_agent-presets|ListItem|Agent 预设
+  [仅主干] SettingsSection_browser-control|ListItem|浏览器控制
+  [仅主干] SettingsSection_computer-control|ListItem|电脑控制
+  [仅主干] SettingsSection_general|ListItem|通用设置
+  [仅主干] SettingsSection_memory|ListItem|记忆
+  [仅主干] SettingsSection_models|ListItem|模型
+  [仅主干] SettingsSection_personalization|ListItem|个性化
+  [仅主干] SettingsSection_pet|ListItem|宠物
+  [仅主干] SettingsSection_plugins|ListItem|插件
+  [仅主干] SettingsSection_skills|ListItem|技能
+  [仅主干] SettingsSection_usage|ListItem|使用统计
+  [仅主干] TextBox|Edit|搜索会话
+  [仅重写] |Image|
+  [仅重写] |Text|编辑
+  [仅重写] |Text|插件
+  [仅重写] |Text|宠物
+  [仅重写] |Text|电脑控制
+  [仅重写] |Text|个性化
+  [仅重写] |Text|关于
+  [仅重写] |Text|记忆
+  [仅重写] |Text|技能
+  [仅重写] |Text|浏览器控制
+  [仅重写] |Text|模型
+  [仅重写] |Text|删除
+  [仅重写] |Text|设置
+  [仅重写] |Text|使用统计
+  [仅重写] |Text|通用设置
+  [仅重写] |Text|Agent 预设
+  [仅重写] |TitleBar|连接状态
+  [仅重写] LayoutSplitterSidebar|Group|调整侧栏宽度
+  [仅重写] SessionSearchBox|Edit|搜索会话
+  [仅重写] SettingsItem|Button|设置
+  [仅重写] SettingsSection_about|Button|关于
+  [仅重写] SettingsSection_agent-presets|Button|Agent 预设
+  [仅重写] SettingsSection_browser-control|Button|浏览器控制
+  [仅重写] SettingsSection_computer-control|Button|电脑控制
+  [仅重写] SettingsSection_general|Button|通用设置
+  [仅重写] SettingsSection_memory|Button|记忆
+  [仅重写] SettingsSection_models|Button|模型
+  [仅重写] SettingsSection_personalization|Button|个性化
+  [仅重写] SettingsSection_pet|Button|宠物
+  [仅重写] SettingsSection_plugins|Button|插件
+  [仅重写] SettingsSection_skills|Button|技能
+  [仅重写] SettingsSection_usage|Button|使用统计
+  [仅重写] VerticalScrollBar|ScrollBar|垂直
+===== P-personalization =====
+  主干独有 28 项 / 重写线独有 35 项
+  [仅主干] |Text|搜索会话…
+  [仅主干] |Text|字数 30 / 4000
+  [仅主干] ConnectionStatusBar|Group|连接状态
+  [仅主干] FooterItemsScrollViewer|Pane|
+  [仅主干] FooterMenuItemsHost|Group|
+  [仅主干] MenuItemsHost|Group|
+  [仅主干] MenuItemsScrollViewer|Pane|
+  [仅主干] Nav|Custom|
+  [仅主干] PaneRoot|Window|
+  [仅主干] SessionSearchBox|Group|搜索会话
+  [仅主干] SettingsHost|Group|设置内容列
+  [仅主干] SettingsItem|ListItem|设置
+  [仅主干] SettingsPageHeader|Text|个性化
+  [仅主干] SettingsScroller|Pane|
+  [仅主干] SettingsSection_about|ListItem|关于
+  [仅主干] SettingsSection_agent-presets|ListItem|Agent 预设
+  [仅主干] SettingsSection_browser-control|ListItem|浏览器控制
+  [仅主干] SettingsSection_computer-control|ListItem|电脑控制
+  [仅主干] SettingsSection_general|ListItem|通用设置
+  [仅主干] SettingsSection_memory|ListItem|记忆
+  [仅主干] SettingsSection_models|ListItem|模型
+  [仅主干] SettingsSection_personalization|ListItem|个性化
+  [仅主干] SettingsSection_pet|ListItem|宠物
+  [仅主干] SettingsSection_plugins|ListItem|插件
+  [仅主干] SettingsSection_skills|ListItem|技能
+  [仅主干] SettingsSection_usage|ListItem|使用统计
+  [仅主干] SkinVideoPauseToggle|Button|窗口失焦时暂停视频背景
+  [仅主干] TextBox|Edit|搜索会话
+  [仅重写] |Image|
+  [仅重写] |Text|插件
+  [仅重写] |Text|宠物
+  [仅重写] |Text|导入视频
+  [仅重写] |Text|导入图片
+  [仅重写] |Text|电脑控制
+  [仅重写] |Text|个性化
+  [仅重写] |Text|关于
+  [仅重写] |Text|记忆
+  [仅重写] |Text|技能
+  [仅重写] |Text|浏览器控制
+  [仅重写] |Text|模型
+  [仅重写] |Text|清除皮肤
+  [仅重写] |Text|设置
+  [仅重写] |Text|使用统计
+  [仅重写] |Text|通用设置
+  [仅重写] |Text|有未保存的修改…
+  [仅重写] |Text|Agent 预设
+  [仅重写] |TitleBar|连接状态
+  [仅重写] LayoutSplitterSidebar|Group|调整侧栏宽度
+  [仅重写] SessionSearchBox|Edit|搜索会话
+  [仅重写] Setting_skin_video_pause_on_blur|Button|窗口失焦时暂停视频背景
+  [仅重写] SettingsItem|Button|设置
+  [仅重写] SettingsSection_about|Button|关于
+  [仅重写] SettingsSection_agent-presets|Button|Agent 预设
+  [仅重写] SettingsSection_browser-control|Button|浏览器控制
+  [仅重写] SettingsSection_computer-control|Button|电脑控制
+  [仅重写] SettingsSection_general|Button|通用设置
+  [仅重写] SettingsSection_memory|Button|记忆
+  [仅重写] SettingsSection_models|Button|模型
+  [仅重写] SettingsSection_personalization|Button|个性化
+  [仅重写] SettingsSection_pet|Button|宠物
+  [仅重写] SettingsSection_plugins|Button|插件
+  [仅重写] SettingsSection_skills|Button|技能
+  [仅重写] SettingsSection_usage|Button|使用统计
+===== P-pet =====
+  主干独有 83 项 / 重写线独有 40 项
+  [仅主干] |Text|
+  [仅主干] |Text|[warning] C:\Users\Admin\.codex\pets\asuka: C:\Users\Admin\.codex\pets\asuka: v1 compat read: manifest treated as renderer "sprite2d"; run scripts/dsh-pet-migrate-v2 to migrate
+  [仅主干] |Text|[warning] C:\Users\Admin\.codex\pets\asuka: C:\Users\Admin\.codex\pets\asuka: v1 compat read: no license field; run scripts/dsh-pet-migrate-v2 to migrate this pet
+  [仅主干] |Text|[warning] C:\Users\Admin\.codex\pets\denia: C:\Users\Admin\.codex\pets\denia: v1 compat read: manifest treated as renderer "sprite2d"; run scripts/dsh-pet-migrate-v2 to migrate
+  [仅主干] |Text|[warning] C:\Users\Admin\.codex\pets\denia: C:\Users\Admin\.codex\pets\denia: v1 compat read: no license field; run scripts/dsh-pet-migrate-v2 to migrate this pet
+  [仅主干] |Text|[warning] C:\Users\Admin\.codex\pets\kana: C:\Users\Admin\.codex\pets\kana: v1 compat read: manifest treated as renderer "sprite2d"; run scripts/dsh-pet-migrate-v2 to migrate
+  [仅主干] |Text|[warning] C:\Users\Admin\.codex\pets\kana: C:\Users\Admin\.codex\pets\kana: v1 compat read: no license field; run scripts/dsh-pet-migrate-v2 to migrate this pet
+  [仅主干] |Text|[warning] C:\Users\Admin\.codex\pets\little-ameath: C:\Users\Admin\.codex\pets\little-ameath: v1 compat read: manifest treated as renderer "sprite2d"; run scripts/dsh-pet-migrate-v2 to migrate
+  [仅主干] |Text|[warning] C:\Users\Admin\.codex\pets\little-ameath: C:\Users\Admin\.codex\pets\little-ameath: v1 compat read: no license field; run scripts/dsh-pet-migrate-v2 to migrate this pet
+  [仅主干] |Text|[warning] C:\Users\Admin\.codex\pets\mengyu: C:\Users\Admin\.codex\pets\mengyu: v1 compat read: manifest treated as renderer "sprite2d"; run scripts/dsh-pet-migrate-v2 to migrate
+  [仅主干] |Text|[warning] C:\Users\Admin\.codex\pets\mengyu: C:\Users\Admin\.codex\pets\mengyu: v1 compat read: no license field; run scripts/dsh-pet-migrate-v2 to migrate this pet
+  [仅主干] |Text|[warning] C:\Users\Admin\.codex\pets\perlica: C:\Users\Admin\.codex\pets\perlica: v1 compat read: manifest treated as renderer "sprite2d"; run scripts/dsh-pet-migrate-v2 to migrate
+  [仅主干] |Text|[warning] C:\Users\Admin\.codex\pets\perlica: C:\Users\Admin\.codex\pets\perlica: v1 compat read: no license field; run scripts/dsh-pet-migrate-v2 to migrate this pet
+  [仅主干] |Text|[warning] C:\Users\Admin\.codex\pets\sakura-ch: C:\Users\Admin\.codex\pets\sakura-ch: v1 compat read: manifest treated as renderer "sprite2d"; run scripts/dsh-pet-migrate-v2 to migrate
+  [仅主干] |Text|[warning] C:\Users\Admin\.codex\pets\sakura-ch: C:\Users\Admin\.codex\pets\sakura-ch: v1 compat read: no license field; run scripts/dsh-pet-migrate-v2 to migrate this pet
+  [仅主干] |Text|[warning] C:\Users\Admin\AppData\Local\Blade2\pets\fern: C:\Users\Admin\AppData\Local\Blade2\pets\fern: v1 compat read: manifest treated as renderer "sprite2d"; run scripts/dsh-pet-migrate-v2 to migrate
+  [仅主干] |Text|[warning] C:\Users\Admin\AppData\Local\Blade2\pets\fern: C:\Users\Admin\AppData\Local\Blade2\pets\fern: v1 compat read: no license field; run scripts/dsh-pet-migrate-v2 to migrate this pet
+  [仅主干] |Text|[warning] C:\Users\Admin\AppData\Local\Blade2\pets\mengyu: C:\Users\Admin\AppData\Local\Blade2\pets\mengyu: v1 compat read: manifest treated as renderer "sprite2d"; run scripts/dsh-pet-migrate-v2 to migrate
+  [仅主干] |Text|[warning] C:\Users\Admin\AppData\Local\Blade2\pets\mengyu: C:\Users\Admin\AppData\Local\Blade2\pets\mengyu: v1 compat read: no license field; run scripts/dsh-pet-migrate-v2 to migrate this pet
+  [仅主干] |Text|160 px
+  [仅主干] |Text|本机安装
+  [仅主干] |Text|插件内置
+  [仅主干] |Text|宠物插件已安装并选入内核 bundle。
+  [仅主干] |Text|宠物显示在聊天窗口右下角，跟着模型的工作状态切换动画；点它可以互动。
+  [仅主干] |Text|基于鲸鱼娘形象进行 AI 辅助二次创作、修复与细节精修的内置变体。
+  [仅主干] |Text|鲸鱼娘（精致版）
+  [仅主干] |Text|梦羽
+  [仅主干] |Text|使用中 · 本机安装
+  [仅主干] |Text|搜索会话…
+  [仅主干] |Text|樱井麻衣
+  [仅主干] |Text|A chibi silver-haired animal-eared tactical girl with blue eyes, a white tech coat, black gloves and boots, and small yellow utility accents.
+  [仅主干] |Text|A compact Codex digital pet based on Denia, a pink-haired fantasy girl with ornate blue, black, white, pink, and red details.
+  [仅主干] |Text|A fiery chibi mecha pilot digital pet inspired by Asuka from Evangelion.
+  [仅主干] |Text|A Perlica-proportioned chibi pet of Mengyu, with pink twin tails, pink eyes, a black-and-pink sailor outfit, a cross hair clip, and asymmetric legwear.
+  [仅主干] |Text|A poised purple-haired anime companion in a tiny black triangle top and oversized tan cable-knit cardigan.
+  [仅主干] |Text|A tiny pink winged pixel chibi companion with crystalline blue-white wings and a halo ornament.
+  [仅主干] |Text|Arima Kana
+  [仅主干] |Text|Arima Kana as portrayed in the manga Oshi no Ko: a 17-year-old genius former child actress and the lead singer of the new B-Komachi.
+  [仅主干] |Text|Asuka
+  [仅主干] |Text|Codex 宠物
+  [仅主干] |Text|Denia
+  [仅主干] |Text|Fern
+  [仅主干] |Text|Little Ameath
+  [仅主干] |Text|Perlica / 佩丽卡
+  [仅主干] |Text|Q版动漫风格的樱井麻衣 Codex 桌宠。
+  [仅主干] ConnectionStatusBar|Group|连接状态
+  [仅主干] FooterItemsScrollViewer|Pane|
+  [仅主干] FooterMenuItemsHost|Group|
+  [仅主干] MenuItemsHost|Group|
+  [仅主干] MenuItemsScrollViewer|Pane|
+  [仅主干] Nav|Custom|
+  [仅主干] PaneRoot|Window|
+  [仅主干] PetCommandBox|Edit|宠物安装命令行
+  [仅主干] PetRemove_fern|Button|删除宠物 Fern
+  [仅主干] PetRemove_mengyu|Button|删除宠物 梦羽
+  [仅主干] PetUse_asuka|Button|使用宠物 Asuka
+  [仅主干] PetUse_denia|Button|使用宠物 Denia
+  [仅主干] PetUse_fern|Button|使用宠物 Fern
+  [仅主干] PetUse_kana|Button|使用宠物 Arima Kana
+  [仅主干] PetUse_little-ameath|Button|使用宠物 Little Ameath
+  [仅主干] PetUse_mengyu|Button|使用宠物 梦羽
+  [仅主干] PetUse_perlica|Button|使用宠物 Perlica / 佩丽卡
+  [仅主干] PetUse_sakura-ch|Button|使用宠物 樱井麻衣
+  [仅主干] PetUse_whale-girl-refined|Button|使用宠物 鲸鱼娘（精致版）
+  [仅主干] PetVisibleToggle|Button|显示宠物
+  [仅主干] SessionSearchBox|Group|搜索会话
+  [仅主干] SettingsHost|Group|设置内容列
+  [仅主干] SettingsItem|ListItem|设置
+  [仅主干] SettingsPageHeader|Text|宠物
+  [仅主干] SettingsScroller|Pane|
+  [仅主干] SettingsSection_about|ListItem|关于
+  [仅主干] SettingsSection_agent-presets|ListItem|Agent 预设
+  [仅主干] SettingsSection_browser-control|ListItem|浏览器控制
+  [仅主干] SettingsSection_computer-control|ListItem|电脑控制
+  [仅主干] SettingsSection_general|ListItem|通用设置
+  [仅主干] SettingsSection_memory|ListItem|记忆
+  [仅主干] SettingsSection_models|ListItem|模型
+  [仅主干] SettingsSection_personalization|ListItem|个性化
+  [仅主干] SettingsSection_pet|ListItem|宠物
+  [仅主干] SettingsSection_plugins|ListItem|插件
+  [仅主干] SettingsSection_skills|ListItem|技能
+  [仅主干] SettingsSection_usage|ListItem|使用统计
+  [仅主干] TextBox|Edit|搜索会话
+  [仅重写] |Text|128 px
+  [仅重写] |Text|安装
+  [仅重写] |Text|安装命令
+  [仅重写] |Text|插件
+  [仅重写] |Text|宠物
+  [仅重写] |Text|宠物库
+  [仅重写] |Text|宠物显示在聊天窗口右下角，跟着模型的工作状态切换动画；点它可以逗一逗。
+  [仅重写] |Text|电脑控制
+  [仅重写] |Text|个性化
+  [仅重写] |Text|关于
+  [仅重写] |Text|记忆
+  [仅重写] |Text|技能
+  [仅重写] |Text|浏览并安装
+  [仅重写] |Text|浏览器控制
+  [仅重写] |Text|模型
+  [仅重写] |Text|设置
+  [仅重写] |Text|使用统计
+  [仅重写] |Text|通用设置
+  [仅重写] |Text|已收录的宠物（插件内置 + ~/.codex/pets + 本机安装的）。切换立即生效。
+  [仅重写] |Text|正在读取宠物清单…
+  [仅重写] |Text|正在读取注册表诊断…
+  [仅重写] |Text|Agent 预设
+  [仅重写] |TitleBar|连接状态
+  [仅重写] LayoutSplitterSidebar|Group|调整侧栏宽度
+  [仅重写] SessionSearchBox|Edit|搜索会话
+  [仅重写] Setting_pet_command|Edit|安装命令
+  [仅重写] Setting_pet_visible|Button|显示宠物
+  [仅重写] SettingsItem|Button|设置
+  [仅重写] SettingsSection_about|Button|关于
+  [仅重写] SettingsSection_agent-presets|Button|Agent 预设
+  [仅重写] SettingsSection_browser-control|Button|浏览器控制
+  [仅重写] SettingsSection_computer-control|Button|电脑控制
+  [仅重写] SettingsSection_general|Button|通用设置
+  [仅重写] SettingsSection_memory|Button|记忆
+  [仅重写] SettingsSection_models|Button|模型
+  [仅重写] SettingsSection_personalization|Button|个性化
+  [仅重写] SettingsSection_pet|Button|宠物
+  [仅重写] SettingsSection_plugins|Button|插件
+  [仅重写] SettingsSection_skills|Button|技能
+  [仅重写] SettingsSection_usage|Button|使用统计
+===== P-plugins =====
+  主干独有 26 项 / 重写线独有 30 项
+  [仅主干] |Text|搜索会话…
+  [仅主干] ConnectionStatusBar|Group|连接状态
+  [仅主干] FooterItemsScrollViewer|Pane|
+  [仅主干] FooterMenuItemsHost|Group|
+  [仅主干] MenuItemsHost|Group|
+  [仅主干] MenuItemsScrollViewer|Pane|
+  [仅主干] Nav|Custom|
+  [仅主干] PaneRoot|Window|
+  [仅主干] SessionSearchBox|Group|搜索会话
+  [仅主干] SettingsHost|Group|设置内容列
+  [仅主干] SettingsItem|ListItem|设置
+  [仅主干] SettingsPageHeader|Text|插件
+  [仅主干] SettingsScroller|Pane|
+  [仅主干] SettingsSection_about|ListItem|关于
+  [仅主干] SettingsSection_agent-presets|ListItem|Agent 预设
+  [仅主干] SettingsSection_browser-control|ListItem|浏览器控制
+  [仅主干] SettingsSection_computer-control|ListItem|电脑控制
+  [仅主干] SettingsSection_general|ListItem|通用设置
+  [仅主干] SettingsSection_memory|ListItem|记忆
+  [仅主干] SettingsSection_models|ListItem|模型
+  [仅主干] SettingsSection_personalization|ListItem|个性化
+  [仅主干] SettingsSection_pet|ListItem|宠物
+  [仅主干] SettingsSection_plugins|ListItem|插件
+  [仅主干] SettingsSection_skills|ListItem|技能
+  [仅主干] SettingsSection_usage|ListItem|使用统计
+  [仅主干] TextBox|Edit|搜索会话
+  [仅重写] |Image|
+  [仅重写] |Text|插件
+  [仅重写] |Text|宠物
+  [仅重写] |Text|电脑控制
+  [仅重写] |Text|个性化
+  [仅重写] |Text|关于
+  [仅重写] |Text|记忆
+  [仅重写] |Text|技能
+  [仅重写] |Text|浏览器控制
+  [仅重写] |Text|模型
+  [仅重写] |Text|设置
+  [仅重写] |Text|使用统计
+  [仅重写] |Text|通用设置
+  [仅重写] |Text|Agent 预设
+  [仅重写] |TitleBar|连接状态
+  [仅重写] LayoutSplitterSidebar|Group|调整侧栏宽度
+  [仅重写] SessionSearchBox|Edit|搜索会话
+  [仅重写] SettingsItem|Button|设置
+  [仅重写] SettingsSection_about|Button|关于
+  [仅重写] SettingsSection_agent-presets|Button|Agent 预设
+  [仅重写] SettingsSection_browser-control|Button|浏览器控制
+  [仅重写] SettingsSection_computer-control|Button|电脑控制
+  [仅重写] SettingsSection_general|Button|通用设置
+  [仅重写] SettingsSection_memory|Button|记忆
+  [仅重写] SettingsSection_models|Button|模型
+  [仅重写] SettingsSection_personalization|Button|个性化
+  [仅重写] SettingsSection_pet|Button|宠物
+  [仅重写] SettingsSection_plugins|Button|插件
+  [仅重写] SettingsSection_skills|Button|技能
+  [仅重写] SettingsSection_usage|Button|使用统计
+===== P-skills =====
+  主干独有 30 项 / 重写线独有 35 项
+  [仅主干] |Text|共 0 个技能：
+  [仅主干] |Text|还没有安装任何技能。用上面的「添加技能」写第一个，或在项目的 .dsh/skills 目录里放一个。
+  [仅主干] |Text|搜索会话…
+  [仅主干] |Text|C:\Users\Admin\Documents\.agents\skills
+  [仅主干] |Text|C:\Users\Admin\Documents\.dsh\skills
+  [仅主干] ConnectionStatusBar|Group|连接状态
+  [仅主干] FooterItemsScrollViewer|Pane|
+  [仅主干] FooterMenuItemsHost|Group|
+  [仅主干] MenuItemsHost|Group|
+  [仅主干] MenuItemsScrollViewer|Pane|
+  [仅主干] Nav|Custom|
+  [仅主干] PaneRoot|Window|
+  [仅主干] SessionSearchBox|Group|搜索会话
+  [仅主干] SettingsHost|Group|设置内容列
+  [仅主干] SettingsItem|ListItem|设置
+  [仅主干] SettingsPageHeader|Text|技能
+  [仅主干] SettingsScroller|Pane|
+  [仅主干] SettingsSection_about|ListItem|关于
+  [仅主干] SettingsSection_agent-presets|ListItem|Agent 预设
+  [仅主干] SettingsSection_browser-control|ListItem|浏览器控制
+  [仅主干] SettingsSection_computer-control|ListItem|电脑控制
+  [仅主干] SettingsSection_general|ListItem|通用设置
+  [仅主干] SettingsSection_memory|ListItem|记忆
+  [仅主干] SettingsSection_models|ListItem|模型
+  [仅主干] SettingsSection_personalization|ListItem|个性化
+  [仅主干] SettingsSection_pet|ListItem|宠物
+  [仅主干] SettingsSection_plugins|ListItem|插件
+  [仅主干] SettingsSection_skills|ListItem|技能
+  [仅主干] SettingsSection_usage|ListItem|使用统计
+  [仅主干] TextBox|Edit|搜索会话
+  [仅重写] |Image|
+  [仅重写] |Text|插件
+  [仅重写] |Text|宠物
+  [仅重写] |Text|从 YouTube 下载一首热门二次元/动漫歌曲（≤3分钟），生成 osu! mania 三难度谱面，官方星级校验 + 静音区检查后交付 .osu。Use when 用户说「下载歌曲并生成谱面」「找一首二次元歌做 mania」「再跑一遍 mania 流程」「生成三难度」「谱面 SOP」「anime mania mapset」，或给了 YouTube 链接并要求生成谱面/更新谱面 skill。默认只处理一首歌；难度每次必须与上次不同。Do not use for osu!standard-only maps、模型训练或无关媒体整理。
+  [仅重写] |Text|电脑控制
+  [仅重写] |Text|个性化
+  [仅重写] |Text|共 1 个技能：用户 1 个
+  [仅重写] |Text|关于
+  [仅重写] |Text|记忆
+  [仅重写] |Text|技能
+  [仅重写] |Text|浏览器控制
+  [仅重写] |Text|模型
+  [仅重写] |Text|设置
+  [仅重写] |Text|使用统计
+  [仅重写] |Text|添加技能
+  [仅重写] |Text|通用设置
+  [仅重写] |Text|项目技能需要先选中一个会话：它们按会话所在的项目目录解析。
+  [仅重写] |Text|Agent 预设
+  [仅重写] |Text|anime-mania-mapset
+  [仅重写] |TitleBar|连接状态
+  [仅重写] LayoutSplitterSidebar|Group|调整侧栏宽度
+  [仅重写] SessionSearchBox|Edit|搜索会话
+  [仅重写] SettingsItem|Button|设置
+  [仅重写] SettingsSection_about|Button|关于
+  [仅重写] SettingsSection_agent-presets|Button|Agent 预设
+  [仅重写] SettingsSection_browser-control|Button|浏览器控制
+  [仅重写] SettingsSection_computer-control|Button|电脑控制
+  [仅重写] SettingsSection_general|Button|通用设置
+  [仅重写] SettingsSection_memory|Button|记忆
+  [仅重写] SettingsSection_models|Button|模型
+  [仅重写] SettingsSection_personalization|Button|个性化
+  [仅重写] SettingsSection_pet|Button|宠物
+  [仅重写] SettingsSection_plugins|Button|插件
+  [仅重写] SettingsSection_skills|Button|技能
+  [仅重写] SettingsSection_usage|Button|使用统计
+===== P-usage =====
+  主干独有 227 项 / 重写线独有 41 项
+  [仅主干] |Group|2026-05-04：0 tokens
+  [仅主干] |Group|2026-05-05：0 tokens
+  [仅主干] |Group|2026-05-06：0 tokens
+  [仅主干] |Group|2026-05-07：0 tokens
+  [仅主干] |Group|2026-05-08：0 tokens
+  [仅主干] |Group|2026-05-09：0 tokens
+  [仅主干] |Group|2026-05-10：0 tokens
+  [仅主干] |Group|2026-05-11：0 tokens
+  [仅主干] |Group|2026-05-12：0 tokens
+  [仅主干] |Group|2026-05-13：0 tokens
+  [仅主干] |Group|2026-05-14：0 tokens
+  [仅主干] |Group|2026-05-15：0 tokens
+  [仅主干] |Group|2026-05-16：0 tokens
+  [仅主干] |Group|2026-05-17：0 tokens
+  [仅主干] |Group|2026-05-18：0 tokens
+  [仅主干] |Group|2026-05-19：0 tokens
+  [仅主干] |Group|2026-05-20：0 tokens
+  [仅主干] |Group|2026-05-21：0 tokens
+  [仅主干] |Group|2026-05-22：0 tokens
+  [仅主干] |Group|2026-05-23：0 tokens
+  [仅主干] |Group|2026-05-24：0 tokens
+  [仅主干] |Group|2026-05-25：0 tokens
+  [仅主干] |Group|2026-05-26：0 tokens
+  [仅主干] |Group|2026-05-27：0 tokens
+  [仅主干] |Group|2026-05-28：0 tokens
+  [仅主干] |Group|2026-05-29：0 tokens
+  [仅主干] |Group|2026-05-30：0 tokens
+  [仅主干] |Group|2026-05-31：0 tokens
+  [仅主干] |Group|2026-06-01：0 tokens
+  [仅主干] |Group|2026-06-02：0 tokens
+  [仅主干] |Group|2026-06-03：0 tokens
+  [仅主干] |Group|2026-06-04：0 tokens
+  [仅主干] |Group|2026-06-05：0 tokens
+  [仅主干] |Group|2026-06-06：0 tokens
+  [仅主干] |Group|2026-06-07：0 tokens
+  [仅主干] |Group|2026-06-08：0 tokens
+  [仅主干] |Group|2026-06-09：0 tokens
+  [仅主干] |Group|2026-06-10：0 tokens
+  [仅主干] |Group|2026-06-11：0 tokens
+  [仅主干] |Group|2026-06-12：0 tokens
+  [仅主干] |Group|2026-06-13：0 tokens
+  [仅主干] |Group|2026-06-14：0 tokens
+  [仅主干] |Group|2026-06-15：0 tokens
+  [仅主干] |Group|2026-06-16：0 tokens
+  [仅主干] |Group|2026-06-17：0 tokens
+  [仅主干] |Group|2026-06-18：0 tokens
+  [仅主干] |Group|2026-06-19：0 tokens
+  [仅主干] |Group|2026-06-20：0 tokens
+  [仅主干] |Group|2026-06-21：0 tokens
+  [仅主干] |Group|2026-06-22：0 tokens
+  [仅主干] |Group|2026-06-23：0 tokens
+  [仅主干] |Group|2026-06-24：0 tokens
+  [仅主干] |Group|2026-06-25：0 tokens
+  [仅主干] |Group|2026-06-26：0 tokens
+  [仅主干] |Group|2026-06-27：0 tokens
+  [仅主干] |Group|2026-06-28：0 tokens
+  [仅主干] |Group|2026-06-29：0 tokens
+  [仅主干] |Group|2026-06-30：0 tokens
+  [仅主干] |Group|2026-07-01：0 tokens
+  [仅主干] |Group|2026-07-02：0 tokens
+  [仅主干] |Group|2026-07-03：0 tokens
+  [仅主干] |Group|2026-07-04：0 tokens
+  [仅主干] |Group|2026-07-05：0 tokens
+  [仅主干] |Group|2026-07-06：0 tokens
+  [仅主干] |Group|2026-07-07：0 tokens
+  [仅主干] |Group|2026-07-08：0 tokens
+  [仅主干] |Group|2026-07-09：0 tokens
+  [仅主干] |Group|2026-07-10：0 tokens
+  [仅主干] |Group|2026-07-11：0 tokens
+  [仅主干] |Group|2026-07-12：0 tokens
+  [仅主干] |Group|2026-07-13：0 tokens
+  [仅主干] |Group|2026-07-14：0 tokens
+  [仅主干] |Group|2026-07-15：0 tokens
+  [仅主干] |Group|2026-07-16：0 tokens
+  [仅主干] |Group|2026-07-17：0 tokens
+  [仅主干] |Group|2026-07-18：0 tokens
+  [仅主干] |Group|2026-07-19：0 tokens
+  [仅主干] |Group|2026-07-20：0 tokens
+  [仅主干] |Group|2026-07-21：0 tokens
+  [仅主干] |Group|2026-07-22：0 tokens
+  [仅主干] |Group|2026-07-23：0 tokens
+  [仅主干] |Group|2026-07-24：0 tokens
+  [仅主干] |Group|2026-07-25：0 tokens
+  [仅主干] |Group|2026-07-26：0 tokens
+  [仅主干] |Group|2026-07-27：0 tokens
+  [仅主干] |Group|2026-07-28：0 tokens
+  [仅主干] |Group|2026-07-29：0 tokens
+  [仅主干] |Group|2026-07-30：0 tokens
+  [仅主干] |Group|2026-07-31：0 tokens
+  [仅主干] |Group|2026-08-01：0 tokens
+  [仅主干] |Group|2026-08-02：0 tokens
+  [仅主干] |Group|2026-08-03：0 tokens
+  [仅主干] |Group|2026-08-04：0 tokens
+  [仅主干] |Group|2026-08-05：0 tokens
+  [仅主干] |Group|2026-08-06：0 tokens
+  [仅主干] |Group|2026-08-07：0 tokens
+  [仅主干] |Group|2026-08-08：0 tokens
+  [仅主干] |Group|2026-08-09：0 tokens
+  [仅主干] |Group|2026-08-10：0 tokens
+  [仅主干] |Group|2026-08-11：0 tokens
+  [仅主干] |Group|2026-08-12：0 tokens
+  [仅主干] |Group|2026-08-13：0 tokens
+  [仅主干] |Group|2026-08-14：0 tokens
+  [仅主干] |Group|2026-08-15：0 tokens
+  [仅主干] |Group|2026-08-16：0 tokens
+  [仅主干] |Group|2026-08-17：0 tokens
+  [仅主干] |Group|2026-08-18：0 tokens
+  [仅主干] |Group|2026-08-19：0 tokens
+  [仅主干] |Group|2026-08-20：0 tokens
+  [仅主干] |Group|2026-08-21：0 tokens
+  [仅主干] |Group|2026-08-22：0 tokens
+  [仅主干] |Group|2026-08-23：0 tokens
+  [仅主干] |Group|2026-08-24：0 tokens
+  [仅主干] |Group|2026-08-25：0 tokens
+  [仅主干] |Group|2026-08-26：0 tokens
+  [仅主干] |Group|2026-08-27：0 tokens
+  [仅主干] |Group|2026-08-28：0 tokens
+  [仅主干] |Group|2026-08-29：0 tokens
+  [仅主干] |Group|2026-08-30：0 tokens
+  [仅主干] |Group|2026-08-31：0 tokens
+  [仅主干] |Group|2026-09-01：0 tokens
+  [仅主干] |Group|2026-09-02：0 tokens
+  [仅主干] |Group|2026-09-03：0 tokens
+  [仅主干] |Group|2026-09-04：0 tokens
+  [仅主干] |Group|2026-09-05：0 tokens
+  [仅主干] |Group|2026-09-06：0 tokens
+  [仅主干] |Group|2026-09-07：0 tokens
+  [仅主干] |Group|2026-09-08：0 tokens
+  [仅主干] |Group|2026-09-09：0 tokens
+  [仅主干] |Group|2026-09-10：0 tokens
+  [仅主干] |Group|2026-09-11：0 tokens
+  [仅主干] |Group|2026-09-12：0 tokens
+  [仅主干] |Group|2026-09-13：0 tokens
+  [仅主干] |Group|2026-09-14：0 tokens
+  [仅主干] |Group|2026-09-15：0 tokens
+  [仅主干] |Group|2026-09-16：0 tokens
+  [仅主干] |Group|2026-09-17：0 tokens
+  [仅主干] |Group|2026-09-18：0 tokens
+  [仅主干] |Group|2026-09-19：0 tokens
+  [仅主干] |Group|2026-09-20：0 tokens
+  [仅主干] |Group|2026-09-21：0 tokens
+  [仅主干] |Group|2026-09-22：0 tokens
+  [仅主干] |Group|2026-09-23：0 tokens
+  [仅主干] |Group|2026-09-24：0 tokens
+  [仅主干] |Group|2026-09-25：0 tokens
+  [仅主干] |Group|2026-09-26：0 tokens
+  [仅主干] |Group|2026-09-27：0 tokens
+  [仅主干] |Group|2026-09-28：0 tokens
+  [仅主干] |Group|2026-09-29：0 tokens
+  [仅主干] |Group|2026-09-30：0 tokens
+  [仅主干] |Group|2026-10-01：0 tokens
+  [仅主干] |Group|2026-10-02：0 tokens
+  [仅主干] |Group|2026-10-03：0 tokens
+  [仅主干] |Group|2026-10-04：0 tokens
+  [仅主干] |Group|2026-10-05：0 tokens
+  [仅主干] |Group|2026-10-06：0 tokens
+  [仅主干] |Group|2026-10-07：0 tokens
+  [仅主干] |Group|2026-10-08：0 tokens
+  [仅主干] |Group|2026-10-09：0 tokens
+  [仅主干] |Group|2026-10-10：0 tokens
+  [仅主干] |Group|2026-10-11：0 tokens
+  [仅主干] |Group|2026-10-12：0 tokens
+  [仅主干] |Group|2026-10-13：0 tokens
+  [仅主干] |Group|2026-10-14：0 tokens
+  [仅主干] |Group|2026-10-15：0 tokens
+  [仅主干] |Group|2026-10-16：0 tokens
+  [仅主干] |Group|2026-10-17：0 tokens
+  [仅主干] |Group|2026-10-18：0 tokens
+  [仅主干] |Group|2026-10-19：0 tokens
+  [仅主干] |Group|2026-10-20：0 tokens
+  [仅主干] |Group|2026-10-21：0 tokens
+  [仅主干] |Group|2026-10-22：0 tokens
+  [仅主干] |Group|2026-10-23：0 tokens
+  [仅主干] |Group|2026-10-24：0 tokens
+  [仅主干] |Group|2026-10-25：0 tokens
+  [仅主干] |Group|2026-10-26：0 tokens
+  [仅主干] |Group|2026-10-27：0 tokens
+  [仅主干] |Group|2026-10-28：0 tokens
+  [仅主干] |Group|2026-10-29：0 tokens
+  [仅主干] |Group|2026-10-30：0 tokens
+  [仅主干] |Group|2026-10-31：0 tokens
+  [仅主干] |ListItem|近 30 天
+  [仅主干] |ListItem|近 7 天
+  [仅主干] |ListItem|累计
+  [仅主干] |ListItem|每日
+  [仅主干] |ListItem|每周
+  [仅主干] |Text|搜索会话…
+  [仅主干] |Text|所选时间范围内暂无用量记录
+  [仅主干] ConnectionStatusBar|Group|连接状态
+  [仅主干] FooterItemsScrollViewer|Pane|
+  [仅主干] FooterMenuItemsHost|Group|
+  [仅主干] MenuItemsHost|Group|
+  [仅主干] MenuItemsScrollViewer|Pane|
+  [仅主干] Nav|Custom|
+  [仅主干] PaneRoot|Window|
+  [仅主干] PART_ItemsView|List|
+  [仅主干] PART_ScrollPresenter|Pane|
+  [仅主干] PART_TextVisual|Text|近 30 天
+  [仅主干] PART_TextVisual|Text|近 7 天
+  [仅主干] PART_TextVisual|Text|累计
+  [仅主干] PART_TextVisual|Text|每日
+  [仅主干] PART_TextVisual|Text|每周
+  [仅主干] SessionSearchBox|Group|搜索会话
+  [仅主干] SettingsHost|Group|设置内容列
+  [仅主干] SettingsItem|ListItem|设置
+  [仅主干] SettingsPageHeader|Text|使用统计
+  [仅主干] SettingsScroller|Pane|
+  [仅主干] SettingsSection_about|ListItem|关于
+  [仅主干] SettingsSection_agent-presets|ListItem|Agent 预设
+  [仅主干] SettingsSection_browser-control|ListItem|浏览器控制
+  [仅主干] SettingsSection_computer-control|ListItem|电脑控制
+  [仅主干] SettingsSection_general|ListItem|通用设置
+  [仅主干] SettingsSection_memory|ListItem|记忆
+  [仅主干] SettingsSection_models|ListItem|模型
+  [仅主干] SettingsSection_personalization|ListItem|个性化
+  [仅主干] SettingsSection_pet|ListItem|宠物
+  [仅主干] SettingsSection_plugins|ListItem|插件
+  [仅主干] SettingsSection_skills|ListItem|技能
+  [仅主干] SettingsSection_usage|ListItem|使用统计
+  [仅主干] StatsHeatScroller|Pane|
+  [仅主干] StatsKpiRow|Group|使用统计概览
+  [仅主干] StatsModelEmptyHint|Text|所选时间范围内暂无用量记录
+  [仅主干] StatsModelLegend|Group|模型用量
+  [仅主干] StatsModelTotal|Text|
+  [仅主干] StatsSourceNote|Text|
+  [仅主干] StatsTrendCanvas|Group|每日 Token 趋势图：近 7 天暂无用量
+  [仅主干] TextBox|Edit|搜索会话
+  [仅重写] |Image|
+  [仅重写] |Text|
+  [仅重写] |Text|插件
+  [仅重写] |Text|宠物
+  [仅重写] |Text|电脑控制
+  [仅重写] |Text|个性化
+  [仅重写] |Text|关于
+  [仅重写] |Text|记忆
+  [仅重写] |Text|技能
+  [仅重写] |Text|近 30 天
+  [仅重写] |Text|近 7 天
+  [仅重写] |Text|累计
+  [仅重写] |Text|浏览器控制
+  [仅重写] |Text|每日
+  [仅重写] |Text|每周
+  [仅重写] |Text|模型
+  [仅重写] |Text|设置
+  [仅重写] |Text|使用统计
+  [仅重写] |Text|通用设置
+  [仅重写] |Text|Agent 预设
+  [仅重写] |TitleBar|连接状态
+  [仅重写] LayoutSplitterSidebar|Group|调整侧栏宽度
+  [仅重写] SessionSearchBox|Edit|搜索会话
+  [仅重写] SettingsItem|Button|设置
+  [仅重写] SettingsSection_about|Button|关于
+  [仅重写] SettingsSection_agent-presets|Button|Agent 预设
+  [仅重写] SettingsSection_browser-control|Button|浏览器控制
+  [仅重写] SettingsSection_computer-control|Button|电脑控制
+  [仅重写] SettingsSection_general|Button|通用设置
+  [仅重写] SettingsSection_memory|Button|记忆
+  [仅重写] SettingsSection_models|Button|模型
+  [仅重写] SettingsSection_personalization|Button|个性化
+  [仅重写] SettingsSection_pet|Button|宠物
+  [仅重写] SettingsSection_plugins|Button|插件
+  [仅重写] SettingsSection_skills|Button|技能
+  [仅重写] SettingsSection_usage|Button|使用统计
+  [仅重写] StatsHeatMetricItem_0|Button|每日
+  [仅重写] StatsHeatMetricItem_1|Button|每周
+  [仅重写] StatsHeatMetricItem_2|Button|累计
+  [仅重写] StatsRangeItem_30|Button|近 30 天
+  [仅重写] StatsRangeItem_7|Button|近 7 天
+===== S0-default =====
+  主干独有 27 项 / 重写线独有 26 项
+  [仅主干] |Text|搜索会话…
+  [仅主干] ChatHero|Group|空态：开始一段新的会话
+  [仅主干] ChatList|List|对话消息列表
+  [仅主干] ExpandGroup_|ListItem|展开其余 181 个会话
+  [仅主干] FooterItemsScrollViewer|Pane|
+  [仅主干] FooterMenuItemsHost|Group|
+  [仅主干] HeroMarkImage|Image|
+  [仅主干] MenuItemsHost|Group|
+  [仅主干] MenuItemsScrollViewer|Pane|
+  [仅主干] ModelButton|Button|模型与推理等级，当前 选择模型
+  [仅主干] ModelEffortLabel|Text|选择模型
+  [仅主干] Nav|Custom|
+  [仅主干] NewSessionItem|ListItem|新建会话
+  [仅主干] PaneRoot|Window|
+  [仅主干] Session_session-006eae2c-2ef1-4c58-8e85-97d6838f772a|ListItem|下载智慧教育平台消防视频
+  [仅主干] Session_session-9521ef0b-5c9c-4727-b552-6d1838869bc0|ListItem|糖果抽取保证问题
+  [仅主干] Session_session-a0ce46c2-cfe0-4a03-845f-35abad2a4b0f|ListItem|导出谱面生成skill分享安装
+  [仅主干] Session_session-ac4e837e-fcc8-4b5b-b7fe-10742cf073e8|ListItem|糖果摸取问题最少取数
+  [仅主干] Session_session-b0a5bc18-111c-4b43-bf02-561be5285377|ListItem|生成谱面链接视频
+  [仅主干] SessionSearchBox|Group|搜索会话
+  [仅主干] SettingsItem|ListItem|设置
+  [仅主干] TextBox|Edit|搜索会话
+  [仅主干] UngroupedSessionsItem|ListItem|未分组会话
+  [仅主干] Workspace_50141382-d003-41d8-b9a5-51d1be06e0d9|ListItem|Documents
+  [仅主干] Workspace_65e43817-78b2-4eaf-b9fa-b6e614607474|ListItem|DshWinUI
+  [仅主干] WorkspaceSectionHeaderText|Text|工作区
+  [仅主干] WorkspaceSectionItem|ListItem|工作区
+  [仅重写] |Image|
+  [仅重写] |Text|工作区
+  [仅重写] |Text|设置
+  [仅重写] |Text|未分组
+  [仅重写] |Text|新会话
+  [仅重写] |Text|展开其余 181 个会话
+  [仅重写] |Text|Documents
+  [仅重写] |Text|DshWinUI
+  [仅重写] |TitleBar|连接状态
+  [仅重写] ExpandGroup_|Button|展开其余 181 个会话
+  [仅重写] ModelButton|Button|模型与推理等级，当前 MiMo-V2.6-Pro High
+  [仅重写] ModelEffortLabel|Text|MiMo-V2.6-Pro High
+  [仅重写] NewSessionItem|Button|新建会话
+  [仅重写] PermissionButton|Button|访问模式，当前：工作区内修改
+  [仅重写] PermissionLabel|Text|工作区内修改
+  [仅重写] Session_session-006eae2c-2ef1-4c58-8e85-97d6838f772a|Button|下载智慧教育平台消防视频
+  [仅重写] Session_session-9521ef0b-5c9c-4727-b552-6d1838869bc0|Button|糖果抽取保证问题
+  [仅重写] Session_session-a0ce46c2-cfe0-4a03-845f-35abad2a4b0f|Button|导出谱面生成skill分享安装
+  [仅重写] Session_session-ac4e837e-fcc8-4b5b-b7fe-10742cf073e8|Button|糖果摸取问题最少取数
+  [仅重写] Session_session-b0a5bc18-111c-4b43-bf02-561be5285377|Button|生成谱面链接视频
+  [仅重写] SessionSearchBox|Edit|搜索会话
+  [仅重写] SettingsItem|Button|设置
+  [仅重写] UngroupedSessionsItem|Button|未分组会话
+  [仅重写] VerticalScrollBar|ScrollBar|垂直
+  [仅重写] Workspace_50141382-d003-41d8-b9a5-51d1be06e0d9|Button|Documents
+  [仅重写] Workspace_65e43817-78b2-4eaf-b9fa-b6e614607474|Button|DshWinUI
+===== S1-settings =====
+  主干独有 27 项 / 重写线独有 35 项
+  [仅主干] |Text|搜索会话…
+  [仅主干] ConnectionStatusBar|Group|连接状态
+  [仅主干] FooterItemsScrollViewer|Pane|
+  [仅主干] FooterMenuItemsHost|Group|
+  [仅主干] MenuItemsHost|Group|
+  [仅主干] MenuItemsScrollViewer|Pane|
+  [仅主干] Nav|Custom|
+  [仅主干] PaneRoot|Window|
+  [仅主干] SessionSearchBox|Group|搜索会话
+  [仅主干] Setting_permission_defaultPreset|ComboBox|默认权限模式
+  [仅主干] SettingsHost|Group|设置内容列
+  [仅主干] SettingsItem|ListItem|设置
+  [仅主干] SettingsPageHeader|Text|通用设置
+  [仅主干] SettingsScroller|Pane|
+  [仅主干] SettingsSection_about|ListItem|关于
+  [仅主干] SettingsSection_agent-presets|ListItem|Agent 预设
+  [仅主干] SettingsSection_browser-control|ListItem|浏览器控制
+  [仅主干] SettingsSection_computer-control|ListItem|电脑控制
+  [仅主干] SettingsSection_general|ListItem|通用设置
+  [仅主干] SettingsSection_memory|ListItem|记忆
+  [仅主干] SettingsSection_models|ListItem|模型
+  [仅主干] SettingsSection_personalization|ListItem|个性化
+  [仅主干] SettingsSection_pet|ListItem|宠物
+  [仅主干] SettingsSection_plugins|ListItem|插件
+  [仅主干] SettingsSection_skills|ListItem|技能
+  [仅主干] SettingsSection_usage|ListItem|使用统计
+  [仅主干] TextBox|Edit|搜索会话
+  [仅重写] |Image|
+  [仅重写] |Text|＋
+  [仅重写] |Text|−
+  [仅重写] |Text|插件
+  [仅重写] |Text|宠物
+  [仅重写] |Text|打开设置文档
+  [仅重写] |Text|电脑控制
+  [仅重写] |Text|个性化
+  [仅重写] |Text|关于
+  [仅重写] |Text|恢复本页默认
+  [仅重写] |Text|记忆
+  [仅重写] |Text|技能
+  [仅重写] |Text|浏览器控制
+  [仅重写] |Text|模型
+  [仅重写] |Text|设置
+  [仅重写] |Text|使用统计
+  [仅重写] |Text|通用设置
+  [仅重写] |Text|Agent 预设
+  [仅重写] |TitleBar|连接状态
+  [仅重写] LayoutSplitterSidebar|Group|调整侧栏宽度
+  [仅重写] SessionSearchBox|Edit|搜索会话
+  [仅重写] Setting_permission_defaultPreset|ComboBox|默认权限
+  [仅重写] SettingsItem|Button|设置
+  [仅重写] SettingsSection_about|Button|关于
+  [仅重写] SettingsSection_agent-presets|Button|Agent 预设
+  [仅重写] SettingsSection_browser-control|Button|浏览器控制
+  [仅重写] SettingsSection_computer-control|Button|电脑控制
+  [仅重写] SettingsSection_general|Button|通用设置
+  [仅重写] SettingsSection_memory|Button|记忆
+  [仅重写] SettingsSection_models|Button|模型
+  [仅重写] SettingsSection_personalization|Button|个性化
+  [仅重写] SettingsSection_pet|Button|宠物
+  [仅重写] SettingsSection_plugins|Button|插件
+  [仅重写] SettingsSection_skills|Button|技能
+  [仅重写] SettingsSection_usage|Button|使用统计
+===== S2-session =====
+  主干独有 205 项 / 重写线独有 29 项
+  [仅主干] |ListItem|Blade2.ChatBubble
+  [仅主干] |Text|·
+  [仅主干] |Text|· mimo-v2.6-pro
+  [仅主干] |Text|10月27日 17:42
+  [仅主干] |Text|10月27日 17:43
+  [仅主干] |Text|10月27日 17:44
+  [仅主干] |Text|10月27日 17:45
+  [仅主干] |Text|10月27日 17:46
+  [仅主干] |Text|10月27日 17:47
+  [仅主干] |Text|10月27日 17:48
+  [仅主干] |Text|帮我下载这个 https://www.smartedu.cn/fireEducation/detail?contentType=assets_video&contentId=7bf492d4-5e4a-87cb-8718-34ec8b06e0dc&catalogType=fireEducation&subCatalog=3e83761e-8b14-40d4-93a3-2a358518c8b8
+  [仅主干] |Text|分片长度不是 16 的倍数导致报错，调整长度重试喵～
+  [仅主干] |Text|工具调用
+  [仅主干] |Text|联接好了，重新打开页面喵～
+  [仅主干] |Text|浏览器安装被沙盒拦了（要写到 AppData），我请求更高权限重试，同时诊断一下网络喵～
+  [仅主干] |Text|浏览器装好了。DNS 解析到 198.18.x.x 说明本机有代理在接管流量，curl 连不上可能是沙盒限制，直接用浏览器试试喵～
+  [仅主干] |Text|浏览器组件没装，我先并行处理：安装浏览器 + 尝试直接抓取页面信息喵～
+  [仅主干] |Text|密钥拿到了（base64，解码 32 字节）。不过 AES-128 需要 16 字节密钥，我先下载一个分片，用几种候选密钥实测解密哪个能解出合法 TS 喵～
+  [仅主干] |Text|拿到全部信息了喵！视频《冬季火灾警示录》有 1080p/720p/480p/360p 四档，但标注了 encryption: drm（加密流）。我看看刚才保存的 m3u8 里密钥怎么给的喵～
+  [仅主干] |Text|上下文注入
+  [仅主干] |Text|思考
+  [仅主干] |Text|搜索会话…
+  [仅主干] |Text|网页获取
+  [仅主干] |Text|系统提示词
+  [仅主干] |Text|页面标题出来了：冬季火灾警示录，但状态是 403。我看看页面快照和控制台喵～
+  [仅主干] |Text|页面正常加载了，是《冬季火灾警示录》，播放器用的是 HLS 流。我现在从网络请求里找视频的真实地址喵～
+  [仅主干] |Text|用量 1.6 万 tok
+  [仅主干] |Text|用量 1.7 万 tok
+  [仅主干] |Text|用量 1.8 万 tok
+  [仅主干] |Text|用量 2 万 tok
+  [仅主干] |Text|用量 2.2 万 tok
+  [仅主干] |Text|用量 2.6 万 tok
+  [仅主干] |Text|用量 2.8 万 tok
+  [仅主干] |Text|用量 3.9 万 tok
+  [仅主干] |Text|用量 4.2 万 tok
+  [仅主干] |Text|用量 4.3 万 tok
+  [仅主干] |Text|用量 4.5 万 tok
+  [仅主干] |Text|用量 4.7 万 tok
+  [仅主干] |Text|找到了！视频是 HLS 流（1280x720），而且还有密钥请求，可能是加密流。我看看 m3u8 内容和资源详情喵～
+  [仅主干] |Text|主人，我先打开这个页面看看视频资源是什么喵～
+  [仅主干] |Text|agent-instructions
+  [仅主干] |Text|Browser is installed now. DNS resolves to 198.18.2.244 - that's a fake-IP from a proxy tool (Clash/v2ray TUN mode uses 198.18.0.0/15 fake IP range). So there IS a local proxy intercepting traffic. That means network access should work through the TUN/proxy. But curl failed with 000... maybe because of TLS interception cert not trusted by curl -k? -k should skip cert checks though. Hmm, maybe the connection just failed for another reason.
+  [仅主干] |Text|Browser isn't installed. Let me install it or try alternative approach. Let me try installing the browser first, or maybe I can use web_fetch to look at the page. Actually, for a video download, I might be able to find the video URL via API. The smartedu.cn platform (国家中小学智慧教育平台) has known API endpoints. Let me first try web_fetch on the URL, and also try installing the playwright browser in parallel.
+  [仅主干] |Text|Check ffmpeg and yt-dlp availability
+  [仅主干] |Text|curl 网络直连正常了，TS 分片能直接下载。再取密钥的响应体喵～
+  [仅主干] |Text|Decode key and inspect downloaded segment
+  [仅主干] |Text|Diagnose DNS and connectivity to smartedu.cn
+  [仅主干] |Text|Excellent! curl works now (danger-full-access) — the segment downloaded fine (4.5MB TS segment, HTTP 200). And the key request response is application/json with94 bytes content-length — so the key is returned as JSON, probably `{"key":"hex..."}` or base64. Let me get the response body of #73.
+  [仅主干] |Text|Fetch page HTML with curl
+  [仅主干] |Text|Fetch smartedu detail page HTML
+  [仅主干] |Text|Found the HLS stream:
+  [仅主干] |Text|Hmm, the MCP server expects chromium-1243 but we installed chromium-1247. The MCP server is version 0.0.83 pinned? Actually npx installed @playwright/mcp@0.0.83 which wants playwright chromium v1243, but the install command downloaded v1247 (a newer playwright version). The install command ran `npx @playwright/mcp install-browser chrome-for-testing`... wait, that installed v1247? Odd. Maybe npx resolved a different playwright version.
+  [仅主干] |Text|https://www.smartedu.cn/fireEducation/detail?contentType=assets_video&contentId=7bf492d4-5e4a-87cb-8718-34ec8b06e0dc&catalogType=fireEducation&subCatalog=3e83761e-8b14-40d4-93a3-2a358518c8b8
+  [仅主干] |Text|Install Playwright chrome-for-testing browser
+  [仅主干] |Text|Junction chromium-1243 to installed chromium-1247
+  [仅主干] |Text|Junction created and chrome.exe is reachable at the expected path. Now let me retry the navigation.
+  [仅主干] |Text|m3u8 确认是 AES-128 加密，密钥在 ndvideo-key.ykt.eduyun.cn。好消息是 ffmpeg 已装好。我先把播放器已经拿到的密钥响应体取出来，再测试网络直连喵～
+  [仅主干] |Text|MCP 内置的 Playwright 版本期望 chromium-1243，但刚才装的是 1247。我做个目录联接让它找到浏览器喵～
+  [仅主干] |Text|mcp__playwright-mcp__browser_navigate · https://www.smartedu.cn/fireEducation/detail?contentType=assets_video&contentId=7bf492d4-5e4a-87cb-8718-34ec8b06e0dc&catalogType=fireEducation&subCatalog=3e83761e-8b14-40d4-93a3-2a358518c8b8
+  [仅主干] |Text|mcp__playwright-mcp__browser_network_request · {"index":73}
+  [仅主干] |Text|mcp__playwright-mcp__browser_network_request · response-body
+  [仅主干] |Text|mcp__playwright-mcp__browser_network_requests · m3u8|video|mp4|assets|resource|detail|cbern|ykt
+  [仅主干] |Text|mcp__playwright-mcp__browser_snapshot · {}
+  [仅主干] |Text|Now I have full metadata:
+  [仅主干] |Text|Pwsh
+  [仅主干] |Text|Read browser console log
+  [仅主干] |Text|Read saved m3u8 playlist header
+  [仅主干] |Text|runtime-context
+  [仅主干] |Text|skill-catalog
+  [仅主干] |Text|Test AES decryption key candidates on segment
+  [仅主干] |Text|Test downloading first TS segment with curl
+  [仅主干] |Text|The input length 940 (188*5) is not a multiple of 16. I need to use a multiple of 16 bytes: 188*4 = 752 is not multiple of 16 either (752 = 47*16 = 752, actually 752/16 = 47, so it IS a multiple of 16!). Wait 188*5 = 940, 940/16 = 58.75 — not a multiple. Let me use 896 bytes (56 blocks) or just 752. Let me redo with 752 bytes and check syncs at 0,188,376,564.
+  [仅主干] |Text|The key is 32 bytes: 1c1264cff7892c03ec70437d7254476f65f2edd835dd6c0e404f0217acbbe01dSegment starts with c6 0a 99 38... (encrypted, as expected — not 0x47).
+  [仅主干] |Text|The key is base64: `HBJkz/eJLAPscEN9clRHb2Xy7dg13WwOQE8CF6y74B0=` — decode to 16 bytes for AES-128.
+  [仅主干] |Text|The m3u8 is AES-128 encrypted:
+  [仅主干] |Text|The page loaded fine — it's "冬季火灾警示录" (Winter Fire Warning Record) by 国家消防救援局. The video player is loaded (video.js with HLS). The 403 errors are just for the page itself (weird but content rendered) and a fish/video language JS file.
+  [仅主干] |Text|The page loaded with title "冬季火灾警示录" (Winter Fire Warning Record) but HTTP status 403. The title shows though - interesting. Let me look at the snapshot and console to see what's happening. The 403 might be for some resource. Let me check the snapshot.
+  [仅主干] |Text|The user wants me to download a video from smartedu.cn (国家中小学智慧教育平台). Let me first look at the page to understand what's there. This is a Chinese education platform - fire education video.
+  [仅主干] |Text|time-context
+  [仅主干] |Text|TLS 握手失败，我换 curl 试试喵～
+  [仅主干] |Text|TLS/authentication failure. Possibly TLS 1.2 issue or certificate. Let me try with curl.exe instead, or set ServicePointManager security protocol. In PowerShell 7, Invoke-WebRequest uses HttpClient. "Authentication failed" might be TLS issue with the server. Let me try curl.exe with -k.
+  [仅主干] |Text|tool-jobs
+  [仅主干] |Text|Two issues:
+  [仅主干] |Text|web_fetch 不能解析这个域名，我改用 PowerShell 直接抓取页面喵～
+  [仅主干] |Text|web_fetch can't resolve it (smartedu.cn resolves to non-public IP? That's odd - maybe DNS interception). Let me try using pwsh with Invoke-WebRequest to fetch the page instead. The sandbox may allow network access. Let me try.
+  [仅主干] ChatList|List|对话消息列表
+  [仅主干] ChatSessionTitle|Text|当前会话标题
+  [仅主干] ContextExpand|Button|上下文注入
+  [仅主干] ContextExpand|Button|系统提示词
+  [仅主干] ContextMeterRing|Button|上下文已用 11%
+  [仅主干] ExpandGroup_|ListItem|展开其余 181 个会话
+  [仅主干] FeedbackDislike_02908148-6192-4088-b880-8dd6e693f817|Button|没帮助（再点一次撤销）
+  [仅主干] FeedbackDislike_114730d7-37bc-4dfe-b1b3-7e84060c2906|Button|没帮助（再点一次撤销）
+  [仅主干] FeedbackDislike_1e68ac26-5a6e-4d38-9324-840965c77e19|Button|没帮助（再点一次撤销）
+  [仅主干] FeedbackDislike_296820de-a993-44a4-bcf4-3ed6d61517b2|Button|没帮助（再点一次撤销）
+  [仅主干] FeedbackDislike_4145cc3c-f522-4975-a03a-f6952945022c|Button|没帮助（再点一次撤销）
+  [仅主干] FeedbackDislike_478c4390-19a4-41a7-83a0-c5766f324801|Button|没帮助（再点一次撤销）
+  [仅主干] FeedbackDislike_5e3c1414-a84a-4783-8ff1-aaa58209ba0b|Button|没帮助（再点一次撤销）
+  [仅主干] FeedbackDislike_727b76f0-5655-4cf4-867a-de79a74bf3cd|Button|没帮助（再点一次撤销）
+  [仅主干] FeedbackDislike_93514bef-0a2e-4a3f-acb2-fc198f3a2bd5|Button|没帮助（再点一次撤销）
+  [仅主干] FeedbackDislike_9a09e0f8-051b-477e-b244-759a1e62431d|Button|没帮助（再点一次撤销）
+  [仅主干] FeedbackDislike_b59d3035-452e-4385-a9d1-9fa73293adcb|Button|没帮助（再点一次撤销）
+  [仅主干] FeedbackDislike_b9f51f55-153e-4cda-ae52-e87470e323b2|Button|没帮助（再点一次撤销）
+  [仅主干] FeedbackDislike_c4a2947e-9d5e-4ed9-9e92-d96df3a5212f|Button|没帮助（再点一次撤销）
+  [仅主干] FeedbackDislike_c71dfd5a-74be-4494-baea-17308d95092d|Button|没帮助（再点一次撤销）
+  [仅主干] FeedbackDislike_ddb69e4e-4547-4adb-8b21-231ae48f8cee|Button|没帮助（再点一次撤销）
+  [仅主干] FeedbackDislike_ef5f743f-ed29-49f4-9e8b-8ad5167e3769|Button|没帮助（再点一次撤销）
+  [仅主干] FeedbackLike_02908148-6192-4088-b880-8dd6e693f817|Button|有帮助（再点一次撤销）
+  [仅主干] FeedbackLike_114730d7-37bc-4dfe-b1b3-7e84060c2906|Button|有帮助（再点一次撤销）
+  [仅主干] FeedbackLike_1e68ac26-5a6e-4d38-9324-840965c77e19|Button|有帮助（再点一次撤销）
+  [仅主干] FeedbackLike_296820de-a993-44a4-bcf4-3ed6d61517b2|Button|有帮助（再点一次撤销）
+  [仅主干] FeedbackLike_4145cc3c-f522-4975-a03a-f6952945022c|Button|有帮助（再点一次撤销）
+  [仅主干] FeedbackLike_478c4390-19a4-41a7-83a0-c5766f324801|Button|有帮助（再点一次撤销）
+  [仅主干] FeedbackLike_5e3c1414-a84a-4783-8ff1-aaa58209ba0b|Button|有帮助（再点一次撤销）
+  [仅主干] FeedbackLike_727b76f0-5655-4cf4-867a-de79a74bf3cd|Button|有帮助（再点一次撤销）
+  [仅主干] FeedbackLike_93514bef-0a2e-4a3f-acb2-fc198f3a2bd5|Button|有帮助（再点一次撤销）
+  [仅主干] FeedbackLike_9a09e0f8-051b-477e-b244-759a1e62431d|Button|有帮助（再点一次撤销）
+  [仅主干] FeedbackLike_b59d3035-452e-4385-a9d1-9fa73293adcb|Button|有帮助（再点一次撤销）
+  [仅主干] FeedbackLike_b9f51f55-153e-4cda-ae52-e87470e323b2|Button|有帮助（再点一次撤销）
+  [仅主干] FeedbackLike_c4a2947e-9d5e-4ed9-9e92-d96df3a5212f|Button|有帮助（再点一次撤销）
+  [仅主干] FeedbackLike_c71dfd5a-74be-4494-baea-17308d95092d|Button|有帮助（再点一次撤销）
+  [仅主干] FeedbackLike_ddb69e4e-4547-4adb-8b21-231ae48f8cee|Button|有帮助（再点一次撤销）
+  [仅主干] FeedbackLike_ef5f743f-ed29-49f4-9e8b-8ad5167e3769|Button|有帮助（再点一次撤销）
+  [仅主干] FooterItemsScrollViewer|Pane|
+  [仅主干] FooterMenuItemsHost|Group|
+  [仅主干] MenuItemsHost|Group|
+  [仅主干] MenuItemsScrollViewer|Pane|
+  [仅主干] MessageCopyButton|Button|复制消息
+  [仅主干] MessageDetailsButton|Button|消息详情
+  [仅主干] Nav|Custom|
+  [仅主干] NewSessionItem|ListItem|新建会话
+  [仅主干] PaneRoot|Window|
+  [仅主干] PermissionButton|Button|访问模式，当前：自动审查
+  [仅主干] PermissionLabel|Text|自动审查
+  [仅主干] ReasoningToggle|Button|思考
+  [仅主干] RunStatsTokensText|Text|263.4 万 tok · 缓存命中 95.5%
+  [仅主干] RunStatsTurnsText|Text|1 轮 42 步 · 63 tok/s
+  [仅主干] Session_session-006eae2c-2ef1-4c58-8e85-97d6838f772a|ListItem|下载智慧教育平台消防视频
+  [仅主干] Session_session-9521ef0b-5c9c-4727-b552-6d1838869bc0|ListItem|糖果抽取保证问题
+  [仅主干] Session_session-a0ce46c2-cfe0-4a03-845f-35abad2a4b0f|ListItem|导出谱面生成skill分享安装
+  [仅主干] Session_session-ac4e837e-fcc8-4b5b-b7fe-10742cf073e8|ListItem|糖果摸取问题最少取数
+  [仅主干] Session_session-b0a5bc18-111c-4b43-bf02-561be5285377|ListItem|生成谱面链接视频
+  [仅主干] SessionSearchBox|Group|搜索会话
+  [仅主干] SettingsItem|ListItem|设置
+  [仅主干] TextBox|Edit|搜索会话
+  [仅主干] ToolCard|Group|工具调用 mcp__playwright-mcp__browser_navigate · https://www.smartedu.cn/fireEducation/detail?contentType=assets_video&contentId=7bf492d4-5e4a-87cb-8718-34ec8b06e0dc&catalogType=fireEducation&subCatalog=3e83761e-8b14-40d4-93a3-2a358518c8b8
+  [仅主干] ToolCard|Group|工具调用 mcp__playwright-mcp__browser_network_request · {"index":73}
+  [仅主干] ToolCard|Group|工具调用 mcp__playwright-mcp__browser_network_request · response-body
+  [仅主干] ToolCard|Group|工具调用 mcp__playwright-mcp__browser_network_requests · m3u8|video|mp4|assets|resource|detail|cbern|ykt
+  [仅主干] ToolCard|Group|工具调用 mcp__playwright-mcp__browser_snapshot · {}
+  [仅主干] ToolCard|Group|网页获取 https://www.smartedu.cn/fireEducation/detail?contentType=assets_video&contentId=7bf492d4-5e4a-87cb-8718-34ec8b06e0dc&catalogType=fireEducation&subCatalog=3e83761e-8b14-40d4-93a3-2a358518c8b8
+  [仅主干] ToolCard|Group|Pwsh Check ffmpeg and yt-dlp availability
+  [仅主干] ToolCard|Group|Pwsh Decode key and inspect downloaded segment
+  [仅主干] ToolCard|Group|Pwsh Diagnose DNS and connectivity to smartedu.cn
+  [仅主干] ToolCard|Group|Pwsh Fetch page HTML with curl
+  [仅主干] ToolCard|Group|Pwsh Fetch smartedu detail page HTML
+  [仅主干] ToolCard|Group|Pwsh Install Playwright chrome-for-testing browser
+  [仅主干] ToolCard|Group|Pwsh Junction chromium-1243 to installed chromium-1247
+  [仅主干] ToolCard|Group|Pwsh Read browser console log
+  [仅主干] ToolCard|Group|Pwsh Read saved m3u8 playlist header
+  [仅主干] ToolCard|Group|Pwsh Test AES decryption key candidates on segment
+  [仅主干] ToolCard|Group|Pwsh Test downloading first TS segment with curl
+  [仅主干] ToolCardDuration|Text|0.7秒
+  [仅主干] ToolCardDuration|Text|0.9秒
+  [仅主干] ToolCardDuration|Text|0秒
+  [仅主干] ToolCardDuration|Text|1.8秒
+  [仅主干] ToolCardDuration|Text|18.1秒
+  [仅主干] ToolCardDuration|Text|2.7秒
+  [仅主干] ToolCardDuration|Text|2秒
+  [仅主干] ToolCardDuration|Text|3.2秒
+  [仅主干] ToolCardDuration|Text|3.5秒
+  [仅主干] ToolCardDuration|Text|3.7秒
+  [仅主干] ToolCardDuration|Text|39.8秒
+  [仅主干] ToolCardDuration|Text|3秒
+  [仅主干] ToolCardDuration|Text|4.6秒
+  [仅主干] ToolCardDuration|Text|4.8秒
+  [仅主干] ToolCardDuration|Text|4秒
+  [仅主干] ToolCardDuration|Text|6.1秒
+  [仅主干] ToolCardDuration|Text|6.2秒
+  [仅主干] ToolCardDuration|Text|6.3秒
+  [仅主干] ToolCardExpand|Button|工具调用 mcp__playwright-mcp__browser_navigate · https://www.smartedu.cn/fireEducation/detail?contentType=assets_video&contentId=7bf492d4-5e4a-87cb-8718-34ec8b06e0dc&catalogType=fireEducation&subCatalog=3e83761e-8b14-40d4-93a3-2a358518c8b8
+  [仅主干] ToolCardExpand|Button|工具调用 mcp__playwright-mcp__browser_network_request · {"index":73}
+  [仅主干] ToolCardExpand|Button|工具调用 mcp__playwright-mcp__browser_network_request · response-body
+  [仅主干] ToolCardExpand|Button|工具调用 mcp__playwright-mcp__browser_network_requests · m3u8|video|mp4|assets|resource|detail|cbern|ykt
+  [仅主干] ToolCardExpand|Button|工具调用 mcp__playwright-mcp__browser_snapshot · {}
+  [仅主干] ToolCardExpand|Button|网页获取 https://www.smartedu.cn/fireEducation/detail?contentType=assets_video&contentId=7bf492d4-5e4a-87cb-8718-34ec8b06e0dc&catalogType=fireEducation&subCatalog=3e83761e-8b14-40d4-93a3-2a358518c8b8
+  [仅主干] ToolCardExpand|Button|Pwsh Check ffmpeg and yt-dlp availability
+  [仅主干] ToolCardExpand|Button|Pwsh Decode key and inspect downloaded segment
+  [仅主干] ToolCardExpand|Button|Pwsh Diagnose DNS and connectivity to smartedu.cn
+  [仅主干] ToolCardExpand|Button|Pwsh Fetch page HTML with curl
+  [仅主干] ToolCardExpand|Button|Pwsh Fetch smartedu detail page HTML
+  [仅主干] ToolCardExpand|Button|Pwsh Install Playwright chrome-for-testing browser
+  [仅主干] ToolCardExpand|Button|Pwsh Junction chromium-1243 to installed chromium-1247
+  [仅主干] ToolCardExpand|Button|Pwsh Read browser console log
+  [仅主干] ToolCardExpand|Button|Pwsh Read saved m3u8 playlist header
+  [仅主干] ToolCardExpand|Button|Pwsh Test AES decryption key candidates on segment
+  [仅主干] ToolCardExpand|Button|Pwsh Test downloading first TS segment with curl
+  [仅主干] ToolCardPath|Text|https://www.smartedu.cn/fireEducation/detail?contentType=assets_video&contentId=7bf492d4-5e4a-87cb-8718-34ec8b06e0dc&catalogType=fireEducation&subCatalog=3e83761e-8b14-40d4-93a3-2a358518c8b8
+  [仅主干] ToolCardUrl|Text|https://www.smartedu.cn/fireEducation/detail?contentType=assets_video&contentId=7bf492d4-5e4a-87cb-8718-34ec8b06e0dc&catalogType=fireEducation&subCatalog=3e83761e-8b14-40d4-93a3-2a358518c8b8
+  [仅主干] ToolCopyJson|Button|复制参数 JSON
+  [仅主干] UngroupedSessionsItem|ListItem|未分组会话
+  [仅主干] Workspace_50141382-d003-41d8-b9a5-51d1be06e0d9|ListItem|Documents
+  [仅主干] Workspace_65e43817-78b2-4eaf-b9fa-b6e614607474|ListItem|DshWinUI
+  [仅主干] WorkspaceSectionHeaderText|Text|工作区
+  [仅主干] WorkspaceSectionItem|ListItem|工作区
+  [仅重写] |Image|
+  [仅重写] |Text|工作区
+  [仅重写] |Text|开始一段新的会话
+  [仅重写] |Text|设置
+  [仅重写] |Text|未分组
+  [仅重写] |Text|新会话
+  [仅重写] |Text|展开其余 181 个会话
+  [仅重写] |Text|Documents
+  [仅重写] |Text|DshWinUI
+  [仅重写] |TitleBar|连接状态
+  [仅重写] AgentModeButton|Button|Agent 模式
+  [仅重写] AgentModeLabel|Text|标准模式
+  [仅重写] ExpandGroup_|Button|展开其余 181 个会话
+  [仅重写] NewSessionItem|Button|新建会话
+  [仅重写] PermissionButton|Button|访问模式，当前：工作区内修改
+  [仅重写] PermissionLabel|Text|工作区内修改
+  [仅重写] Session_session-006eae2c-2ef1-4c58-8e85-97d6838f772a|Button|下载智慧教育平台消防视频
+  [仅重写] Session_session-9521ef0b-5c9c-4727-b552-6d1838869bc0|Button|糖果抽取保证问题
+  [仅重写] Session_session-a0ce46c2-cfe0-4a03-845f-35abad2a4b0f|Button|导出谱面生成skill分享安装
+  [仅重写] Session_session-ac4e837e-fcc8-4b5b-b7fe-10742cf073e8|Button|糖果摸取问题最少取数
+  [仅重写] Session_session-b0a5bc18-111c-4b43-bf02-561be5285377|Button|生成谱面链接视频
+  [仅重写] SessionSearchBox|Edit|搜索会话
+  [仅重写] SettingsItem|Button|设置
+  [仅重写] UngroupedSessionsItem|Button|未分组会话
+  [仅重写] VerticalScrollBar|ScrollBar|垂直
+  [仅重写] Workspace_50141382-d003-41d8-b9a5-51d1be06e0d9|Button|Documents
+  [仅重写] Workspace_65e43817-78b2-4eaf-b9fa-b6e614607474|Button|DshWinUI
+  [仅重写] WorkspaceChipLabel|Text|选择工作区
+  [仅重写] WorkspacePickerButton|Button|选择工作区
