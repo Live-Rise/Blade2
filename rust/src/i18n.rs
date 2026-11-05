@@ -1250,6 +1250,10 @@ pub const EN: &[(&str, &str)] = &[
     ("这个壁纸没有可用的文件。", "This wallpaper has no usable file."),
     ("下载失败：壁纸服务没返回这个文件。", "Download failed: the wallpaper service did not return this file."),
     ("已应用「{0}」", "Applied \"{0}\""),
+    // 盘内拷贝腿（we.rs 直连）的两枚状态行：主干下载腿没有对应键（「正在下载/下载失败」
+    // 语义是 HTTP），28 语言 json 缺这两键时回落英文（`Catalog::l` 四档回落链）。
+    ("正在应用「{0}」…", "Applying \"{0}\"…"),
+    ("应用失败：{0}", "Failed to apply: {0}"),
     ("个性化", "Personalization"),
     ("指令决定它怎么回应你，材质与皮肤决定它看起来是什么样。", "Instructions shape how it responds to you; the material and skin shape how it looks."),
     ("自定义指令", "Custom instructions"),

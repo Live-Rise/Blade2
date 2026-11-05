@@ -87,9 +87,9 @@ fn the_skin_backdrop_is_a_real_layer_under_both_pages() {
     let body = window(SRC, "fn body(", "fn column_splitter(");
     // 0.9.0.4 起 body 先取一次皮肤层再喂两处（叠放格 + content 格的底色判据），
     // 同一格状态不出第二份真相 ⇒ 针随产品码同刀换形（旧针 `match self.mw2_skin_backdrop() {`
-    // 锁的是单次内联调用的旧写法）。
+    // 锁的是单次内联调用的旧写法；双缓冲的解码回执要 message 回执，调用带上了 context）。
     assert!(
-        body.contains("let backdrop = self.mw2_skin_backdrop();"),
+        body.contains("let backdrop = self.mw2_skin_backdrop(context);"),
         "内容区底下的皮肤层不入了 ⇒ 清除钮永远看不见效果"
     );
     assert!(

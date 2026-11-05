@@ -40,3 +40,8 @@ pub mod updatecheck;
 // （运行时 Assets/app.ico）。与 toast.rs（只发 NIM_MODIFY 的气球腿）各带一份结构体 = 设计上的两份真相，
 // 不许合并；子类化回调臂 / 原生菜单 / main.rs 接线一律归下一批（范围与备案见模块头）。
 pub mod tray;
+// Wallpaper Engine 工坊**壳侧直连**（Steam 注册表 + libraryfolders.vdf 定位工坊 → project.json
+// 清单 → 拷进皮肤槽位）。与 shellfiles/skinvideo 同族：只算不画 —— WE 二级页的网格、状态行
+// 与 `Msg::We*` 接线都在 main.rs，本模块零 UI 调用点。为何不走内核插件路由（官方树无
+// `@baiiii/dsh-wallpaper-local`）、套用语义与主干的逐条对位 —— 全部在模块头。
+pub mod we;

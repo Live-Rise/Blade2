@@ -491,31 +491,38 @@ fn the_two_unported_kinds_stay_uncalled() {
     );
 }
 
-/// `shell-skin.we` 的**写/读两钩在 main.rs 侧确实没有宿主**（MR2 §B 的结论，非遗漏）。
+/// `shell-skin.we` 的读写钩宿主账（2026-11-05 WE 直连刀换形：从「全禁」改成「只禁 toast 语义的半接」）。
 ///
-/// 主干那两枚钩挂在 WinRT toast 注册通路上：`Register` 之后才写 stamp、`GetString` 之后才判
-/// 「新鲜」（`MainWindow.Wallpaper.cs:374-394` 那一族）。分叉今天没有 `ShellToast` 原语 ⇒ 半接
-/// 比不接坏：只写 stamp 不 Register，会**伪造**主干 `:394` 的新鲜判定，让启动少清一次槽。
+/// 原锁禁全部读写（MR2 §B）：那两枚钩在主干挂 WinRT toast 注册通路——`Register` 之后才写
+/// stamp、`GetString` 之后才判「新鲜」（`MainWindow.Wallpaper.cs:374-394`），分叉没有
+/// `ShellToast` 原语 ⇒ 半接会伪造 `:394` 的新鲜判定让启动少清槽。
 ///
-/// ⚠ 诚实备案：这颗锁接线前后**都是绿**（它锁的是「不做」），口径同
-/// [`the_two_unported_kinds_stay_uncalled`]（pet 半边）口径同此；videopause 已随接线批
-/// 从那把锁的禁单挪进正向钉（见那颗的备案更新）。它防的是「将来有人顺手补一半」。
-/// 另记一笔**已随 #240 收口的账**：主干 `ClearSkinWeId()` 有 **3 个调用点**（`MainWindow.xaml.cs:8742`、
-/// `:8782` 本地导入两径 + `:8804` 清除皮肤）；原备案写的「分叉只接了 `:8804` 那一档、另两径卡在
-/// `SkinImportButton` 无 `on_click`」已过时——#240 把两发导入接上了（图片/视频档各自的臂先清
-/// WE 标记再动槽，与主干两径同序）⇒ 清除钩今天与主干同数，锁值从 1 收成 3。
+/// WE 壳侧直连（`we.rs` + WE 二级页）给了 sidecar **与主干同构的新宿主**，与 toast stamp
+/// 判定无关（分叉自始就没有 stamp 新鲜判定可伪造）：
+/// * 读：`Shell::create` 里 `load_skin_we_id()` 恢复 `we_applied`（主干 `_weAppliedId ??=
+///   ReadSkinWeId()`，二级页「使用中」回显那条路）——**恰好一发**。
+/// * 写：`we::apply`（lib 侧）写 id（主干 `ApplyWallpaperAsync` 的 `WriteSkinWeId` 对位），
+///   不落 main.rs ⇒ 本文件数不到，账在 `we.rs` 的测试里。
+/// * 清：仍然只有导入两径 + 清除皮肤那三发（主干 `:8742/:8782/:8804` 同数）——**本地导入
+///   清 WE 标记**的语义没变。
+/// * `render_/parse_skin_we_id` 纯函数仍无 main.rs 宿主（渲染/解析只在 shellfiles.rs 自测里）。
 #[test]
 fn the_skin_we_write_and_read_hooks_have_no_host_yet() {
+    // toast stamp 那一族今天在 main.rs 侧仍一颗都不许有（半接比不接坏，原锁语义原样保留）：
     for hostless in [
-        "shellfiles::load_skin_we_id(",
         "shellfiles::load_skin_we_id_from(",
         "shellfiles::save_skin_we_id(",
-        "shellfiles::save_skin_we_id_to(",
         "shellfiles::render_skin_we_id(",
         "shellfiles::parse_skin_we_id(",
     ] {
         assert_eq!(count(hostless), 0, "{hostless} 今天没有宿主，接上要先证明 toast 原语存在");
     }
+    // 读钩的宿主 = Shell::create 那一发 sidecar 恢复（WE 直连刀），不多不少。
+    assert_eq!(
+        count("shellfiles::load_skin_we_id()"),
+        1,
+        "load_skin_we_id 的 main.rs 宿主数变了：WE 直连的回显读就这一发，多了就是又有人碰 stamp 语义"
+    );
     // 清除钩三发 = 主干三个调用点逐一有宿主（清除臂 + 图片导入臂 + 视频导入臂）；
     // 顺序判据在 main.rs 自带 mod 里（`skin_clear_arms_the_we_marker_before_the_slot_files`），
     // 这里只钉「三发都在、且不多不少」。

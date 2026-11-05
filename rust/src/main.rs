@@ -41,6 +41,7 @@ use blade2_rs::dock;
 use blade2_rs::i18n::Catalog;
 use blade2_rs::i18n::relative_time;
 use blade2_rs::keys::{self, KeyAction, KeyOwner};
+use blade2_rs::we::{self, WeItem};
 use blade2_rs::kernel::{
     ApprovalDecision, CONTROL_FRAME_TYPES, EVENT_RESULT_METHOD, BubbleCoord, CommandEntry,
     CommandReply, ControlState, DetailsKey, DetailsLedger, DirectoryListing, EventsFrame, FrameDrop,
@@ -265,6 +266,20 @@ enum Msg {
     /// 落主干两发导入共用的「导入皮肤失败：{0}」（启动那发在派发前已把 Err 吞成 `Ok(None)`，
     /// 引导期不弹卡，与主干 `LoadSavedSkin` 的 catch 同档）。
     SkinPoster(Result<Option<PathBuf>, String>),
+    // ---- Wallpaper Engine 工坊直连（we.rs + WE 二级页）------------------------------------
+    /// 拉工坊清单：主干 `LoadWallpaperEngineLibraryAsync`（进二级页现拉、壳侧缓存、失败不缓存
+    /// 下次进页重试）的分叉版。WE 二级页钻进来的那一发（`Msg::OpenSub` 的 "wallpaper-engine"
+    /// 支）发它；探测/枚举全在 [`we`]（壳直连，不碰内核）。
+    WeListLoad,
+    /// 清单回执。空表不是错误（本机没装 WE / 工坊空 ⇒ 状态行给「需要安装并订阅」那档）。
+    WeListLoaded(Vec<WeItem>),
+    /// 点缩略图套用（载荷 = 工坊 item id）。同步半段 = 「点的是当前背景且槽位在 ⇒ 只回显」
+    /// 早退（主干 `:246-249`，视频动辄上百 MB 不重拷）→ 停泵（覆盖槽位的顺序红线）→
+    /// 后台拷进槽位（[`we::apply`]）。
+    WeApply(String),
+    /// 套用回执：`Ok((id, 名称, 是否视频))` = 槽位已就位（这半臂抽海报/起泵/落「使用中」，
+    /// 与导入腿 [`Msg::SkinPoster`] 后的顺序一致）；`Err` = 拷贝失败，状态行给原因。
+    WeApplied(Result<(String, String, bool), String>),
     /// 视频皮肤播放腿的取货回执（`skinplay` 帧泵 → 壳）。三档：
     /// `Frame(bmp)` = 来了一帧，入双缓冲的**隐藏格**（[`Shell::skin_video_ingest`]：
     /// 忙则跳帧、闲则喂入，等原生解码完成的回执再翻面显示）；`Idle` = 等超时还没新帧
@@ -585,11 +600,12 @@ enum Msg {
     /// 点某颗触发器 = 开它那张展开层；**再点同一颗 = 收**（口径同 [`Msg::FileMenuToggle`]）。
     /// 从关到开那一发会顺带重拉菜单（主干 `AgentModeFlyout.Opening`，`MW:2627`）。
     SelectorToggle(SelectorKind),
-    /// 触发器胶囊面上那一发**按下**的窗口内坐标（DIP，`PointerEventInfo::window_x/y`）。
-    /// 主干那两张卡钉在触发器上沿（`Placement=Top`），分叉读不回元素矩形 ⇒ 锚 = 真实
-    /// 按下点：press（这发）先于 release（`Click` → [`Msg::SelectorToggle`]）落到表里，
-    /// 开臂取到的永远是被点那颗钮的最新坐标。层开着时指针事件全被遮罩吃掉
-    /// （遮罩盖着触发器）⇒ 这一发不会在开层期间窜进来。
+    /// 触发器**锚 Border 左上角**的窗口内坐标（DIP，`window_* − 元素内 x/y` 折出）。
+    /// 主干那几张卡钉在触发器上沿（`Placement=Top`），分叉读不回元素宽度 ⇒ 锚不取按下点
+    /// （按下点随按的位置漂，卡跟着乱跳 —— 2026-11-05 乱弹刀取缔）而取锚 Border 的左上角：
+    /// 与按下落点无关，同一颗芯片按哪里卡都钉在同一处。press（这发）先于 release
+    /// （`Click` → [`Msg::SelectorToggle`]）落到表里，开臂取到的永远是被点那颗的最新坐标。
+    /// 层开着时指针事件全被遮罩吃掉（遮罩域 = 整窗）⇒ 这一发不会在开层期间窜进来。
     SelectorAnchor(f64, f64),
     /// 收那张展开层：Esc（借道 `Msg::PaletteClose` 那一臂）、遮罩按下（主干 flyout 的
     /// light-dismiss）、切页、切会话四路共用（同 [`Msg::FileMenuClose`] 的四条出口）。
@@ -4330,6 +4346,13 @@ fn search_input_resources() -> ResourceOverrides {
     let transparent = Color::transparent();
     button_ghost(None)
         .set("ButtonPadding", th([0.0, 0.0, 0.0, 0.0]))
+        // 搜索栏文字被裁成横条（2026-11-05）：载体钮模板 padding（11,5,11,6）资源覆写
+        // 不生效（模板 Setter 的 ThemeResource 在挂资源前已解析，`model_trigger` 同款教训）
+        // ⇒ TextBox 被压到 17 DIP，placeholder 上下各裁一半。这里把 **TextBox 模板内**
+        // 的 `TextControlThemePadding` 纵向归零（模板**内部**的 ThemeResource 是挂载后
+        // 动态解析 ⇒ 祖先资源找得到），配合 TextBox 的纵向负 margin（抵载体钮默认
+        // padding）把文字区撑回整条胶囊高。
+        .set("TextControlThemePadding", th([10.0, 0.0, 10.0, 0.0]))
         .set("TextControlBackground", transparent)
         .set("TextControlBackgroundPointerOver", transparent)
         .set("TextControlBackgroundFocused", transparent)
@@ -6185,16 +6208,19 @@ const MENU_RADIO_DOT: f64 = 5.0;
 const MENU_RADIO_COLUMN: f64 = 14.5;
 /// 勾点列与文字的间距（主干模板 `CheckGlyph.Margin="0,0,16,0"`）。
 const MENU_RADIO_GAP: f64 = 16.0;
-/// 两张卡的自宽：主干 `MenuFlyout` 宽 = 最宽行内容，实拍两张分别 231px / 1151px（@200%）。
-/// 分叉读不回卡片自宽（布局不可测）⇒ 宽度定死为这份量测值；表数据变了会漂（备案：
-/// 内置四档与当前内核 catalog 的行集就是这两张表的现状）。
-const AGENT_MODE_FLYOUT_WIDTH: f64 = 115.5;
-const MODEL_FLYOUT_WIDTH: f64 = 575.5;
 /// 卡下缘与触发器上沿的间距：实拍 11px ≈ 5.5 DIP（`Placement=Top` 的系统间隙 + 阴影带）。
+/// 基准 = 锚 Border 顶（content 盒顶 ≈ 胶囊顶 + 模板竖向 padding），见
+/// [`selector_card_margins`]。
 const FLYOUT_GAP_ABOVE_TRIGGER: f64 = 5.5;
-/// 触发器胶囊半高（DefaultButtonStyle MinHeight 32 的一半）：点击锚在胶囊面内，
-/// 竖向锚 = 点击 y − 半高 = 上沿。
-const FLYOUT_TRIGGER_HALF_HEIGHT: f64 = 16.0;
+
+// ---- WE 二级页 tile 形制（主干 BuildWeTileTemplate 的分叉直译）--------------------------
+/// tile 宽（主干 `StackPanel Width="240"`）；图高 150（主干 `Grid Height="150"`）。
+const WE_TILE_WIDTH: f64 = 240.0;
+const WE_TILE_THUMB_HEIGHT: f64 = 150.0;
+/// 无预览图 tile 的底层字形（主干模板 `&#xE768;`，`FontSize=30`）。
+const WE_TILE_GLYPH: char = '\u{e768}';
+/// 字形字号（主干 `FontSize=30`；size 族没有 30 档，为这一格直接承载主干值）。
+const WE_TILE_GLYPH_SIZE: f64 = 30.0;
 
 // ---- 设置页钻取转场常数（0.9.0.4 转场刀）--------------------------------------------
 /// 步数：8 × 32ms ≈ 主干 `DurationPageTransition`(250, `MW:9756`)。
@@ -7625,7 +7651,16 @@ impl Shell {
             .content(
                 // 主干那颗 `Content` 是 `[Auto, *]` 两列 Grid + `ColumnSpacing=Space6`
                 // （`MX:1241-1245`）⇒ 与旁边那颗同刻法：横向 `StackPanel{spacing=Space6}`。
-                StackPanel::new()
+                // 外面那层透明 `Border` = 弹层定位锚（同 [`Shell::agent_mode_trigger`] 那颗
+                // 的注）——**乱弹刀补上**：此前这颗没有锚，开层取到的是上一发的旧锚
+                // （别的芯片上方）或回落位，菜单弹到哪全看上次点过谁（用户报的乱弹主犯之一）。
+                Border::new()
+                    .background(Color::transparent())
+                    .on_pointer_pressed(context.callback(|info: PointerEventInfo| {
+                        Msg::SelectorAnchor(info.window_x - info.x, info.window_y - info.y)
+                    }))
+                    .content(
+                        StackPanel::new()
                     .orientation(Orientation::Horizontal)
                     .spacing(space::S6)
                     .vertical_alignment(VerticalAlignment::Center)
@@ -7643,6 +7678,7 @@ impl Shell {
                             .automation_id("PermissionLabel"),
                         mark_size(glyph::DROPDOWN_CHEVRON, size::GLYPH_CAPTION),
                     )),
+                    ),
             )
             .into();
         Some(button.tooltip(name))
@@ -7658,7 +7694,8 @@ impl Shell {
     /// **那张表的行号**，回写那一头再按行值折回 `picks` 的下标口径（[`Shell::apply_default_permission`]）。
     ///
     /// 抄不动的两件与 `AgentModeFlyout` 同（`RadioMenuFlyoutItem` 无对应物 ⇒ 当前档用 Accent 底；
-    /// `ShowAt(Top)` 读不回屏幕矩形 ⇒ 贴内容面左下，偏移吃 `pad::COMPOSER_SELECTORS`）。
+    /// `ShowAt(Top)` 的落点走四颗共用的锚制（触发器锚 `Border` 左上角，
+    /// [`selector_card_margins`]；无锚回落才吃 `pad::COMPOSER_SELECTORS`）。
     /// `desc` 空串那一档 = 主干 `if (desc.Length > 0)` 不成立 ⇒ **不设** ToolTip（`:16637`），
     /// 而 UIA 名也跟着换单参那一串（`permission_row_name` 的两支）。
     fn permission_menu(&self, context: &mut ViewContext<Shell>, p: Palette) -> View {
@@ -7702,7 +7739,9 @@ impl Shell {
             .grid_row(0)
             .horizontal_alignment(HorizontalAlignment::Left)
             .vertical_alignment(VerticalAlignment::Bottom)
-            .margin(th(pad::COMPOSER_SELECTORS))
+            // 落点接四颗共用的锚制（乱弹刀）：此前这颗永远贴左下（`pad::COMPOSER_SELECTORS`
+            // 只是 `selector_card_margins` 的**无锚回落**），点了这颗菜单却弹到角落。
+            .margin(th(selector_card_margins(self.selector_anchor)))
             .background(p.card.clone())
             .border_brush(p.stroke.clone())
             .border_thickness(size::STROKE)
@@ -11181,6 +11220,18 @@ struct Shell {
     skin_video_ready: [bool; 2],
     skin_video_front: usize,
     skin_video_armed: bool,
+    /// WE 工坊直连的四格（主干 `MainWindow.Wallpaper.cs` 的 `_weList` / `_weAppliedId` /
+    /// `_weLoading` / `_weWallpaperStatus` 分叉对位）：
+    /// * `we_items` = 工坊清单壳侧缓存（主干 `_weList`：拉过一次再进页秒开；失败**不**缓存，
+    ///   下次进页重试 ⇒ 空表与「没拉过」都留在 `Vec` 空 + 状态行文案区分）。
+    /// * `we_applied` = 当前背景来自哪个 WE 壁纸（主干 `_weAppliedId`：启动从
+    ///   `shell-skin.we` sidecar 恢复；本地导入两发已 `clear_skin_we_id` ⇒ 自然回空）。
+    /// * `we_loading` = 「同一时刻至多一枚清单任务在飞」（主干 `_weLoading` 同款闸）。
+    /// * `we_status` = 二级页状态行（套用/清单的进行态文案；主干 `SetWeStatus` 同槽）。
+    we_items: Vec<WeItem>,
+    we_applied: Option<String>,
+    we_loading: bool,
+    we_status: String,
     /// #140 刀2（MW2）：主干 `Pet.cs:726-731 PetInstallSay` 的那一行常驻状态
     /// （`(已解析文本, warn)`；`None` = 还没点过安装那颗 ⇒ 不入树）。
     pet_status: Option<(String, bool)>,
@@ -11520,9 +11571,10 @@ struct Shell {
     /// `Visibility`，口径同上面四格）。这一格同时就是「同刻至多一张」那条主干事实的载体
     /// （三张 `MenuFlyout` 都是系统级、彼此 light-dismiss），装不下第二张。
     selectors: Option<SelectorKind>,
-    /// 最近一次触发器按下的窗口内坐标（DIP）——[`Msg::SelectorAnchor`] 的落点，两张卡
-    /// （Agent 模式 / 模型）的定位锚。层收起那一发（[`Msg::SelectorClose`]）一并清掉，
-    /// 同 [`scroll::forget_anchor`] 的卫生口径；开臂必先有 press ⇒ 取值时恒有新鲜锚。
+    /// 最近一次触发器锚 Border 的左上角（窗口内 DIP）——[`Msg::SelectorAnchor`] 的落点，
+    /// 四张卡（Agent 模式 / 权限 / 模型 / 工作区）的定位锚。层收起那一发
+    /// （[`Msg::SelectorClose`]）一并清掉，同 [`scroll::forget_anchor`] 的卫生口径；
+    /// 开臂必先有 press ⇒ 取值时恒有新鲜锚。
     selector_anchor: Option<(f64, f64)>,
     /// 主干 `_pendingPreset`：待用的 Agent 预设 `(id, name)`。
     /// **初值就是 `("standard", "标准模式")`**（`MW:2297` 的字段声明带了初值，不是 `null`），
@@ -18475,19 +18527,20 @@ impl Shell {
             .automation_id("ModelButton")
             .automation_name(name)
             .on_click(context.message(Msg::SelectorToggle(SelectorKind::Model)))
-            // 弹层定位锚（2026-11-01 弹层对齐刀）：指针事件只挂 `Border`（generated.rs 唯一
-            // 宿主）⇒ 内容包一层**透明 `Border`**，记下按下点的窗口 DIP
-            // （[`Msg::SelectorAnchor`]）。press（这发）先于 release（`Click` → toggle）落表
-            // ⇒ 开臂取到的锚恒属于被点这颗。⚠ 锚面只盖**内容盒**（不含模板 padding 面）：
-            // 盖满面那两条路都试过且废——负边距把按钮 DesiredSize 收小；`ButtonPadding`
-            // 资源覆写实测不生效（模板 Setter 的 ThemeResource 在挂资源前已解析，
-            // 实测胶囊被垫高 11 DIP）⇒ 贴内容盒是零几何风险的落点；点在 padding 面上
-            // 仍有 [`Msg::SelectorToggle`]（锚用上一发的旧值/回落位），行为不缺只偏。
+            // 弹层定位锚（2026-11-01 弹层对齐刀；2026-11-05 乱弹刀改锚制）：指针事件只挂
+            // `Border`（generated.rs 唯一宿主）⇒ 内容包一层**透明 `Border`**，记下这层
+            // Border 的**左上角**（`window_* − 元素内 x/y`，窗口客户区 DIP；与按下落点无关
+            // ⇒ 同一颗芯片按哪里卡都钉在同一处）。press（这发）先于 release（`Click` →
+            // toggle）落表 ⇒ 开臂取到的锚恒属于被点这颗。⚠ 锚面只盖**内容盒**（不含模板
+            // padding 面）：盖满面那两条路都试过且废——负边距把按钮 DesiredSize 收小；
+            // `ButtonPadding` 资源覆写实测不生效（模板 Setter 的 ThemeResource 在挂资源前
+            // 已解析，实测胶囊被垫高 11 DIP）⇒ 贴内容盒是零几何风险的落点；点在 padding
+            // 面上仍有 [`Msg::SelectorToggle`]（锚用上一发的旧值/回落位），行为不缺只偏。
             .content(
                 Border::new()
                     .background(Color::transparent())
                     .on_pointer_pressed(context.callback(|info: PointerEventInfo| {
-                        Msg::SelectorAnchor(info.window_x, info.window_y)
+                        Msg::SelectorAnchor(info.window_x - info.x, info.window_y - info.y)
                     }))
                     .content(
                         StackPanel::new()
@@ -18520,8 +18573,8 @@ impl Shell {
     ///   行面不带任何「当前模型」标记（此前那枚 Accent 底是分叉自造，摘）；
     /// · 主干那两张「区头」是 `MenuFlyoutItem { IsEnabled = false }`，而分叉的仓规是
     ///   **画出来的死控件一律不许新增** ⇒ 区头落成真 `TextBlock`（不是按住的那颗钮）。
-    /// · 卡落点/卡宽与 [`Shell::agent_mode_menu`] 同一刻法（锚 = [`Msg::SelectorAnchor`]，
-    ///   宽 = [`MODEL_FLYOUT_WIDTH`] 实测量宽）。
+    /// · 卡落点/卡宽与 [`Shell::agent_mode_menu`] 同一刻法（锚 = [`Msg::SelectorAnchor`]；
+    ///   宽自适应最宽行，主干 MenuFlyout 同律）。
     ///
     /// 本轮**不落**「上次使用」那一区（主干 `AppendLastUsedMenuItems` / `RestoreLastUsedModelAsync`
     /// 属 `ModelExtras` 那张刀），所以 `未能切换到 {0}：目录中未找到该模型。` 那一支也不发。
@@ -18607,8 +18660,9 @@ impl Shell {
             .grid_row(0)
             .horizontal_alignment(HorizontalAlignment::Left)
             .vertical_alignment(VerticalAlignment::Bottom)
-            .width(MODEL_FLYOUT_WIDTH)
-            .margin(th(selector_card_margins(self.selector_anchor, MODEL_FLYOUT_WIDTH)))
+            // 宽度自适应最宽行（主干 MenuFlyout 同律：宽 = 最宽行内容）。此前定死实测量宽，
+            // 目录/文案一变行就被裁或卡留一段空 —— 用户口径「下拉宽度和选项一致」。
+            .margin(th(selector_card_margins(self.selector_anchor)))
             .background(p.card.clone())
             .border_brush(p.stroke.clone())
             .border_thickness(size::STROKE)
@@ -18901,16 +18955,21 @@ fn menu_radio_row_content(text: String, checked: bool, p: &Palette) -> View {
         .into()
 }
 
-/// 两张选择器卡的落点边距（主干 `Placement=Top` 的分叉等价，实拍钉的两条几何）：
-/// · 竖向：卡下缘 = 触发器上沿 − [`FLYOUT_GAP_ABOVE_TRIGGER`]，触发器上沿 = 点击 y −
-///   半高。Bottom 对齐的 `margin.bottom` = 客户区高 − 卡下缘 ⇒ 客户区高从
-///   [`scroll::client_size`] + [`scroll::client_origin`] 折 DIP（与
-///   [`Shell::overlay_host_box`] 同一条几何通路）。
-/// · 横向：卡中心 = 点击 x（实拍两卡中心与触发器中心差 ≤ 1.5px）⇒ Left 对齐的
-///   `margin.left` = 点击 x − 卡半宽（卡宽定死，见两枚 `*_FLYOUT_WIDTH`）。
+/// 两张选择器卡的落点边距（主干 `Placement=Top` 的分叉等价）。锚 = **触发器锚 Border 的
+/// 左上角**（窗口客户区 DIP；[`Msg::SelectorAnchor`] 由 `window_* − 元素内 x/y` 折出，
+/// 与按下落点无关 ⇒ 同一颗芯片无论按哪里，卡都钉在同一处 —— 按下点方案的余病）：
+/// · 竖向：卡下缘 = 锚顶 − [`FLYOUT_GAP_ABOVE_TRIGGER`]。Bottom 对齐的 `margin.bottom`
+///   = 客户区高 − 卡下缘 ⇒ 客户区高从 [`scroll::client_size`] + [`scroll::client_origin`]
+///   折 DIP（与 [`Shell::overlay_host_box`] 同一条几何通路）。
+/// · 横向：卡左缘 = 锚左。锚 Border 盖 content 盒（左右缘 ≈ 触发器胶囊内缘），卡宽
+///   自适应最宽行、与胶囊实宽几乎等宽 ⇒ 左缘对齐在观感上就是主干那句
+///   「卡中心 = 触发器中心」（实拍差 ≤ 1.5px）；中心对齐需要元素宽度，分叉没有 measure
+///   通路，且按下点方案已被这把乱弹刀废掉 ⇒ 左缘对齐是拿得到的坐标里最稳的一条。
+/// 层宿主 = 根网格（[`Shell::view`] 那一格）⇒ margin 系与锚系（都是窗口客户区 DIP）
+/// 同源；宿主曾在 chat_page 行 0，两系差侧栏宽 + composer 带高，卡被弹飞（乱弹刀取证）。
 /// 两处任一问不到（无锚 = 单测线程；客户区/DPI 拿不动）⇒ 回落既有贴左下位
 /// （`pad::COMPOSER_SELECTORS`），「没有锚」这一档保持既有形态。
-fn selector_card_margins(anchor: Option<(f64, f64)>, card_w: f64) -> [f64; 4] {
+fn selector_card_margins(anchor: Option<(f64, f64)>) -> [f64; 4] {
     let Some((ax, ay)) = anchor else {
         return pad::COMPOSER_SELECTORS;
     };
@@ -18921,8 +18980,8 @@ fn selector_card_margins(anchor: Option<(f64, f64)>, card_w: f64) -> [f64; 4] {
         return pad::COMPOSER_SELECTORS;
     };
     let client_h = scroll::px_to_dip(px_h, dpi);
-    let left = (ax - card_w / 2.0).max(0.0);
-    let bottom = (client_h - (ay - FLYOUT_TRIGGER_HALF_HEIGHT - FLYOUT_GAP_ABOVE_TRIGGER)).max(0.0);
+    let left = ax.max(0.0);
+    let bottom = (client_h - (ay - FLYOUT_GAP_ABOVE_TRIGGER)).max(0.0);
     [left, 0.0, 0.0, bottom]
 }
 
@@ -19246,6 +19305,12 @@ impl Component for Shell {
             skin_video_ready: [true, true],
             skin_video_front: 0,
             skin_video_armed: false,
+            // WE 直连四格初值：`we_applied` 启动从 sidecar 恢复（主干 `_weAppliedId ??=
+            // ReadSkinWeId()` 同拍）；清单空 = 「没拉过」，状态行留空（进二级页才拉才写）。
+            we_items: Vec::new(),
+            we_applied: shellfiles::load_skin_we_id(),
+            we_loading: false,
+            we_status: String::new(),
             // #140 刀2：`PetInstallSay` 那行初值是「还没点过那颗」⇒ 不入树（主干是空 Text，同相）。
             pet_status: None,
             pets: None,
@@ -20107,8 +20172,9 @@ impl Component for Shell {
                 // 锚一并清：同 [`scroll::forget_anchor`] 的卫生口径，下次开臂必有新鲜 press。
                 self.selector_anchor = None;
             }
-            // 触发器面上的按下：只记坐标（开/收那一发在 release 的 [`Msg::SelectorToggle`]）。
-            // 无条件覆写即可——层开着时遮罩盖着触发器，这发进不来；关着时它必属于「下一次开」。
+            // 触发器锚 Border 的左上角：只记坐标（开/收那一发在 release 的
+            // [`Msg::SelectorToggle`]）。无条件覆写即可——层开着时遮罩盖着整窗，这发进不来；
+            // 关着时它必属于「下一次开」。
             Msg::SelectorAnchor(x, y) => {
                 pill_trace(format!(
                     "ANCHOR raw x={x} y={y} client_origin={:?} client_size={:?}",
@@ -22639,6 +22705,13 @@ impl Component for Shell {
                 // 0.9.0.2/0.9.0.3 判定模型卡随 auto-review 拆掉后主干不再问 ⇒ 分叉同拆。）
                 // 每次点卡都重问（主干那发没有缓存）⇒ 先把上一答撤掉，问回来的那一帧之前
                 // 一行密钥都不画（= 主干「还没建页」那一档），绝不留上一次的旧状态。
+                // WE 二级页：进页现拉（主干 LoadWallpaperEngineLibraryAsync 的「二级页直接
+                // 显示：进页就拉，不等点击」）。壳侧缓存命中（非空）或已在飞 ⇒ 不再发
+                // （主干 `_weList` 缓存 + `_weLoading` 闸同款）；空表 = 没拉到过 ⇒ 每次进页
+                // 都重试（主干「失败/空列表不写缓存」同口径）。判据在 `sub` move 之前落。
+                let asks_wallpaper = id == "wallpaper-engine"
+                    && self.we_items.is_empty()
+                    && !self.we_loading;
                 let asks_credentials = id == "web-search";
                 self.sub = Some(id);
                 // 钻取进二级页：主干 OpenSettingsSubPage → PlaySettingsDrillIn（每次进页都播）。
@@ -22646,6 +22719,11 @@ impl Component for Shell {
                 if asks_credentials {
                     self.search_credentials = None;
                     self.load_search_credentials(context);
+                }
+                if asks_wallpaper {
+                    self.we_loading = true;
+                    self.we_status = self.catalog.l("正在读取…");
+                    context.spawn_background(|_token| Msg::WeListLoad);
                 }
             }
             Msg::CloseSub => {
@@ -22913,6 +22991,84 @@ impl Component for Shell {
             Msg::SkinPoster(Ok(None)) => {}
             Msg::SkinPoster(Err(error)) => {
                 mw2_report_skin_import_failure(context, &self.catalog, error);
+            }
+            // ---- Wallpaper Engine 工坊直连（we.rs + WE 二级页）三臂 -----------------------
+            // 主干 LoadWallpaperEngineLibraryAsync / ApplyWallpaperAsync 的分叉版。清单腿 =
+            // 进页现拉（主干「二级页直接显示：进页就拉，不等点击」）、壳侧缓存、失败不缓存
+            // 下次进页重试；套用腿 = 拷进槽位再走既有管线，与导入两发共用停泵顺序红线与
+            // 海报/起泵收尾。全在壳内（we.rs 模块头），一发 RPC 都不发。
+            Msg::WeListLoad => {
+                // 「至多一枚在飞」闸在 OpenSub 那一臂落，这里只管执行；装载是本机盘 IO
+                // （注册表 + 目录枚举 + project.json），后台线程做完整表回投。
+                context.spawn_background(|_token| {
+                    let items = we::probe_root().map(|root| we::list(&root)).unwrap_or_default();
+                    Msg::WeListLoaded(items)
+                });
+            }
+            Msg::WeListLoaded(items) => {
+                self.we_loading = false;
+                self.we_status = if items.is_empty() {
+                    self.catalog.l(
+                        "本机没有可用的 Wallpaper Engine 壁纸：需要安装 Wallpaper Engine 并订阅壁纸。",
+                    )
+                } else {
+                    self.catalog.lf("共 {0} 个壁纸，点缩略图套用", &[items.len().to_string()])
+                };
+                self.we_items = items;
+            }
+            Msg::WeApply(id) => {
+                let Some(item) = self.we_items.iter().find(|entry| entry.id == id).cloned() else {
+                    return;
+                };
+                let root = shellfiles::data_home();
+                // 点的就是当前背景且槽位还在：直接回显不重拷（主干 `:246-249`，
+                // 视频项动辄上百 MB）。
+                let slot_in_place = if item.is_video {
+                    root.join(skinvideo::SKIN_VIDEO_FILE).is_file()
+                } else {
+                    root.join(skinvideo::SKIN_IMG_FILE).is_file()
+                };
+                if self.we_applied.as_deref() == Some(id.as_str()) && slot_in_place {
+                    self.we_status = self.catalog.lf("已应用「{0}」", &[item.name]);
+                    return;
+                }
+                // 停泵在**拷槽位之前**（`Msg::SkinVideoImportPick` 同一条顺序红线：
+                // MF reader 持着 `.video` 时覆盖会撞共享冲突）。
+                self.stop_skin_video();
+                self.we_status = self.catalog.lf("正在应用「{0}」…", &[item.name.clone()]);
+                context.spawn_background(move |_token| {
+                    let outcome = we::apply(&item, &root)
+                        .map(|_| (item.id.clone(), item.name.clone(), item.is_video))
+                        .map_err(|error| error.to_string());
+                    Msg::WeApplied(outcome)
+                });
+            }
+            Msg::WeApplied(Ok((id, name, is_video))) => {
+                self.we_applied = Some(id);
+                self.we_status = self.catalog.lf("已应用「{0}」", &[name]);
+                if is_video {
+                    // 与视频导入腿同序：背景槽先空着等海报（`Msg::SkinPoster` 的 is_none 闸
+                    // 只接第一发），抽完起泵。`.img` 已由 we::apply 让位 ⇒ 判据成立。
+                    self.skin_path = None;
+                    let root = shellfiles::data_home();
+                    let poster = skinvideo::poster_cache_path(&root);
+                    if let Some(dir) = poster.parent() {
+                        let _ = std::fs::create_dir_all(dir);
+                    }
+                    let _task = context.spawn_background(move |_token| {
+                        Msg::SkinPoster(skinvideo::ensure_poster(&root))
+                    });
+                    self.sync_skin_video(context);
+                } else {
+                    // 图片档：与 `Msg::SkinImportPick` 的上屏半段同形（`.img` 在册 ⇒
+                    // sync_skin_video 的播放判据不成立，这一发是空转停泵收尾）。
+                    self.skin_path = Some(shellfiles::data_home().join(skinvideo::SKIN_IMG_FILE));
+                    self.sync_skin_video(context);
+                }
+            }
+            Msg::WeApplied(Err(error)) => {
+                // 主干 `:273`「下载失败」那档的盘内版：拷不动（权限/占用）就明说，不清槽。
+                self.we_status = self.catalog.lf("应用失败：{0}", &[error]);
             }
             // #240 播放腿取货回执。三档分工见 [`Msg::SkinVideoFrame`] 的文档注；这里是它唯一的宿主。
             // 形制逐字照 `instructions` / `status_pulse` 那两族：**先落闸**（这一枚在飞任务交割完，
@@ -23538,6 +23694,23 @@ impl Component for Shell {
             KeyedView::new("strip", self.strip(context, palette, 0)),
             KeyedView::new("body", self.body(context, palette, 1)),
         ];
+        // #56 输入区选择器组（`AgentMode*` / `Permission*` / `Model*` / `Workspace*`）的开层：
+        // 一张贴触发器上沿的自绘卡 + 一整面透明遮罩（点外面即收，同 `Msg::SelectorClose`）。
+        // **宿主必须是这一台根网格**（2026-11-05 乱弹刀）：[`selector_card_margins`] 吃的锚是
+        // **窗口客户区** DIP（`PointerEventInfo.window_*`），卡的 margin 也按这一系算 ⇒ 宿主
+        // 必须与客户区同系同宽。此前长在 `chat_page` 那台网格的行 0，两个系差了一次侧栏宽
+        // （x +264 DIP）与一次 composer 带高（y −107.5 DIP），卡被弹飞到聊天区中央；遮罩
+        // 也只盖行 0，输入带/侧栏全在 light-dismiss 域外（开着菜单还能点别的控件，再叠
+        // 「权限/工作区两颗没有锚」的旧值串位 = 用户报的「点击选项后下拉菜单乱弹」）。
+        // 入树序：`app-modal` **之前**（模态卡 > 菜单层，对齐主干 `ContentDialog` 压过
+        // `MenuFlyout`），`"body"` **之后**（压过壳内一切非模态层）。
+        // 显隐同口径：reactor 没有 `Visibility` ⇒ 不开就这棵节点根本不生成。
+        if self.selectors.is_some() {
+            cells.push(KeyedView::new(
+                "selectors",
+                self.selector_layer(context, palette),
+            ));
+        }
         if let Some(host) = self.app_modal_host(context, palette) {
             cells.push(KeyedView::new("app-modal", host));
         }
@@ -24627,6 +24800,10 @@ impl Shell {
                                 .grid_column(1)
                                 .min_width(0.0)
                                 .min_height(0.0)
+                                // 载体钮高度显式钉 32（= 外层胶囊 Border 高）：默认模板
+                                // padding（11,5,11,6）资源覆写不生效，不钉高它就按内容
+                                // 17 + padding 11 + border 2 = 30 收缩，TextBox 跟着被压。
+                                .height(size::TOUCH_TARGET)
                                 .horizontal_content_alignment(HorizontalAlignment::Stretch)
                                 .vertical_content_alignment(VerticalAlignment::Stretch)
                                 .resource_overrides(search_input_resources())
@@ -24634,10 +24811,14 @@ impl Shell {
                                     TextBox::new()
                                         .text(self.search.clone())
                                         .placeholder_text(self.catalog.l("搜索会话…"))
-                                        .min_height(size::TOUCH_TARGET)
                                         .background(p.transparent)
                                         .border_thickness(0.0)
-                                        .margin(th([6.0, 0.0, 8.0, 0.0]))
+                                        // 纵向负 margin 抵掉载体钮模板默认 padding 的
+                                        // 5/6（资源覆写对 Setter 档不生效，见
+                                        // [`search_input_resources`] 那段）；配合
+                                        // `TextControlThemePadding` 纵向归零 ⇒ 文字区
+                                        // 拿回整条胶囊高，placeholder 不再被裁成横条。
+                                        .margin(th([6.0, -5.0, 8.0, -6.0]))
                                         .on_text_changed(context.callback(|text: String| {
                                             Msg::Search(text)
                                         }))
@@ -28215,18 +28396,11 @@ impl Shell {
                 self.workspace_dialog_layer(context, p),
             ));
         }
-        // #56 输入区选择器组（`AgentMode*` / `Permission*` / `Model*`）的开层：一张贴在输入带
-        // 左上角的自绘卡 + 一整面透明遮罩（点外面即收，同 `Msg::SelectorClose`）。
-        // 入树序：在 `workspace-dialog` **之后**（同一条 composer 带上的浮层，盖过那两张工作区
-        // 对话框是它该做的事）、`todos-panel` **之前**（面板那颗是应用级模态 `ContentDialog`，
-        // 且它开的时候 reducer 已经先收了选择器 ⇒ 这一格通常根本不在树里，序只是保险）。
-        // 显隐同口径：reactor 没有 `Visibility` ⇒ 不开就这棵节点根本不生成。
-        if self.selectors.is_some() {
-            cells.push(KeyedView::new(
-                "selectors",
-                self.selector_layer(context, p),
-            ));
-        }
+        // （#56 输入区选择器组的那一格已提到根网格——层宿主曾在这一台网格的行 0，
+        // 而 `selector_card_margins` 算的是**窗口客户区**系的锚：x 被叠加一次侧栏宽
+        // （实测 +264 DIP）、y 少算一次 composer 带高（实测 −107.5 DIP），菜单卡因此
+        // 弹不进触发器上方；遮罩也只盖行 0，输入带/侧栏在 light-dismiss 域外。
+        // 挪宿主的取缔注释留在 [`Shell::view`] 那一格，这里只留改道记录。）
         // 工具卡行尾 ⋯ 那张复制菜单：入树序在 `selectors` **之后**（同一条「点开才在」的
         // 瞬时层族，后入者在上）。锚长在聊天流里 ⇒ 点行那一下先被自己的光标命中，不存在
         // 与兄弟层同屏的稳定形态；兄弟开臂不改写的备案见 `Msg::ToolMenuToggle` 那两臂的注释。
@@ -33288,23 +33462,33 @@ impl Shell {
             .content(
                 // 主干 `Content` = `[Auto, *]` 两列 Grid + `Spacing=Space6`（`MX:1189-1198`）
                 // ⇒ 横向 `StackPanel{spacing=Space6}` 等价（同 `agent_mode_trigger` 的理由）。
-                StackPanel::new()
-                    .orientation(Orientation::Horizontal)
-                    .spacing(space::S6)
-                    .vertical_alignment(VerticalAlignment::Center)
-                    .children((
-                        // `MX:1194`：`Glyph="&#xE8B7;"`（= `glyph::FOLDER`，无 x:Name、静态）。
-                        mark_size(glyph::FOLDER, size::GLYPH_BODY),
-                        TextBlock::new()
-                            .text(label)
-                            .font_size(type_ramp::BODY.size)
-                            .text_wrapping(TextWrapping::NoWrap)
+                // 外面那层透明 `Border` = 弹层定位锚（同 [`Shell::agent_mode_trigger`] 那颗
+                // 的注）——**乱弹刀补上**：此前这颗没有锚，开层取到的是上一发的旧锚
+                // （别的芯片上方）或回落位，菜单弹到哪全看上次点过谁（用户报的乱弹主犯之一）。
+                Border::new()
+                    .background(Color::transparent())
+                    .on_pointer_pressed(context.callback(|info: PointerEventInfo| {
+                        Msg::SelectorAnchor(info.window_x - info.x, info.window_y - info.y)
+                    }))
+                    .content(
+                        StackPanel::new()
+                            .orientation(Orientation::Horizontal)
+                            .spacing(space::S6)
                             .vertical_alignment(VerticalAlignment::Center)
-                            // 主干那枚 `x:Name="WorkspaceChipLabel"`（`MX:1195`）⇒ UIA 侧
-                            // 显式挂同名（同 `AgentModeLabel` 的刻法）。
-                            .automation_id("WorkspaceChipLabel"),
-                        mark_size(glyph::DROPDOWN_CHEVRON, size::GLYPH_CAPTION),
-                    )),
+                            .children((
+                                // `MX:1194`：`Glyph="&#xE8B7;"`（= `glyph::FOLDER`，无 x:Name、静态）。
+                                mark_size(glyph::FOLDER, size::GLYPH_BODY),
+                                TextBlock::new()
+                                    .text(label)
+                                    .font_size(type_ramp::BODY.size)
+                                    .text_wrapping(TextWrapping::NoWrap)
+                                    .vertical_alignment(VerticalAlignment::Center)
+                                    // 主干那枚 `x:Name="WorkspaceChipLabel"`（`MX:1195`）⇒ UIA 侧
+                                    // 显式挂同名（同 `AgentModeLabel` 的刻法）。
+                                    .automation_id("WorkspaceChipLabel"),
+                                mark_size(glyph::DROPDOWN_CHEVRON, size::GLYPH_CAPTION),
+                            )),
+                    ),
             )
             .into();
         Some(button.tooltip(tooltip))
@@ -33315,7 +33499,8 @@ impl Shell {
     /// 分隔线 + 「新建工作区…」。表体来源就是侧栏那棵树（主干 `_workspaces` 同一份），
     /// 不另拉 RPC；当前档 = [`Shell::pending_workspace`] 的 id 比对（`MW:5126/5138` 的
     /// `IsChecked` 判据）。抄不动的两件与 `agent_mode_menu` 同款：单选点用 Accent 底、
-    /// `ShowAt(Top)` 贴内容面左下（偏移吃 `pad::COMPOSER_SELECTORS`）。
+    /// `ShowAt(Top)` 的落点走四颗共用的锚制（触发器锚 `Border` 左上角，
+    /// [`selector_card_margins`]；无锚回落才吃 `pad::COMPOSER_SELECTORS`）。
     fn workspace_menu(&self, context: &mut ViewContext<Shell>, p: Palette) -> View {
         let mut cells: Vec<KeyedView> = Vec::new();
         // 「文档目录（默认）」= `PickWorkspace(null)` 那一行（`MW:5123-5130`）。
@@ -33403,7 +33588,9 @@ impl Shell {
             .grid_row(0)
             .horizontal_alignment(HorizontalAlignment::Left)
             .vertical_alignment(VerticalAlignment::Bottom)
-            .margin(th(pad::COMPOSER_SELECTORS))
+            // 落点接四颗共用的锚制（乱弹刀）：此前这颗永远贴左下（`pad::COMPOSER_SELECTORS`
+            // 只是 `selector_card_margins` 的**无锚回落**），点了这颗菜单却弹到角落。
+            .margin(th(selector_card_margins(self.selector_anchor)))
             .background(p.card.clone())
             .border_brush(p.stroke.clone())
             .border_thickness(size::STROKE)
@@ -33451,11 +33638,13 @@ impl Shell {
                 // `*` 吸收余量时才有意义，而这颗的 `TextBlock` 是 `TextTrimming=CharacterEllipsis`
                 // + `NoWrap`，贴合内容）。末位那枚 chevron = 模板内置件的分叉直译（内容承载）。
                 // 外面那层透明 `Border` = 弹层定位锚（同 [`Shell::model_trigger`] 那颗的注）：
-                // 只盖内容盒，几何零变化，记下按下点（[`Msg::SelectorAnchor`]）。
+                // 只盖内容盒，几何零变化。锚 = **这层 Border 的左上角**（`window_* − 元素内
+                // x/y`，窗口客户区 DIP）——与按下落点无关，同一颗芯片按哪里卡都钉在同一处
+                // （按下点方案在真实点击下让卡跟着按点漂，乱弹刀取证 [`Msg::SelectorAnchor`]）。
                 Border::new()
                     .background(Color::transparent())
                     .on_pointer_pressed(context.callback(|info: PointerEventInfo| {
-                        Msg::SelectorAnchor(info.window_x, info.window_y)
+                        Msg::SelectorAnchor(info.window_x - info.x, info.window_y - info.y)
                     }))
                     .content(
                         StackPanel::new()
@@ -33484,8 +33673,11 @@ impl Shell {
         Some(button.tooltip(tooltip))
     }
 
-    /// 那张展开层 = 整格透明遮罩（light-dismiss）+ 贴左下那张卡。入树序与互斥见 `chat_page`
-    /// 里 `"selectors"` 那一格与 `Msg::SelectorToggle` 那臂。
+    /// 那张展开层 = 整面透明遮罩（light-dismiss）+ 贴触发器上沿那张卡。
+    /// 入树序与互斥见 [`Shell::view`] 里 `"selectors"` 那一格与 `Msg::SelectorToggle` 那臂。
+    /// 根节点跨满根网格两行（刻法抄 [`Shell::app_modal_host`]：`.grid_row(0).grid_row_span(2)`）
+    /// ⇒ 遮罩域 = 整窗客户区（顶条/正文/输入带/侧栏/右栏全在内），margin 系与锚系
+    /// （都是窗口客户区 DIP）逐字同源。
     fn selector_layer(&self, context: &mut ViewContext<Shell>, p: Palette) -> View {
         let scrim: View = Border::new()
             .grid_row(0)
@@ -33502,10 +33694,12 @@ impl Shell {
             Some(SelectorKind::Model) => self.model_menu(context, p),
             // #56 工作区选择器：同一张层、同一把单例槽（第 4 张选择器层）。
             Some(SelectorKind::Workspace) => self.workspace_menu(context, p),
-            // `None` 由 `chat_page` 的判据挡在门外，这一支到不了；留着是为了 `match` 穷尽。
+            // `None` 由根网格那一格的判据挡在门外，这一支到不了；留着是为了 `match` 穷尽。
             None => blank(),
         };
         Grid::new()
+            .grid_row(0)
+            .grid_row_span(2)
             .rows([GridLength::STAR])
             .children((scrim, card))
     }
@@ -33517,10 +33711,10 @@ impl Shell {
     /// 没有整行染色。行文案与 UIA `Name` 保持与主干 `Text` 逐字同串，不加「（当前）」那类推论。
     ///
     /// 卡的落点：主干 `ShowAt(anchor, Top)` 把卡片钉在触发器**上沿、水平居中**（实拍：
-    /// 卡中心 = 触发器中心差 ≤ 1.5px、下缘距触发器上沿 5.5 DIP）。分叉读不回元素矩形
-    /// ⇒ 锚 = 触发器面上的真实按下点（两颗触发器内容里的锚 `Border`，
-    /// [`Msg::SelectorAnchor`]），几何全在 [`selector_card_margins`]；卡宽定死为实测量宽
-    /// [`AGENT_MODE_FLYOUT_WIDTH`]（分叉没有 measure 通路，表数据变了会漂，备案）。
+    /// 卡中心 = 触发器中心差 ≤ 1.5px、下缘距触发器上沿 5.5 DIP）。分叉读不回元素宽度
+    /// ⇒ 锚 = 触发器锚 `Border` 的**左上角**（[`Msg::SelectorAnchor`]，与按下落点无关），
+    /// 卡左缘对齐锚左（卡宽自适应最宽行 ≈ 胶囊宽 ⇒ 观感同居中），几何全在
+    /// [`selector_card_margins`]。
     fn agent_mode_menu(&self, context: &mut ViewContext<Shell>, p: Palette) -> View {
         let current = self.pending_agent_preset.as_ref().map(|(id, _)| id.clone());
         let rows = agent_mode_rows(current.as_deref(), &self.agent_presets);
@@ -33550,8 +33744,9 @@ impl Shell {
             .grid_row(0)
             .horizontal_alignment(HorizontalAlignment::Left)
             .vertical_alignment(VerticalAlignment::Bottom)
-            .width(AGENT_MODE_FLYOUT_WIDTH)
-            .margin(th(selector_card_margins(self.selector_anchor, AGENT_MODE_FLYOUT_WIDTH)))
+            // 宽度自适应最宽行（主干 MenuFlyout 同律，用户口径「下拉宽度和选项一致」）；
+            // 此前定死实测量宽，自定义预设名一长行就被裁。
+            .margin(th(selector_card_margins(self.selector_anchor)))
             .background(p.card.clone())
             .border_brush(p.stroke.clone())
             .border_thickness(size::STROKE)
@@ -34004,7 +34199,7 @@ impl Shell {
             "web-search" => self.sub_web_search(context, p),
             "auto-approval" => self.sub_auto_approval(context, p),
             "defaults" => self.sub_defaults(p),
-            "wallpaper-engine" => self.sub_wallpaper_engine(p),
+            "wallpaper-engine" => self.sub_wallpaper_engine(context, p),
             // 泛化兜底二级页（主干 `AddGenericPluginNsCard`）。⚠ 字段**编辑**通道没接：
             // 主干每行走 `Edit(ns, field, …)` + 自动保存（对所有 ns 生效），分叉的自动保存
             // 白名单（`SETTINGS_AUTOSAVE_FIELDS`）只收官方 (ns, field) 对，泛化 ns 改了
@@ -34018,22 +34213,126 @@ impl Shell {
 
     /// WE 二级页（主干 `AddWeWallpaperSubPage`，`MainWindow.Wallpaper.cs:67-123`）：
     /// 卡头 + 副文 + 缩略图网格 + 状态行。
-    /// ⚠ 网格与取数腿**没有铺**：主干那一发是 `GET api/wallpaper/list` 的裸 HTTP
-    /// （`DshWallpaperClient.GetAsync` → `rpc.GetTextAsync`），分叉的内核侧没有这条
-    /// 通道（`kernel.rs::http` 私有、Cargo 面无 HTTP 客户端）⇒ 状态行恒驻主干
-    /// `WallpaperRouteStatus.Missing` 那档文案（`Wallpaper.cs:151`），欠账登记在报告。
-    fn sub_wallpaper_engine(&self, p: Palette) -> Vec<KeyedView> {
+    /// 2026-11-05 起取数腿铺通（壳侧直连，见 [`we`] 模块头与 [`Msg::WeListLoad`]）：
+    /// 主干那一发是插件路由的裸 HTTP（`DshWallpaperClient`），分叉官方内核树没有
+    /// `@baiiii/dsh-wallpaper-local` ⇒ 改读本机工坊目录（`SteamLibraries` 同源探测）。
+    /// 网格 = 两列缩略图卡（主干是 `GridView` 横滚 240 宽 tile；reactor 无虚拟化网格
+    /// ⇒ 纵排两列贴钻取卡宽，tile 同 240×150 + 标题两行的形制），视频项缩略图 =
+    /// 工坊 `preview.*` 直读（主干 `WeWorkspace.PreviewFileFor` 同一条路），没有预览
+    /// 图的项露出底层字形占位。点 tile = [`Msg::WeApply`]。
+    fn sub_wallpaper_engine(&self, context: &mut ViewContext<Shell>, p: Palette) -> Vec<KeyedView> {
+        let mut rows: Vec<KeyedView> = Vec::new();
+        // 两列铺：`chunks(2)` 切行，奇数尾行左对齐（reactor 无 WrapPanel，Grid 固定两列
+        // 是最小等价；主干 GridView 的横滚虚拟化对本仓「工坊几十项」量级不是必需）。
+        for (row_index, pair) in self.we_items.chunks(2).enumerate() {
+            let mut tiles: Vec<KeyedView> = Vec::new();
+            // ⚠ 每颗 tile 必须显式 `grid_column`（WinUI Grid 的子项缺省全落列 0，两颗会叠在
+            // 同一格 —— 实测 0.9.0.5 装机页两张标题重叠就是这个）。
+            for (column, item) in pair.iter().enumerate() {
+                tiles.push(KeyedView::new(
+                    format!("we-tile-{}", item.id),
+                    self.we_tile(item, p, context, column as i32),
+                ));
+            }
+            if pair.len() == 1 {
+                tiles.push(KeyedView::new(format!("we-pad-{row_index}"), blank()));
+            }
+            rows.push(KeyedView::new(
+                format!("we-row-{row_index}"),
+                Grid::new()
+                    .columns([GridLength::Pixel(WE_TILE_WIDTH), GridLength::Pixel(WE_TILE_WIDTH)])
+                    .column_spacing(space::S8)
+                    .horizontal_alignment(HorizontalAlignment::Left)
+                    .keyed_children(tiles),
+            ));
+        }
+        rows.push(self.settings_line(
+            "we-status",
+            &if self.we_status.is_empty() {
+                self.catalog.l("正在读取…")
+            } else {
+                self.we_status.clone()
+            },
+            p,
+        ));
         vec![self.settings_card(
             "wallpaper-engine",
             "Wallpaper Engine",
             "点缩略图即套用；视频项显示工坊预览图，与上面导入的图片/视频二选一。",
-            vec![self.settings_line(
-                "we-status",
-                "未检测到壁纸插件。重启 Blade² 会自动重试安装；离线时这条会一直出现，连上网再试。",
-                p,
-            )],
+            rows,
             p,
         )]
+    }
+
+    /// 一张缩略图 tile（主干 `WeTile` 模板的分叉直译）：240×150 预览图（无图露字形
+    /// E768 占位）+ 标题两行截断；当前背景对应项的标题带「使用中」。整卡一颗钮。
+    fn we_tile(
+        &self,
+        item: &WeItem,
+        p: Palette,
+        context: &mut ViewContext<Shell>,
+        column: i32,
+    ) -> View {
+        let applied = self.we_applied.as_deref() == Some(item.id.as_str());
+        let title = if applied {
+            format!("{} · {}", item.name, self.catalog.l("使用中"))
+        } else {
+            item.name.clone()
+        };
+        // 主干 tile 的图底 Grid：字形垫底（无预览图时露出来）、图盖在其上。
+        // View 不是 Copy 且要吃两处（Grid 底格 + Err 兜底）⇒ 闭包按需各建一棵。
+        let placeholder = || -> View {
+            Border::new()
+                .background(p.surface_alt)
+                // 主干字形 `Opacity=0.55`：reactor View 无 opacity 槽 ⇒ 挂在包它的 Border 上
+                // （同 `SearchPillGlyph` 的 `.opacity(0.72)` 刻法）。
+                .opacity(0.55)
+                .content(mark_size_named(
+                    WE_TILE_GLYPH,
+                    WE_TILE_GLYPH_SIZE,
+                    "WeTileGlyph",
+                ))
+                .into()
+        };
+        let thumb: View = match &item.preview {
+            Some(path) => match Image::new()
+                .width(WE_TILE_WIDTH)
+                .height(WE_TILE_THUMB_HEIGHT)
+                .stretch(Stretch::UniformToFill)
+                .source_file(path)
+            {
+                Ok(image) => image.into(),
+                // 预览图读不动（坏图/被占用）＝ 主干「ThumbSource = null」那档：字形兜底。
+                Err(_) => placeholder(),
+            },
+            None => placeholder(),
+        };
+        Button::new()
+            .min_width(0.0)
+            .grid_column(column)
+            .horizontal_content_alignment(HorizontalAlignment::Left)
+            .on_click(context.message(Msg::WeApply(item.id.clone())))
+            .automation_id(format!("WeTile_{}", item.id))
+            .automation_name(title.clone())
+            .content(
+                StackPanel::new()
+                    .orientation(Orientation::Vertical)
+                    .width(WE_TILE_WIDTH)
+                    .spacing(space::S4)
+                    .children((
+                        Grid::new()
+                            .width(WE_TILE_WIDTH)
+                            .height(WE_TILE_THUMB_HEIGHT)
+                            .children((placeholder(), thumb)),
+                        TextBlock::new()
+                            .text(title)
+                            .font_size(type_ramp::CAPTION.size)
+                            .text_wrapping(TextWrapping::Wrap)
+                            .text_trimming(TextTrimming::CharacterEllipsis)
+                            .horizontal_alignment(HorizontalAlignment::Left),
+                    )),
+            )
+            .into()
     }
 
     /// 泛化兜底二级页（主干 `AddGenericPluginNsCard`，`SettingsExtras.cs:606-663`）：
@@ -52194,8 +52493,8 @@ mod agent_mode_selector_tests {
             "主干实拍没有整行强调底 ⇒ Accent 脸不许回潮"
         );
         assert!(
-            menu.contains("selector_card_margins(self.selector_anchor, AGENT_MODE_FLYOUT_WIDTH)"),
-            "卡落点 = 触发器按下锚（Placement=Top 的分叉等价），不是贴左下"
+            menu.contains("selector_card_margins(self.selector_anchor)"),
+            "卡落点 = 触发器锚 Border 左上（Placement=Top 的分叉等价），不是贴左下"
         );
         // 两条文案通路：`builtin` 旗分岔，且只有一处过表。
         assert!(menu.contains("if row.builtin"));
@@ -52218,22 +52517,30 @@ mod agent_mode_selector_tests {
     #[test]
     fn the_layer_enters_the_tree_only_when_open_and_in_the_mainline_z_order() {
         let source = include_str!("main.rs");
+        // 乱弹刀（2026-11-05）换锚：层宿主从 `chat_page` 行 0 提到**根网格**（`fn view(` 那台，
+        // `body` 之后、`app-modal` 之前）——锚与 margin 都是窗口客户区系，宿主必须同系同宽；
+        // 遮罩域也因此扩成整窗（light-dismiss 对齐主干系统 `MenuFlyout`）。判据一枚不减：
+        // 显隐闸/槽位枚数跟着搬进 `root` 窗，聊天页那台网格里不再有它。
         let page = window(source, "fn chat_page(", "fn command_palette(");
-        assert!(page.contains("if self.selectors.is_some()"), "没有显隐闸 ⇒ 关着也画一层遮罩");
-        assert!(page.contains("self.selector_layer(context, p)"));
-        assert_eq!(page.matches("\"selectors\"").count(), 1, "槽位一枚，不多不少");
         assert!(
-            at(page, "\"workspace-dialog\"") < at(page, "\"selectors\""),
-            "选择器层压不过工作区对话框"
+            !page.contains("\"selectors\""),
+            "选择器层又长回聊天页 ⇒ margin 又会叠加侧栏宽，卡弹飞（乱弹刀取缔位）"
         );
         let root = window(source, "self.drag_region()", "Grid::new()");
+        assert!(root.contains("if self.selectors.is_some()"), "没有显隐闸 ⇒ 关着也画一层遮罩");
+        assert!(root.contains("self.selector_layer(context, palette)"));
+        assert_eq!(root.matches("\"selectors\"").count(), 1, "槽位一枚，不多不少");
+        assert!(
+            at(root, "\"body\"") < at(root, "\"selectors\""),
+            "选择器层不在正文之后 ⇒ 压不过壳内非模态层"
+        );
         assert_eq!(
             root.matches(concat!("\"app-", "modal\"")).count(),
             1,
             "整窗模态宿主只许挂一发"
         );
         assert!(
-            at(root, "\"body\"") < at(root, concat!("\"app-", "modal\"")),
+            at(root, "\"selectors\"") < at(root, concat!("\"app-", "modal\"")),
             "模态宿主不再最后入根网格 ⇒ 它压不住 selectors 那一层"
         );
         // 三张模态卡的 keyed 槽今天一枚都不在聊天页那台网格里（全在整窗宿主里）。
@@ -52252,6 +52559,11 @@ mod agent_mode_selector_tests {
         assert!(
             layer.contains("background(p.transparent.clone())"),
             "遮罩必须是一整面透明命中层，否则挡不住底下的正文"
+        );
+        // 层根跨满根网格两行（= 整窗客户区）：margin 系与锚系同源的那一格保险。
+        assert!(
+            layer.contains("grid_row_span(2)"),
+            "层根不跨两行 ⇒ 遮罩盖不到顶条/正文之外，卡 margin 的基准也退回局部格"
         );
     }
 
@@ -56612,8 +56924,8 @@ mod mw6_model_plan_tests {
         assert!(menu.contains("模型"), "两枚区头文案都过表");
         assert!(menu.contains("推理等级"));
         assert!(
-            menu.contains("selector_card_margins(self.selector_anchor, MODEL_FLYOUT_WIDTH)"),
-            "卡落点 = 触发器按下锚（Placement=Top 的分叉等价），不是贴左下"
+            menu.contains("selector_card_margins(self.selector_anchor)"),
+            "卡落点 = 触发器锚 Border 左上（Placement=Top 的分叉等价），不是贴左下"
         );
         for forbidden in [".call(", "spawn_background", "execute_command", "settings/mutate"] {
             assert!(!menu.contains(forbidden), "层本体里不该有 {forbidden}：它只发 Msg");
@@ -56639,10 +56951,11 @@ mod mw6_model_plan_tests {
         assert_eq!(MENU_RADIO_DOT, 5.0, "实拍勾点 10px@200%");
         assert_eq!(MENU_RADIO_COLUMN, 14.5, "CheckGlyph FontIcon@12 的字形步进");
         assert_eq!(MENU_RADIO_GAP, 16.0, "CheckGlyph.Margin 右距");
-        assert_eq!(AGENT_MODE_FLYOUT_WIDTH, 115.5, "实拍卡宽 231px@200%");
-        assert_eq!(MODEL_FLYOUT_WIDTH, 575.5, "实拍卡宽 1151px@200%");
-        assert_eq!(FLYOUT_GAP_ABOVE_TRIGGER, 5.5, "实拍卡下缘到触发器上沿 11px@200%");
-        assert_eq!(FLYOUT_TRIGGER_HALF_HEIGHT, 16.0, "DefaultButtonStyle MinHeight 32 的一半");
+        assert_eq!(
+            FLYOUT_GAP_ABOVE_TRIGGER,
+            5.5,
+            "实拍卡下缘到锚 Border 顶（content 盒顶）11px@200%"
+        );
     }
 
     /// **L-M3c**：模型行说明的合成规则（主干 `MC:24-52`）：`-flash`/`-pro` 后缀优先于

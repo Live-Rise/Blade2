@@ -8,8 +8,8 @@
     2. `qa5-drive` 没有真键盘 / 真指针 / 元素值回读 / 局部裁图 四条腿，而本轮
        #73（`@` 浮层要 typed 输入）、权限预设（要真点真切）、逐态截图（要真 hover）
        全依赖它们。它的 `key:` 走 PostMessage，按成规**不算** hover、也不算真打字。
-    3. 默认 `-Exe` 钉在热验收位 `target-mr1`（`qa5-drive:27` 的默认值是 09-26 的陈旧
-       `rust/target/debug`，用它跑 = 六项全假 FAIL）。
+    3. 默认 `-Exe` 钉在主 target 槽位（旧 `target-mr1` 已随 2026-11-05 清理移除，默认值随迁
+       `rust/target/debug`）。
     4. 默认 `-OutDir` 钉在本轮截图目录 `rust/tests/gui-shots/2026-09-28`（不落 rust/tmp、
        不落 target*，两者都被 .gitignore 吞）。
 
@@ -47,7 +47,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Exe = 'E:\Syncthing\DshWinUI\rust\target-mr1\debug\blade2-rs.exe',
+    [string]$Exe = 'E:\Syncthing\DshWinUI\rust\target\debug\blade2-rs.exe',
     [string]$Steps = 'tree',
     [string]$LogPrefix = 'E:\Syncthing\DshWinUI\rust\tmp\dr4-run',
     [string]$OutDir = 'E:\Syncthing\DshWinUI\rust\tests\gui-shots\2026-09-28',
