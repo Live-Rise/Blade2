@@ -3027,6 +3027,10 @@ public sealed partial class MainWindow : Window
         var url = await _kernel.TryAttachResidentAsync(dshHome, ct);
         if (url is not null)
         {
+            // 常驻内核的插件早已装载完，此刻记「默认插件就绪」如实；后台只做幂等修补，
+            // 在 Task.Run 之后补记会让历史行乱序（末段都落地了才补第一段）。
+            // 少了这行，attach 路最多 5/6 段，「关于」页内核加载行永远停在 83%。
+            BootMilestone(L("默认插件就绪"));
             // 复用路径插件引导挪后台：常驻内核早已装载完插件，EnsureAsync（幂等）此刻只可能
             // 是修补（缺包重装/挂载条目），不阻塞首屏——boot 计时里省掉这段串行 ~100ms。
             _ = Task.Run(async () =>
