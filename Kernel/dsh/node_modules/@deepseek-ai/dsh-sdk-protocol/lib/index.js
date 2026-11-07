@@ -27,13 +27,16 @@ var JsonRpcResponseError = class extends Error {
 /**
 * Line-delimited endpoint over caller-owned streams. {@link start} attaches
 * listeners; {@link close} detaches them and rejects pending requests without
-* destroying the streams. Missing request handlers return `-32601`; handler
+* destroying the streams. Closure, input end, and input errors permanently reject
+* later outbound requests with the first failure; start does not reset that failure.
+* Missing request handlers return `-32601`; handler
 * failures return `-32603`. Notifications without a handler are dropped.
 */
 var JsonRpcLineTransport = class {
 	input;
 	output;
 	buffer = "";
+	failure;
 	decoder = new StringDecoder("utf8");
 	started = false;
 	requestHandler;
@@ -52,7 +55,8 @@ var JsonRpcLineTransport = class {
 		this.input.on("end", this.onInputEnd);
 	}
 	/**
-	* Detach listeners and reject pending requests. Safe before {@link start}.
+	* Detach listeners and reject pending and future outbound requests. Safe before
+	* {@link start}; starting again does not reset the request failure.
 	*/
 	close() {
 		this.input.off("data", this.onData);
@@ -86,6 +90,7 @@ var JsonRpcLineTransport = class {
 	* @returns the result; rejects per {@link JsonRpcTransportPeer.request}.
 	*/
 	request(method, params, signal) {
+		if (this.failure !== void 0) return Promise.reject(this.failure);
 		const id = `req_${randomUUID().replaceAll("-", "")}`;
 		const message = {
 			jsonrpc: "2.0",
@@ -235,6 +240,7 @@ var JsonRpcLineTransport = class {
 		this.output.write(`${JSON.stringify(message)}\n`);
 	}
 	failPending(error) {
+		this.failure ??= error;
 		const pending = [...this.pending.values()];
 		this.pending.clear();
 		for (const waiter of pending) waiter.reject(error);

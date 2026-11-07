@@ -1353,5 +1353,14 @@
  "设置二级页": "Subpagina van instellingen",
  "关闭图片预览": "Afbeeldingvoorbeeld sluiten",
  "已更新": "Bijgewerkt",
- "附加内容块": "Toegevoegd inhoudsblok"
+ "附加内容块": "Toegevoegd inhoudsblok",
+ "实验性功能": "Experimentele functies",
+ "实验性功能由内核可选 bundle（插件层）提供，可在此逐项开关。开关增删内核 profile 的 bundle 清单，由内核热重载即时生效；关闭的 bundle 不参与加载，重新开启即恢复。": "Experimentele functies worden door de kernel geleverd als optionele bundles (plug-inlaag) en kunnen hier afzonderlijk in- of uitgeschakeld worden. De schakelaar voegt bundles toe aan of verwijdert ze uit de kernelprofiel-bundellijst; de kernel herlaadt de wijziging direct. Een uitgeschakeld bundle wordt helemaal niet geladen; opnieuw inschakelen herstelt het.",
+ "跨会话搜索": "Zoeken over sessies heen",
+ "开启后每个 Agent 获得一组只读检索工具，可搜索并引用当前工作区更早的会话；内容索引在首次搜索时打开、全 Agent 共享，侧栏搜索行为不变。": "Wanneer ingeschakeld, krijgt elke agent een set alleen-lezen zoektools om eerdere sessies in de huidige werkruimte te vinden en te citeren. De inhoudsindex wordt geopend bij de eerste zoekopdracht en wordt gedeeld door alle agents; het zoekgedrag van de zijbalk verandert niet.",
+ "多代理（Agent Teams）": "Agentteams (multi-agent)",
+ "开启后 Agent 可把任务委派给团队成员协作完成：成员名册、共享任务板与队友会话在会话内可见。注意：多代理启用期间普通 Subagent 委派按内核设计一并停用。": "Wanneer ingeschakeld, kan de agent taken delegeren aan teamleden en met hen samenwerken: de ledenlijst, het gedeelde takenbord en de sessies van teamleden zijn zichtbaar in de sessie. Let op: terwijl agentteams zijn ingeschakeld, wordt gewone Subagent-delegatie door het ontwerp van de kernel ook uitgeschakeld.",
+ "启用跨会话搜索": "Zoeken over sessies heen inschakelen",
+ "启用多代理": "Agentteams inschakelen",
+ "回到底部": "Naar onderen scrollen"
 }

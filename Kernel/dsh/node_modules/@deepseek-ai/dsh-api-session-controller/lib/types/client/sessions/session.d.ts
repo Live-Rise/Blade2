@@ -1,5 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis';
-import type { AttachmentIdType, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
 import type { SubagentAddress } from '@deepseek-ai/dsh-subagent/client';
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand';
 import { SessionSeq, type SessionId } from '@deepseek-ai/dsh-session/types';
@@ -64,8 +64,8 @@ export declare class Session implements SessionFace {
     private parentAvailable;
     /**
      * Sticky send marker, private input of the composerPhase derivation: set
-     * synchronously before prompt()'s first await, never reset — the blank →
-     * engaging edge of the phase machine (see ComposerPhase).
+     * when the Host accepts a prompt, never reset — the blank → engaging edge of
+     * the phase machine (see ComposerPhase).
      */
     private promptAttempted;
     /** A first accepted prompt stays in the engaging phase until its turn is observable. */
@@ -75,8 +75,10 @@ export declare class Session implements SessionFace {
     private removed;
     private promptError;
     private lastAgentError;
-    /** Local submission echoes, insertion-ordered (see SessionSnapshot.pendingSubmissions). */
+    /** Local submission echoes, insertion-ordered, including those the Host has not accepted yet. */
     private pendingSubmissions;
+    /** The accepted echoes, published as SessionSnapshot.pendingSubmissions; rebuilt when one is accepted or removed. */
+    private acceptedSubmissions;
     /** Per-echo settlement state; `retiring` latches the first observation so a
      *  Inbox projection and its durable event cannot both retire one echo. */
     private readonly submissionSettlements;
@@ -126,15 +128,19 @@ export declare class Session implements SessionFace {
     /** Release the bound scope at prune time (a later rebind accompanies a freshly minted scope). */
     unbindScope(): void;
     /**
-     * Register one local submission echo (see the ISession declaration).
-     * Synchronous through markDirty: the echo is in the very next snapshot, so
-     * the conversation can paint it before the caller starts serializing.
+     * Register one local submission echo (see the ISession declaration). The
+     * echo reconciles against Host events from now on, but it enters the
+     * snapshot only once the prompt receipt or an Inbox row carrying its
+     * request id shows that the Host accepted it.
      * @param input - echo content and the optional settlement callback.
      * @returns the minted identity for {@link prompt} plus the pre-prompt abandon path.
      */
     beginSubmission(input: BeginSubmissionInput): SubmissionHandle;
     /**
-     * Send (queue/steer passed through 1:1); failures land in the snapshot's promptError.
+     * Send (queue/steer passed through 1:1); failures land in the snapshot's
+     * promptError. The Host can hold the prompt at its admission stage, so the
+     * call can stay open; the echo appears and the blank → engaging edge flips
+     * only once the Host accepts the prompt.
      * @param content - text, browser-owned temporary image uploads, and staged-file receipts.
      * @param mode - queue appends after the current turn; steer interrupts it.
      * @param signal - optional caller cancellation for the complete admission round-trip.
@@ -145,11 +151,20 @@ export declare class Session implements SessionFace {
         accepted: true;
     }>>;
     /**
-     * Resolve one image referenced by this session into browser-consumable bytes.
-     * @param attachmentId - opaque id found in the folded session log.
-     * @returns the authenticated reference and decoded bytes.
+     * Apply the Host's acceptance of one prompt: publish its echo, move a blank
+     * Session to engaging, and tell the submitter. The prompt receipt and an
+     * Inbox row carrying the prompt's request id both prove acceptance.
+     * Whichever arrives first publishes the echo; a later proof for an echo
+     * still pending changes nothing.
+     * @param requestId - identity from {@link beginSubmission}; absent for a prompt sent without an echo.
      */
-    readAttachment(attachmentId: AttachmentIdType): Promise<RemoteResult<{
+    private acceptPrompt;
+    /**
+     * Resolve one stored image into browser-consumable bytes using this Session's gateway permission scope.
+     * @param attachment - complete image reference from the folded session log.
+     * @returns the supplied reference after storage verification, and decoded bytes.
+     */
+    readAttachment(attachment: ImageAttachmentRef): Promise<RemoteResult<{
         attachment: ImageAttachmentRef;
         data: Uint8Array;
     }>>;
@@ -277,6 +292,7 @@ export declare class Session implements SessionFace {
     private scheduleObservedRetirement;
     /** Remove one unsettled echo immediately (prompt rejection, abort, or disposal). */
     private retireFailedSubmission;
+    private refreshAcceptedSubmissions;
     /** Single removal point: drop the echo, publish, then notify the owner. */
     private finishSubmission;
     /** Publish a terminal background failure only while this stream still owns the Session. */

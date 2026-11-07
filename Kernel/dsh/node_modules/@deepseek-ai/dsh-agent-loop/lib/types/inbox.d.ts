@@ -4,7 +4,6 @@
  * @module @deepseek-ai/dsh-agent-loop/inbox
  */
 import type { MessageId } from '@deepseek-ai/dsh-llm';
-import type SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection';
 import type { Session, UserMessage } from '@deepseek-ai/dsh-session';
 import type { AgentEventDispatch, Inbox as InboxContract, InboxState, InboxTarget, InboxWireState } from '@deepseek-ai/dsh-agent';
 import { z } from 'zod';
@@ -31,15 +30,15 @@ export declare const inboxProjectionDefinition: {
 /**
  * Driver-owned durable Inbox implementation used by ReactLoopAgent and focused
  * provider tests.
- * @param projections - registry with the standard Inbox projection registered by AgentLoop.
+ * @param readState - reader for the live Inbox projection state.
  * @param session - session whose durable events store pending input.
  * @param dispatch - agent-scoped notifications for Inbox lifecycle events.
  */
 export declare class ReactLoopInbox implements InboxContract {
-    private readonly projections;
+    private readonly readState;
     private readonly session;
     private readonly dispatch;
-    constructor(projections: SessionProjectionRegistry, session: Session, dispatch: AgentEventDispatch);
+    constructor(readState: () => InboxState, session: Session, dispatch: AgentEventDispatch);
     /** Prompts awaiting individual turns. */
     get nextTurn(): readonly UserMessage[];
     /** Input awaiting the next step boundary. */
@@ -91,8 +90,6 @@ export declare class ReactLoopInbox implements InboxContract {
     splice(target: InboxTarget, start: number, deleteCount: number, inserted: UserMessage[]): UserMessage[];
     /** Locate one pending identity across both owned lists. */
     private locate;
-    /** Read the current durable projection state. */
-    private current;
     /** Commit one normalized mutation and publish its live events. */
     private mutate;
 }

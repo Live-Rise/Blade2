@@ -1353,5 +1353,14 @@
  "设置二级页": "Podstránka nastavení",
  "关闭图片预览": "Zavřít náhled obrázku",
  "已更新": "Aktualizováno",
- "附加内容块": "Připojený blok obsahu"
+ "附加内容块": "Připojený blok obsahu",
+ "实验性功能": "Experimentální funkce",
+ "实验性功能由内核可选 bundle（插件层）提供，可在此逐项开关。开关增删内核 profile 的 bundle 清单，由内核热重载即时生效；关闭的 bundle 不参与加载，重新开启即恢复。": "Experimentální funkce poskytuje jádro prostřednictvím volitelných bundle (vrstva doplňků), zde je lze zapínat a vypínat jednotlivě. Přepínač přidá nebo odebere bundle ze seznamu v profilu jádra; jádro změnu načte za chodu. Vypnutý bundle se vůbec nenačte a opětovné zapnutí ho obnoví.",
+ "跨会话搜索": "Hledání napříč sezeními",
+ "开启后每个 Agent 获得一组只读检索工具，可搜索并引用当前工作区更早的会话；内容索引在首次搜索时打开、全 Agent 共享，侧栏搜索行为不变。": "Po zapnutí dostane každý Agent sadu vyhledávacích nástrojů jen pro čtení, kterými může hledat a citovat dřívější sezení v aktuálním pracovním prostoru. Index obsahu se otevře při prvním hledání a je sdílený všemi Agenty; chování hledání v postranním panelu se nemění.",
+ "多代理（Agent Teams）": "Agent Teams (režim více agentů)",
+ "开启后 Agent 可把任务委派给团队成员协作完成：成员名册、共享任务板与队友会话在会话内可见。注意：多代理启用期间普通 Subagent 委派按内核设计一并停用。": "Po zapnutí může Agent delegovat úkoly na členy týmu a spolupracovat s nimi: seznam členů, sdílená nástěnka úkolů a sezení spoluhráčů jsou viditelné v chatu. Poznámka: dokud je Agent Teams povoleno, běžné delegování na Subagent je podle záměru jádra vypnuto.",
+ "启用跨会话搜索": "Povolit hledání napříč sezeními",
+ "启用多代理": "Povolit Agent Teams",
+ "回到底部": "Přejít na konec"
 }

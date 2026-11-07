@@ -232,17 +232,17 @@ async function runCli(options = {}) {
 			break;
 		}
 		case "plugin": {
-			const { runPlugin } = await import("./plugin-BiveYA7h.js");
+			const { runPlugin } = await import("./plugin-DscIHF4k.js");
 			process.exit(await runPlugin(invocation.profile, invocation.args, options.packageManager));
 			break;
 		}
 		case "dump-config": {
-			const { runDumpConfig } = await import("./dump-config-CxNkSYcK.js");
+			const { runDumpConfig } = await import("./dump-config-DuXZcU0e.js");
 			runDumpConfig(invocation.profile, invocation.defaultOnly, invocation.patches, invocation.fromDefaultProfile);
 			break;
 		}
 		case "dump-config-schema": {
-			const { runDumpConfigSchema } = await import("./dump-config-schema-D_PxIzpe.js");
+			const { runDumpConfigSchema } = await import("./dump-config-schema-r4V15-lg.js");
 			await runDumpConfigSchema(invocation.profile, invocation.patches, invocation.fromDefaultProfile);
 			break;
 		}

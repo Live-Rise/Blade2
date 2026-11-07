@@ -11,7 +11,33 @@
                 <ResourceDictionary Source="ms-appx:///Theme/Tokens.xaml" />
                 <ResourceDictionary Source="ms-appx:///Theme/Typography.xaml" />
                 <ResourceDictionary Source="ms-appx:///Theme/Styles.xaml" />
+                <!-- 顶条搜索的内层 TextBox 样式：圆形清除钮（✕ 24×24 正圆，
+                     对齐 Win11 设置搜索；自包含无 BasedOn，理由见文件头注） -->
+                <ResourceDictionary Source="ms-appx:///Theme/SearchSuggest.xaml" />
             </ResourceDictionary.MergedDictionaries>
+            <!-- 顶条搜索的建议下拉「贴合化」：默认模板的 SuggestionsContainer 用
+                 AutoSuggestListMargin(0,2,0,2) 造出与输入框之间的间隙、
+                 AutoSuggestListBorderThemeThickness(1) 画出卡片边——观感是一张分离的
+                 圆角悬浮卡（用户口径：要对齐 Win11 设置那种贴住输入框的原生面板）。
+                 只覆盖这两枚 AutoSuggestBox 专用的 Thickness（不新增任何资源键，
+                 不 BasedOn 默认样式——本壳的 XamlControlsResources 不给合并字典的
+                 解析期 StaticResource 暴露 Default*Style，实测 XamlParse 崩）；
+                 上角直角由默认模板自带的 AutoSuggestBoxHelper.KeepInteriorCornersSquare
+                 完成，下角保持 OverlayCornerRadius(8)。逐主题覆盖。 -->
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Default">
+                    <Thickness x:Key="AutoSuggestListMargin">0,0,0,0</Thickness>
+                    <Thickness x:Key="AutoSuggestListBorderThemeThickness">0</Thickness>
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Light">
+                    <Thickness x:Key="AutoSuggestListMargin">0,0,0,0</Thickness>
+                    <Thickness x:Key="AutoSuggestListBorderThemeThickness">0</Thickness>
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="HighContrast">
+                    <Thickness x:Key="AutoSuggestListMargin">0,0,0,0</Thickness>
+                    <Thickness x:Key="AutoSuggestListBorderThemeThickness">0</Thickness>
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

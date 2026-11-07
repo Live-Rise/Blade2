@@ -5,7 +5,7 @@ import type {
   TypertRemoteInfo,
   TypertRemoteMethod,
 } from '@deepseek-ai/dsh-typert-protocol'
-import type { ModelCatalog, SessionAttachmentRequest, SessionAttachmentValue, SessionCancelRequest, SessionCancelValue, SessionControlFrame, SessionCreateRequest, SessionCreateValue, SessionFollowFrame, SessionFollowRequest, SessionForkRequest, SessionForkValue, SessionListRequest, SessionListValue, SessionOpenWorkspacePathRequest, SessionOpenWorkspacePathValue, SessionPage, SessionPageRequest, SessionProjectionsRequest, SessionProjectionsValue, SessionPromptRequest, SessionPromptValue, SessionRenameRequest, SessionRenameValue, SessionSearchRequest, SessionSearchValue, SessionSelectModelRequest, SessionSelectModelValue, SessionUpdateQueueRequest, SessionUpdateQueueValue, SessionWorkspacePathApplication, SkillListRequest, SkillListValue } from '@deepseek-ai/dsh-api-session-controller/types'
+import type { ModelCatalog, SessionAttachmentRequest, SessionAttachmentValue, SessionCancelRequest, SessionCancelValue, SessionControlFrame, SessionCreateRequest, SessionCreateValue, SessionEventFrame, SessionEventsPage, SessionFollowFrame, SessionFollowRequest, SessionForkRequest, SessionForkValue, SessionListRequest, SessionListValue, SessionObserveEventRequest, SessionOpenWorkspacePathRequest, SessionOpenWorkspacePathValue, SessionPageRequest, SessionProjectionFrame, SessionProjectionsRequest, SessionProjectionsValue, SessionPromptRequest, SessionPromptValue, SessionRenameRequest, SessionRenameValue, SessionSearchRequest, SessionSearchValue, SessionSelectModelRequest, SessionSelectModelValue, SessionState, SessionStateRequest, SessionUpdateQueueRequest, SessionUpdateQueueValue, SessionWaitRequest, SessionWaitValue, SessionWorkspacePathApplication, SkillListRequest, SkillListValue } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { FileReferenceCandidate } from '@deepseek-ai/dsh-file-reference/types'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 
@@ -19,19 +19,25 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     canOpenWorkspacePath: () => Promise<RemoteResult<boolean>>
     control: (signal?: AbortSignal) => RemoteStreamHandle<SessionControlFrame, never>
     create: (request: SessionCreateRequest) => Promise<RemoteResult<SessionCreateValue>>
+    events: (request: SessionPageRequest, signal?: AbortSignal) => Promise<RemoteResult<SessionEventsPage>>
     follow: (request: SessionFollowRequest, signal?: AbortSignal) => RemoteStreamHandle<SessionFollowFrame, never>
     fork: (request: SessionForkRequest) => Promise<RemoteResult<SessionForkValue>>
     initializeDefaultModel: () => Promise<RemoteResult<void>>
     list: (_request: SessionListRequest, signal?: AbortSignal) => Promise<RemoteResult<SessionListValue>>
     modelCatalog: () => Promise<RemoteResult<ModelCatalog>>
+    observeEvent: (request: SessionObserveEventRequest, signal?: AbortSignal) => RemoteStreamHandle<SessionEventFrame, never>
+    observeProjections: (request: SessionProjectionsRequest, signal?: AbortSignal) => RemoteStreamHandle<SessionProjectionFrame, never>
+    observeState: (request: SessionStateRequest, signal?: AbortSignal) => RemoteStreamHandle<SessionState, never>
     openWorkspacePath: (request: SessionOpenWorkspacePathRequest, signal?: AbortSignal) => Promise<RemoteResult<SessionOpenWorkspacePathValue>>
-    page: (request: SessionPageRequest, signal?: AbortSignal) => Promise<RemoteResult<SessionPage>>
+    page: (request: SessionPageRequest, signal?: AbortSignal) => Promise<RemoteResult<SessionEventsPage>>
     projections: (request: SessionProjectionsRequest, signal?: AbortSignal) => Promise<RemoteResult<SessionProjectionsValue>>
     prompt: (request: SessionPromptRequest, signal?: AbortSignal) => Promise<RemoteResult<SessionPromptValue>>
     rename: (request: SessionRenameRequest) => Promise<RemoteResult<SessionRenameValue>>
     search: (request: SessionSearchRequest, signal?: AbortSignal) => Promise<RemoteResult<SessionSearchValue>>
     selectModel: (request: SessionSelectModelRequest) => Promise<RemoteResult<SessionSelectModelValue>>
+    state: (request: SessionStateRequest, signal?: AbortSignal) => Promise<RemoteResult<SessionState>>
     updateQueue: (request: SessionUpdateQueueRequest) => Promise<RemoteResult<SessionUpdateQueueValue>>
+    wait: (request: SessionWaitRequest, signal?: AbortSignal) => Promise<RemoteResult<SessionWaitValue>>
     workspacePathApplications: (request: { readonly path: string; }, signal?: AbortSignal) => Promise<RemoteResult<readonly SessionWorkspacePathApplication[]>>
   }
   interface TypertRemoteNamespace$736b696c6c73 {
@@ -44,19 +50,25 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'session/canOpenWorkspacePath': () => Promise<RemoteResult<boolean>>
     'session/control': (signal?: AbortSignal) => RemoteStreamHandle<SessionControlFrame, never>
     'session/create': (request: SessionCreateRequest) => Promise<RemoteResult<SessionCreateValue>>
+    'session/events': (request: SessionPageRequest, signal?: AbortSignal) => Promise<RemoteResult<SessionEventsPage>>
     'session/follow': (request: SessionFollowRequest, signal?: AbortSignal) => RemoteStreamHandle<SessionFollowFrame, never>
     'session/fork': (request: SessionForkRequest) => Promise<RemoteResult<SessionForkValue>>
     'session/initializeDefaultModel': () => Promise<RemoteResult<void>>
     'session/list': (_request: SessionListRequest, signal?: AbortSignal) => Promise<RemoteResult<SessionListValue>>
     'session/modelCatalog': () => Promise<RemoteResult<ModelCatalog>>
+    'session/observeEvent': (request: SessionObserveEventRequest, signal?: AbortSignal) => RemoteStreamHandle<SessionEventFrame, never>
+    'session/observeProjections': (request: SessionProjectionsRequest, signal?: AbortSignal) => RemoteStreamHandle<SessionProjectionFrame, never>
+    'session/observeState': (request: SessionStateRequest, signal?: AbortSignal) => RemoteStreamHandle<SessionState, never>
     'session/openWorkspacePath': (request: SessionOpenWorkspacePathRequest, signal?: AbortSignal) => Promise<RemoteResult<SessionOpenWorkspacePathValue>>
-    'session/page': (request: SessionPageRequest, signal?: AbortSignal) => Promise<RemoteResult<SessionPage>>
+    'session/page': (request: SessionPageRequest, signal?: AbortSignal) => Promise<RemoteResult<SessionEventsPage>>
     'session/projections': (request: SessionProjectionsRequest, signal?: AbortSignal) => Promise<RemoteResult<SessionProjectionsValue>>
     'session/prompt': (request: SessionPromptRequest, signal?: AbortSignal) => Promise<RemoteResult<SessionPromptValue>>
     'session/rename': (request: SessionRenameRequest) => Promise<RemoteResult<SessionRenameValue>>
     'session/search': (request: SessionSearchRequest, signal?: AbortSignal) => Promise<RemoteResult<SessionSearchValue>>
     'session/selectModel': (request: SessionSelectModelRequest) => Promise<RemoteResult<SessionSelectModelValue>>
+    'session/state': (request: SessionStateRequest, signal?: AbortSignal) => Promise<RemoteResult<SessionState>>
     'session/updateQueue': (request: SessionUpdateQueueRequest) => Promise<RemoteResult<SessionUpdateQueueValue>>
+    'session/wait': (request: SessionWaitRequest, signal?: AbortSignal) => Promise<RemoteResult<SessionWaitValue>>
     'session/workspacePathApplications': (request: { readonly path: string; }, signal?: AbortSignal) => Promise<RemoteResult<readonly SessionWorkspacePathApplication[]>>
     'skills/list': (request: SkillListRequest, signal?: AbortSignal) => Promise<RemoteResult<SkillListValue>>
   }
@@ -77,19 +89,25 @@ export declare const TYPERT_REMOTE: TypertRemoteInfo<{
   readonly 'session/canOpenWorkspacePath': TypertRemoteMethod<{  }, boolean>
   readonly 'session/control': TypertRemoteMethod<{  }, SessionControlFrame, 'stream'>
   readonly 'session/create': TypertRemoteMethod<{ readonly 'request': SessionCreateRequest }, SessionCreateValue>
+  readonly 'session/events': TypertRemoteMethod<{ readonly 'request': SessionPageRequest }, SessionEventsPage>
   readonly 'session/follow': TypertRemoteMethod<{ readonly 'request': SessionFollowRequest }, SessionFollowFrame, 'stream'>
   readonly 'session/fork': TypertRemoteMethod<{ readonly 'request': SessionForkRequest }, SessionForkValue>
   readonly 'session/initializeDefaultModel': TypertRemoteMethod<{  }, void>
   readonly 'session/list': TypertRemoteMethod<{ readonly '_request': SessionListRequest }, SessionListValue>
   readonly 'session/modelCatalog': TypertRemoteMethod<{  }, ModelCatalog>
+  readonly 'session/observeEvent': TypertRemoteMethod<{ readonly 'request': SessionObserveEventRequest }, SessionEventFrame, 'stream'>
+  readonly 'session/observeProjections': TypertRemoteMethod<{ readonly 'request': SessionProjectionsRequest }, SessionProjectionFrame, 'stream'>
+  readonly 'session/observeState': TypertRemoteMethod<{ readonly 'request': SessionStateRequest }, SessionState, 'stream'>
   readonly 'session/openWorkspacePath': TypertRemoteMethod<{ readonly 'request': SessionOpenWorkspacePathRequest }, SessionOpenWorkspacePathValue>
-  readonly 'session/page': TypertRemoteMethod<{ readonly 'request': SessionPageRequest }, SessionPage>
+  readonly 'session/page': TypertRemoteMethod<{ readonly 'request': SessionPageRequest }, SessionEventsPage>
   readonly 'session/projections': TypertRemoteMethod<{ readonly 'request': SessionProjectionsRequest }, SessionProjectionsValue>
   readonly 'session/prompt': TypertRemoteMethod<{ readonly 'request': SessionPromptRequest }, SessionPromptValue>
   readonly 'session/rename': TypertRemoteMethod<{ readonly 'request': SessionRenameRequest }, SessionRenameValue>
   readonly 'session/search': TypertRemoteMethod<{ readonly 'request': SessionSearchRequest }, SessionSearchValue>
   readonly 'session/selectModel': TypertRemoteMethod<{ readonly 'request': SessionSelectModelRequest }, SessionSelectModelValue>
+  readonly 'session/state': TypertRemoteMethod<{ readonly 'request': SessionStateRequest }, SessionState>
   readonly 'session/updateQueue': TypertRemoteMethod<{ readonly 'request': SessionUpdateQueueRequest }, SessionUpdateQueueValue>
+  readonly 'session/wait': TypertRemoteMethod<{ readonly 'request': SessionWaitRequest }, SessionWaitValue>
   readonly 'session/workspacePathApplications': TypertRemoteMethod<{ readonly 'request': { readonly path: string; } }, readonly SessionWorkspacePathApplication[]>
   readonly 'skills/list': TypertRemoteMethod<{ readonly 'request': SkillListRequest }, SkillListValue>
 }>

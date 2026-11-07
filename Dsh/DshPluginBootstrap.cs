@@ -89,7 +89,47 @@ internal static class DshPluginBootstrap
     /// dsh.profile.bundles 才会挂上自己的 patch 层，进而 registerAuto 注册出「auto」
     /// 权限预设——那才是权限选择器里出现「自动审查」的唯一来源。
     /// </summary>
-    private const string AutoReviewBundle = "@deepseek-ai/dsh-experimental-auto-review";
+    internal const string AutoReviewBundle = "@deepseek-ai/dsh-experimental-auto-review";
+
+    /// <summary>
+    /// 跨会话搜索 bundle（内核 OPTIONAL_BUNDLES，出厂关闭）：给每个 Agent 一组只读全局
+    /// 工具，可检索并读取当前工作区更早的会话；内容索引首搜时才打开、全 Agent 共享。
+    /// 自带一套隔离的 <c>:memory:</c> 索引（patch 条目 id 前缀 optional-），与壳顶条检索
+    /// 走的 base session-query-sqlite（<see cref="EnsureSessionSearchOverride"/> 开成
+    /// first-search + 持久库）互不覆盖，侧栏搜索行为不变。它是内核 bundle 的依赖
+    /// （installAnchor 可解析），shell 不必 pnpm add。
+    /// </summary>
+    internal const string SessionSearchBundle = "@deepseek-ai/dsh-experimental-session-search";
+
+    /// <summary>
+    /// 多代理（Agent Teams）bundle（内核 OPTIONAL_BUNDLES，出厂关闭）：一层选入团队
+    /// 协作域、spawn_teammate 委派工具与 Web 成员/任务板 UI。注意它是普通 subagent
+    /// 委派的官方替代——选入后 subagent/subagent_fork 工具与重叠的全局子代理控制一并
+    /// 停用（Workflow 的 spawn 不受影响）。同为内核 bundle 依赖，shell 不必 pnpm add。
+    /// </summary>
+    internal const string AgentTeamBundle = "@deepseek-ai/dsh-experimental-agent-team-profile";
+
+    /// <summary>
+    /// 随对话更新的标题 bundle（内核 OPTIONAL_BUNDLES）：按会话的全部消息生成标题，
+    /// 主要任务变化时自动更新，而不是只按第一条消息定名（内核 locale 元数据的说法是
+    /// 「随对话更新的标题」）。同为内核 bundle 依赖，shell 不必 pnpm add。
+    /// </summary>
+    internal const string SessionTitlesBundle = "@deepseek-ai/dsh-experimental-session-titles-bundle";
+
+    /// <summary>内核 OPTIONAL_BUNDLES 的其余条目（0.2.2-rc.1 家族）。展示文案读各包自带的
+    /// locale 元数据（<c>locale/&lt;locale&gt;.json</c> 的 meta.title/description），壳不另写
+    /// 文案——内核加包/改说法，设置页跟着变。同为 installAnchor 可解析的安装依赖。</summary>
+    internal const string PersonalizedRecommendationsBundle = "@deepseek-ai/dsh-personalized-recommendations";
+    internal const string RalphBundle = "@deepseek-ai/dsh-experimental-ralph-bundle";
+    internal const string TerminalBundle = "@deepseek-ai/dsh-experimental-terminal-bundle";
+    internal const string BadgeSkillBundle = "@deepseek-ai/dsh-experimental-badge-skill-bundle";
+    internal const string VoiceInputBundle = "@deepseek-ai/dsh-experimental-voice-input-bundle";
+    internal const string CotTranslationBundle = "@deepseek-ai/dsh-experimental-cot-translation-bundle";
+    internal const string InspectorBundle = "@deepseek-ai/dsh-experimental-inspector-profile";
+    internal const string LiveshareBundle = "@deepseek-ai/dsh-experimental-liveshare";
+    internal const string PluginMarketBundle = "@deepseek-ai/dsh-experimental-plugin-market-bundle";
+    internal const string ToolWorktreeBundle = "@deepseek-ai/dsh-experimental-tool-worktree";
+    internal const string ForgeBundle = "@deepseek-ai/dsh-experimental-forge-bundle";
 
     /// <summary>
     /// 已被内核官方件取代、要从 profile 清单里撤下的社区包。dsh-approval-gate 自带
@@ -260,9 +300,22 @@ internal static class DshPluginBootstrap
         //      回默认两条，只在缺包时选入会让插件装好却永远不挂载
         //      （2026-09-20 自动审批未启用事故）。
         SelectInstalledBundles(profileDir, dshHome, diag);
-        // 1.6) 出厂关闭的可选 bundle：内核只给 bundles 清单里的条目挂 patch 层，
-        //      自动审查必须在这里显式选入，否则权限选择器里永远没有「自动审查」。
-        SelectOptionalBundle(profileDir, dshHome, AutoReviewBundle, diag);
+        // 1.6) 出厂关闭的可选 bundle：内核只给 bundles 清单里的条目挂 patch 层。
+        //      每次启动按「用户偏好 → 出厂默认」幂等重放选入/摘出——dsh CLI 重建
+        //      profile 会把 bundles 重置回默认两条（只在缺包时选入会让插件装好却永远
+        //      不挂载，2026-09-20 自动审批未启用事故），而用户在设置里关掉的选项也
+        //      不能被启动选回（0.9.0.x 起 auto-review 每启动强制选入就在犯这个毛病）。
+        foreach (var (bundle, defaultOn) in ManagedOptionalBundles)
+        {
+            if (ReadBundlePref(bundle) ?? defaultOn)
+            {
+                SelectOptionalBundle(profileDir, dshHome, bundle, diag);
+            }
+            else
+            {
+                DeselectBundle(profileDir, dshHome, bundle, diag);
+            }
+        }
         // 1.7) 撤下被内核官方件取代的社区包，并清掉它/老壳写进 patch 的 auto-approve
         //      死预设（0.2.1 内核只认 registerAuto 注册的 auto，配置表里的
         //      auto-approve 是个什么都不做的空档）。
@@ -1240,44 +1293,131 @@ internal static class DshPluginBootstrap
         return (oldBlock, newText);
     }
 
-    // ---------------- 自动审查开关（设置页「插件」分区的自动审查块用） ----------------
-
-    /// <summary>自动审查是否已选入（profile bundles 清单里有 auto-review 条目）。</summary>
-    internal static bool IsAutoReviewEnabled(string dshHome)
-        => ReadBundles(dshHome).Contains(AutoReviewBundle, StringComparer.Ordinal);
+    // ---------------- 可选 bundle 开关（设置页「实验性功能」分区与插件页自动审查块用） ----------------
 
     /// <summary>
-    /// 切换自动审查 bundle 的选入状态：开=写进 dsh.profile.bundles，关=从清单摘掉。
-    /// 内核 patchReload=live 监视该清单，改动热生效；摘掉后 auto-review 不再 apply，
-    /// registerAuto 不再被调用，「auto」预设从权限选择器消失，正在用它的会话按内核
-    /// 自己的 dispose 逻辑落到 danger-full-access（shell 不代为决定，交给内核）。
+    /// 壳接管的内核 OPTIONAL_BUNDLES（0.2.1 起出厂关闭、只有 dsh.profile.bundles 里的
+    /// 条目才挂 patch 层）：条目 = (bundle 包名, 出厂默认是否选入)。设置页的开关直接
+    /// 消费这张表；要新增实验性功能先在这里加一行，再在设置页配文案（不配文案的条目
+    /// 读内核包自带的 locale 元数据）。清单 = 内核 OPTIONAL_BUNDLES 全集，顺序即
+    /// 设置页「实验性功能」分区的渲染序。
     /// </summary>
-    internal static bool SetAutoReviewEnabled(string dshHome, bool enabled)
+    internal static readonly (string Bundle, bool DefaultOn)[] ManagedOptionalBundles =
+    {
+        (AutoReviewBundle, true),
+        (SessionSearchBundle, true),
+        (AgentTeamBundle, true),
+        // 随对话更新的标题：默认选入（用户口径——标题要跟着对话走，不要停在第一条消息）。
+        (SessionTitlesBundle, true),
+        (PersonalizedRecommendationsBundle, false),
+        (RalphBundle, false),
+        (TerminalBundle, false),
+        (BadgeSkillBundle, false),
+        (VoiceInputBundle, false),
+        (CotTranslationBundle, false),
+        (InspectorBundle, false),
+        (LiveshareBundle, false),
+        (PluginMarketBundle, false),
+        (ToolWorktreeBundle, false),
+        (ForgeBundle, false),
+    };
+
+    /// <summary>用户对可选 bundle 显式偏好的 LocalSettings 键前缀（后接 bundle 包名）。</summary>
+    private const string BundlePrefKeyPrefix = "dsh-bundle:";
+
+    /// <summary>读用户对某可选 bundle 的显式偏好；null = 从未切换过（按出厂默认走）。</summary>
+    private static bool? ReadBundlePref(string bundleName)
+    {
+        try
+        {
+            return Windows.Storage.ApplicationData.Current
+                .LocalSettings.Values[BundlePrefKeyPrefix + bundleName] as bool?;
+        }
+        catch (Exception)
+        {
+            return null; // 非打包形态没有 ApplicationData：按出厂默认
+        }
+    }
+
+    private static void WriteBundlePref(string bundleName, bool enabled)
+    {
+        try
+        {
+            Windows.Storage.ApplicationData.Current
+                .LocalSettings.Values[BundlePrefKeyPrefix + bundleName] = enabled;
+        }
+        catch (Exception)
+        {
+            // 写不进就只改 profile：重启后回落出厂默认
+        }
+    }
+
+    /// <summary>可选 bundle 当前是否已选入（profile bundles 清单里有该条目）。</summary>
+    internal static bool IsOptionalBundleEnabled(string dshHome, string bundleName)
+        => ReadBundles(dshHome).Contains(bundleName, StringComparer.Ordinal);
+
+    /// <summary>
+    /// 切换可选 bundle 的选入状态：开=写进 dsh.profile.bundles，关=从清单摘掉，并把
+    /// 用户偏好记进 LocalSettings——不记的话下次启动按出厂默认重放，关了又弹回。
+    /// 内核 patchReload=live 监视该清单，改动热生效。落清单失败（profile package.json
+    /// 不可写、缺失）时不记偏好并返回 false，调用方据此回滚开关。
+    /// </summary>
+    internal static bool SetOptionalBundleEnabled(string dshHome, string bundleName, bool enabled)
     {
         try
         {
             var profileDir = Path.Combine(dshHome, "profiles", ProfileName);
-            if (IsAutoReviewEnabled(dshHome) == enabled)
+            if (IsOptionalBundleEnabled(dshHome, bundleName) != enabled)
             {
-                return true;
+                var diag = new StringBuilder();
+                if (enabled)
+                {
+                    SelectOptionalBundle(profileDir, dshHome, bundleName, diag);
+                }
+                else
+                {
+                    DeselectBundle(profileDir, dshHome, bundleName, diag);
+                }
             }
-            var diag = new StringBuilder();
-            if (enabled)
+            if (IsOptionalBundleEnabled(dshHome, bundleName) != enabled)
             {
-                SelectOptionalBundle(profileDir, dshHome, AutoReviewBundle, diag);
+                return false;
             }
-            else
-            {
-                DeselectBundle(profileDir, dshHome, AutoReviewBundle, diag);
-                // 关掉后预设表里若还留着迁移没清干净的 auto-approve 死档，一并清掉
-                RetireAutoApprovePreset(profileDir, dshHome, diag);
-            }
-            return IsAutoReviewEnabled(dshHome) == enabled;
+            WriteBundlePref(bundleName, enabled);
+            return true;
         }
         catch (Exception)
         {
             return false;
         }
+    }
+
+    /// <summary>自动审查是否已选入（profile bundles 清单里有 auto-review 条目）。</summary>
+    internal static bool IsAutoReviewEnabled(string dshHome)
+        => IsOptionalBundleEnabled(dshHome, AutoReviewBundle);
+
+    /// <summary>
+    /// 切换自动审查 bundle（语义同 <see cref="SetOptionalBundleEnabled"/>）；关掉后顺带
+    /// 清掉迁移没清干净的 auto-approve 死档。摘掉后 auto-review 不再 apply，registerAuto
+    /// 不再被调用，「auto」预设从权限选择器消失，正在用它的会话按内核自己的 dispose
+    /// 逻辑落到 danger-full-access（shell 不代为决定，交给内核）。
+    /// </summary>
+    internal static bool SetAutoReviewEnabled(string dshHome, bool enabled)
+    {
+        var ok = SetOptionalBundleEnabled(dshHome, AutoReviewBundle, enabled);
+        if (ok && !enabled)
+        {
+            try
+            {
+                var diag = new StringBuilder();
+                RetireAutoApprovePreset(Path.Combine(dshHome, "profiles", ProfileName), dshHome, diag);
+            }
+            catch (Exception)
+            {
+                // 清死档失败不影响开关本身
+            }
+        }
+        return ok;
     }
 
     /// <summary>从 patch 里移除 auto-approve 预设块（迁移用：0.2.1 起该档是死预设，

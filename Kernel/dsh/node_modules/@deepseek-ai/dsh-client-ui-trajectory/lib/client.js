@@ -9,6 +9,52 @@ window.__ModuleLoader__.load({
 		let react = require("react");
 		let _tanstack_react_virtual = require("@tanstack/react-virtual");
 		let _deepseek_ai_dsh_client_ui_primitives = require("@deepseek-ai/dsh-client-ui-primitives");
+		//#region lib/types/client/watch-tool-result.js
+		/**
+		* Bind an ephemeral inspector stream to one Session.
+		* @param remote - Generated Remote transport and reconnecting stream owner.
+		* @param sessionId - Session inspected by this view.
+		* @param report - Diagnostic sink for unavailable transport and teardown failures.
+		* @returns Subscription factory; closing a subscription releases its selected value.
+		*/
+		function createToolResultWatcher(remote, sessionId, report) {
+			return (seq, publish) => {
+				const lifetime = { stopped: false };
+				const clear = () => {
+					if (!lifetime.stopped) publish(void 0);
+				};
+				const stream = remote.$stream({
+					name: "live tool result",
+					open: (signal) => remote.toolResults.watch({
+						sessionId,
+						seq
+					}, signal),
+					ended: () => /* @__PURE__ */ new Error("live tool result stream ended"),
+					carrierFailed: clear
+				});
+				(async () => {
+					try {
+						for await (const frame of stream) {
+							if (lifetime.stopped) return;
+							frame.accept();
+							publish(frame.value.available ? frame.value.value : void 0);
+						}
+					} catch (error) {
+						if (!lifetime.stopped) {
+							clear();
+							report(error);
+						}
+					} finally {
+						clear();
+					}
+				})();
+				return () => {
+					lifetime.stopped = true;
+					stream.dispose().catch(report);
+				};
+			};
+		}
+		//#endregion
 		//#region lib/types/client/duration-store.js
 		/**
 		* Create the browser-wide trajectory duration preference source.
@@ -45,6 +91,9 @@ window.__ModuleLoader__.load({
 			"toolbar.calls": "调用",
 			"toolbar.expandCalls": "展开所有调用",
 			"toolbar.collapseCalls": "收起所有调用",
+			"toolbar.subCalls": "子调用",
+			"toolbar.expandSubCalls": "展开所有子调用",
+			"toolbar.collapseSubCalls": "收起所有子调用",
 			"toolbar.search": "搜索轨迹",
 			"toolbar.searchPlaceholder": "搜索",
 			"kind.system": "系统",
@@ -136,6 +185,9 @@ window.__ModuleLoader__.load({
 			"record.schemaUnavailable": "Schema 不可用",
 			"record.parameters": "参数",
 			"record.resultJson": "结果 JSON",
+			"record.rawResult": "原始结果",
+			"record.renderedResult": "渲染结果",
+			"record.rawResultUnavailable": "原始结果仅在实时工具调用中可用",
 			"record.json": "JSON",
 			"record.parametersJson": "参数 JSON",
 			"record.namedParametersJson": "{name} 参数 JSON",
@@ -169,6 +221,7 @@ window.__ModuleLoader__.load({
 			"request.collapsedSummary": "已收起的{kind}概述，{summary}",
 			"request.collapsedTurn": "轮次",
 			"request.collapsedAssistant": "助手",
+			"request.collapsedTool": "子调用",
 			"request.rowAria": "{request}{kind}，{content}",
 			"request.rowPrefix": "请求 {request}，",
 			"request.rowAriaCompaction": "请求 {request}，压缩",
@@ -240,6 +293,9 @@ window.__ModuleLoader__.load({
 			"toolbar.calls": "Calls",
 			"toolbar.expandCalls": "Expand calls",
 			"toolbar.collapseCalls": "Collapse calls",
+			"toolbar.subCalls": "Subcalls",
+			"toolbar.expandSubCalls": "Expand subcalls",
+			"toolbar.collapseSubCalls": "Collapse subcalls",
 			"toolbar.search": "Search trajectory",
 			"toolbar.searchPlaceholder": "Search",
 			"kind.system": "SYSTEM",
@@ -331,6 +387,9 @@ window.__ModuleLoader__.load({
 			"record.schemaUnavailable": "Schema unavailable",
 			"record.parameters": "Parameters",
 			"record.resultJson": "Result JSON",
+			"record.rawResult": "Raw result",
+			"record.renderedResult": "Rendered result",
+			"record.rawResultUnavailable": "Raw results are only available for live tool calls",
 			"record.json": "JSON",
 			"record.parametersJson": "parameters JSON",
 			"record.namedParametersJson": "{name} parameters JSON",
@@ -364,6 +423,7 @@ window.__ModuleLoader__.load({
 			"request.collapsedSummary": "Collapsed {kind} summary, {summary}",
 			"request.collapsedTurn": "turn",
 			"request.collapsedAssistant": "assistant",
+			"request.collapsedTool": "subcalls",
 			"request.rowAria": "{request}{kind}, {content}",
 			"request.rowPrefix": "Request {request}, ",
 			"request.rowAriaCompaction": "Request {request}, compaction",
@@ -421,8 +481,1220 @@ window.__ModuleLoader__.load({
 			"layout.systemPromptAndToolsUpdated": "System Prompt and Tools Updated",
 			"layout.compactionInterrupted": "Compaction was interrupted before completion."
 		};
+		/** Japanese copy, checked against the English keys. */
+		const ja = {
+			"view.trajectory": "軌跡",
+			"toolbar.aria": "軌跡ツールバー",
+			"toolbar.duration": "所要時間",
+			"toolbar.useActualDuration": "実際の所要時間を使用",
+			"toolbar.useEqualWidth": "等幅の操作を使用",
+			"toolbar.actualTime": "実際の時間",
+			"toolbar.turns": "ターン",
+			"toolbar.expandTurns": "ターンを展開",
+			"toolbar.collapseTurns": "ターンを折りたたむ",
+			"toolbar.calls": "呼び出し",
+			"toolbar.expandCalls": "呼び出しを展開",
+			"toolbar.collapseCalls": "呼び出しを折りたたむ",
+			"toolbar.subCalls": "子呼び出し",
+			"toolbar.expandSubCalls": "子呼び出しを展開",
+			"toolbar.collapseSubCalls": "子呼び出しを折りたたむ",
+			"toolbar.search": "軌跡を検索",
+			"toolbar.searchPlaceholder": "検索",
+			"kind.system": "システム",
+			"kind.user": "ユーザー",
+			"kind.context": "コンテキスト",
+			"kind.compacted": "圧縮済み",
+			"kind.message": "メッセージ",
+			"kind.assistant": "アシスタント",
+			"kind.tool": "ツール",
+			"kind.subtool": "サブツール",
+			"kind.sub": "サブ",
+			"column.input": "入力",
+			"column.output": "出力",
+			"column.think": "思考",
+			"column.time": "時間",
+			"column.model": "モデル",
+			"column.tools": "ツール",
+			"turn.label": "ターン {turn}",
+			"section.betweenTurns": "ターン間",
+			"group.message": "メッセージ",
+			"group.step": "ステップ {step}",
+			"group.compaction": "圧縮 {seq}",
+			"status.failed": "失敗",
+			"status.pending": "保留中",
+			"status.completed": "完了",
+			"timing.notAvailable": "利用不可",
+			"timing.notRecorded": "未記録",
+			"timing.stepStartUnavailable": "ステップ開始時刻は利用不可",
+			"timing.firstTokenUnavailable": "最初のトークンは利用不可",
+			"timing.usageUnavailable": "使用状況は利用不可",
+			"timing.outputTokensUnavailable": "出力トークンは利用不可",
+			"timing.durationTooShort": "所要時間が短すぎます",
+			"timing.showLocalTime": "ローカル時刻を表示",
+			"timing.showUnixTimestamp": "Unixタイムスタンプを表示",
+			"timing.started": "開始",
+			"timing.totalDuration": "合計所要時間",
+			"timing.ttft": "TTFT",
+			"timing.generation": "生成",
+			"timing.throughput": "スループット",
+			"timing.duration": "所要時間",
+			"timing.source": "計測ソース",
+			"timing.sessionTimestamps": "セッションのタイムスタンプ",
+			"timing.sessionTimestampsRunning": "セッションのタイムスタンプ（実行中）",
+			"timing.request": "リクエストのタイミング",
+			"unit.milliseconds": "{value} ms",
+			"unit.seconds": "{value} 秒",
+			"unit.tokens": "{value} tok",
+			"unit.tokensPerSecond": "{value} tok/s",
+			"usage.tokens": "トークン",
+			"usage.reasoning": "推論",
+			"usage.content": "コンテンツ",
+			"usage.notReported": "使用量は報告されていません",
+			"usage.input": "入力",
+			"usage.cached": "キャッシュ済み",
+			"usage.cacheCreated": "キャッシュ作成",
+			"usage.other": "その他",
+			"usage.output": "出力",
+			"usage.thisRequest": "今回のリクエスト",
+			"usage.sessionCumulative": "セッション累計",
+			"options.notRecorded": "オプションは記録されていません",
+			"options.json": "リクエストオプション JSON",
+			"source.unknown": "不明",
+			"source.user": "ユーザー",
+			"source.plugin": "プラグイン",
+			"source.pluginNamed": "プラグイン · {plugin}",
+			"source.goal": "目標",
+			"source.goalRound": "目標 · ラウンド {round}",
+			"source.notRecorded": "ソースは記録されていません",
+			"source.messageJson": "メッセージソース JSON",
+			"tab.summary": "概要",
+			"tab.rawOutput": "生の出力",
+			"tab.preview": "プレビュー",
+			"tab.raw": "生データ",
+			"tab.source": "ソース",
+			"tab.payload": "ペイロード",
+			"tab.result": "結果",
+			"tab.schema": "スキーマ",
+			"tab.timing": "タイミング",
+			"tab.diff": "差分",
+			"tab.systemPrompt": "システムプロンプト",
+			"tab.tools": "ツール",
+			"tab.options": "オプション",
+			"tab.usage": "使用量",
+			"record.toolCallOnly": "（ツール呼び出しのみ）",
+			"record.noContent": "コンテンツなし",
+			"record.noPayload": "ペイロードは取得されていません",
+			"record.noResult": "結果は取得されていません",
+			"record.noOutput": "出力なし",
+			"record.schemaUnavailable": "スキーマを利用できません",
+			"record.parameters": "パラメータ",
+			"record.resultJson": "結果 JSON",
+			"record.rawResult": "元の結果",
+			"record.renderedResult": "表示用の結果",
+			"record.rawResultUnavailable": "元の結果はリアルタイムのツール呼び出しでのみ利用できます",
+			"record.json": "JSON",
+			"record.parametersJson": "パラメータ JSON",
+			"record.namedParametersJson": "{name} パラメータ JSON",
+			"record.payloadJson": "ペイロード JSON",
+			"record.outputJson": "結果 JSON",
+			"record.thinking": "思考",
+			"record.wrapLines": "行を折り返す",
+			"code.source": "コード",
+			"code.output": "出力",
+			"code.copySource": "コードをコピー",
+			"code.copyOutput": "出力をコピー",
+			"code.originalJson": "元の JSON",
+			"code.running": "実行中…",
+			"record.systemPromptMissing": "このリクエストにシステムプロンプトはありません",
+			"record.toolsMissing": "このリクエストにツールはありません",
+			"record.systemPrompt": "システムプロンプト",
+			"record.tools": "ツール",
+			"block.openSummary": "ブロック #{index} のツール呼び出し概要を開く",
+			"block.openSummaryTitle": "ツール呼び出し概要を開く",
+			"block.label": "ブロック #{index} {type}",
+			"history.loadingTrajectory": "軌跡を読み込み中…",
+			"history.loadingEarlier": "以前の履歴を読み込み中…",
+			"history.loadingEarlierAria": "以前の履歴を読み込み中…",
+			"history.loadEarlier": "以前の履歴を読み込む",
+			"history.clickToLoadEarlier": "クリックして以前の履歴を読み込む",
+			"request.label": "リクエスト #{request}",
+			"request.labelCompaction": "リクエスト #{request} · コンパクション",
+			"request.compaction": "コンパクション · {section}",
+			"request.compactionPurpose": "コンパクション",
+			"request.retryProgress": "{retry} / {maximum}",
+			"request.collapsedSummary": "折りたたまれた {kind} の概要、{summary}",
+			"request.collapsedTurn": "ターン",
+			"request.collapsedAssistant": "アシスタント",
+			"request.collapsedTool": "子呼び出し",
+			"request.rowAria": "{request}{kind}、{content}",
+			"request.rowPrefix": "リクエスト {request}、",
+			"request.rowAriaCompaction": "リクエスト {request}、コンパクション",
+			"request.noContent": "コンテンツなし",
+			"summary.toolCalls.one": "ツール呼び出し {count} 件",
+			"summary.toolCalls.other": "ツール呼び出し {count} 件",
+			"summary.steps.one": "ステップ {count} 件",
+			"summary.steps.other": "ステップ {count} 件",
+			"details.event": "イベントの詳細",
+			"details.resize": "イベント詳細のサイズ変更",
+			"details.resizeTitle": "ドラッグでサイズ変更。ダブルクリックでリセット。",
+			"details.close": "詳細を閉じる",
+			"details.status": "ステータス",
+			"details.purpose": "目的",
+			"details.provider": "プロバイダー",
+			"details.model": "モデル",
+			"details.toolCalls": "ツール呼び出し",
+			"details.subtoolCalls": "サブツール呼び出し",
+			"details.error": "エラー",
+			"details.lastAttemptError": "前回の試行エラー",
+			"details.failure.auth": "API キーが無効です",
+			"details.retry": "再試行",
+			"details.retryDelay": "再試行までの遅延",
+			"details.result": "結果",
+			"details.compacted": "圧縮済み",
+			"details.assistantMessage": "アシスタントメッセージ",
+			"details.source": "ソース",
+			"details.hierarchy": "階層",
+			"details.toolCall": "ツール呼び出し",
+			"timeline.aria": "軌跡タイムライン",
+			"timeline.overviewAria": "タイムラインの概要。横方向にドラッグしてイベントにフォーカス",
+			"timeline.noTimingData": "タイミングデータなし",
+			"timeline.total": "合計 {duration}",
+			"timeline.started": "開始 {time}",
+			"timeline.ttftDecoding": "TTFT {ttft} · デコード {decoding}",
+			"layout.compacting": "コンテキストを圧縮中…",
+			"layout.compactionFailed": "圧縮に失敗しました",
+			"layout.compacted": "コンテキストを圧縮しました",
+			"layout.toolCallOnly": "ツール呼び出しのみ",
+			"attachment.list": "添付ファイル",
+			"attachment.imageName": "画像 {index}",
+			"layout.imageCount": "画像 ×{count}",
+			"layout.fileAttachments": "ファイル ×{count}",
+			"layout.initialSystemPrompt": "初期システムプロンプト",
+			"layout.systemPromptUpdated": "システムプロンプトを更新",
+			"layout.toolsUpdated": "ツールを更新",
+			"layout.toolAdded": "ツールを追加: {name}",
+			"layout.toolRemoved": "ツールを削除: {name}",
+			"layout.toolUpdateNotice": "ツールを更新しました",
+			"layout.toolsAdded": "追加: {names}",
+			"layout.toolsAddedCount": "{count} 件追加",
+			"layout.toolsChanged": "{added} 件追加、{removed} 件削除",
+			"layout.toolsRemoved": "削除: {names}",
+			"layout.toolsRemovedCount": "{count} 件削除",
+			"layout.systemPromptAndToolsUpdated": "システムプロンプトとツールを更新",
+			"layout.compactionInterrupted": "圧縮は完了前に中断されました。"
+		};
+		/** Spanish dictionary, checked against the English keys. */
+		const es = {
+			"view.trajectory": "Trayectoria",
+			"toolbar.aria": "Barra de herramientas de trayectoria",
+			"toolbar.duration": "Duración",
+			"toolbar.useActualDuration": "Usar duración real",
+			"toolbar.useEqualWidth": "Utilice operaciones de igual ancho",
+			"toolbar.actualTime": "tiempo real",
+			"toolbar.turns": "Turnos",
+			"toolbar.expandTurns": "Expandir turnos",
+			"toolbar.collapseTurns": "Contraer turnos",
+			"toolbar.calls": "llamadas",
+			"toolbar.expandCalls": "Ampliar llamadas",
+			"toolbar.collapseCalls": "Contraer llamadas",
+			"toolbar.subCalls": "subllamadas",
+			"toolbar.expandSubCalls": "Ampliar subllamadas",
+			"toolbar.collapseSubCalls": "Contraer subllamadas",
+			"toolbar.search": "Trayectoria de búsqueda",
+			"toolbar.searchPlaceholder": "Buscar",
+			"kind.system": "SISTEMA",
+			"kind.user": "USUARIO",
+			"kind.context": "CONTEXTO",
+			"kind.compacted": "COMPACTADO",
+			"kind.message": "Mensaje",
+			"kind.assistant": "ASISTENTE",
+			"kind.tool": "HERRAMIENTA",
+			"kind.subtool": "SUBHERRAMIENTA",
+			"kind.sub": "Subtítulo",
+			"column.input": "Entrada",
+			"column.output": "Salida",
+			"column.think": "pensar",
+			"column.time": "tiempo",
+			"column.model": "modelo",
+			"column.tools": "Herramientas",
+			"turn.label": "Turno {turn}",
+			"section.betweenTurns": "Entre turnos",
+			"group.message": "Mensaje",
+			"group.step": "Paso {step}",
+			"group.compaction": "Compactación {seq}",
+			"status.failed": "Fallido",
+			"status.pending": "Pendiente",
+			"status.completed": "Completado",
+			"timing.notAvailable": "No disponible",
+			"timing.notRecorded": "No registrado",
+			"timing.stepStartUnavailable": "Inicio de paso no disponible",
+			"timing.firstTokenUnavailable": "Primer token no disponible",
+			"timing.usageUnavailable": "Uso no disponible",
+			"timing.outputTokensUnavailable": "Tokens de salida no disponibles",
+			"timing.durationTooShort": "Duración demasiado corta",
+			"timing.showLocalTime": "Mostrar hora local",
+			"timing.showUnixTimestamp": "Mostrar marca de tiempo de Unix",
+			"timing.started": "iniciado",
+			"timing.totalDuration": "Duración total",
+			"timing.ttft": "TTFT",
+			"timing.generation": "Generación",
+			"timing.throughput": "Rendimiento",
+			"timing.duration": "Duración",
+			"timing.source": "fuente de tiempo",
+			"timing.sessionTimestamps": "Marcas de tiempo de sesión",
+			"timing.sessionTimestampsRunning": "Marcas de tiempo de sesión (en ejecución)",
+			"timing.request": "Solicitar tiempo",
+			"unit.milliseconds": "{value} ms",
+			"unit.seconds": "{value} s",
+			"unit.tokens": "Tok {value}",
+			"unit.tokensPerSecond": "{value} tok/s",
+			"usage.tokens": "Fichas",
+			"usage.reasoning": "Razonamiento",
+			"usage.content": "Contenido",
+			"usage.notReported": "Uso no reportado",
+			"usage.input": "Entrada",
+			"usage.cached": "En caché",
+			"usage.cacheCreated": "Caché creada",
+			"usage.other": "Otro",
+			"usage.output": "Salida",
+			"usage.thisRequest": "Esta solicitud",
+			"usage.sessionCumulative": "Sesión acumulativa",
+			"options.notRecorded": "Opciones no registradas",
+			"options.json": "Solicitar opciones JSON",
+			"source.unknown": "Desconocido",
+			"source.user": "Usuario",
+			"source.plugin": "Complemento",
+			"source.pluginNamed": "Complemento · {plugin}",
+			"source.goal": "Objetivo",
+			"source.goalRound": "Gol · Ronda {round}",
+			"source.notRecorded": "Fuente no registrada",
+			"source.messageJson": "Fuente del mensaje JSON",
+			"tab.summary": "Resumen",
+			"tab.rawOutput": "Salida bruta",
+			"tab.preview": "Vista previa",
+			"tab.raw": "crudo",
+			"tab.source": "Fuente",
+			"tab.payload": "Carga útil",
+			"tab.result": "Resultado",
+			"tab.schema": "esquema",
+			"tab.timing": "Sincronización",
+			"tab.diff": "diferencia",
+			"tab.systemPrompt": "Aviso del sistema",
+			"tab.tools": "Herramientas",
+			"tab.options": "Opciones",
+			"tab.usage": "Uso",
+			"record.toolCallOnly": "(solo llamada de herramienta)",
+			"record.noContent": "Sin contenido",
+			"record.noPayload": "Ninguna carga útil capturada",
+			"record.noResult": "Ningún resultado capturado",
+			"record.noOutput": "Sin salida",
+			"record.schemaUnavailable": "Esquema no disponible",
+			"record.parameters": "Parámetros",
+			"record.resultJson": "Resultado JSON",
+			"record.rawResult": "Resultado original",
+			"record.renderedResult": "Resultado renderizado",
+			"record.rawResultUnavailable": "Los resultados originales solo están disponibles para llamadas de herramientas en vivo",
+			"record.json": "JSON",
+			"record.parametersJson": "parámetros JSON",
+			"record.namedParametersJson": "Parámetros de {name} JSON",
+			"record.payloadJson": "Carga útil JSON",
+			"record.outputJson": "Resultado JSON",
+			"record.thinking": "Pensando",
+			"record.wrapLines": "Ajustar líneas",
+			"code.source": "Código",
+			"code.output": "Salida",
+			"code.copySource": "Copiar código",
+			"code.copyOutput": "Copiar salida",
+			"code.originalJson": "Originales JSON.",
+			"code.running": "Corriendo…",
+			"record.systemPromptMissing": "No hay mensaje del sistema en esta solicitud",
+			"record.toolsMissing": "No hay herramientas en esta solicitud",
+			"record.systemPrompt": "Aviso del sistema",
+			"record.tools": "Herramientas",
+			"block.openSummary": "Resumen de llamadas a la herramienta Open Block #{index}",
+			"block.openSummaryTitle": "Resumen de llamada de herramienta abierta",
+			"block.label": "Bloque #{index} {type}",
+			"history.loadingTrajectory": "Cargando trayectoria…",
+			"history.loadingEarlier": "Cargando historial anterior…",
+			"history.loadingEarlierAria": "Cargando historial anterior…",
+			"history.loadEarlier": "Cargar historial anterior",
+			"history.clickToLoadEarlier": "Haga clic para cargar el historial anterior",
+			"request.label": "Solicitud #{request}",
+			"request.labelCompaction": "Solicitud #{request} · Compactación",
+			"request.compaction": "Compactación · {section}",
+			"request.compactionPurpose": "Compactación",
+			"request.retryProgress": "{retry} de {maximum}",
+			"request.collapsedSummary": "Resumen de {kind} contraído, {summary}",
+			"request.collapsedTurn": "turno",
+			"request.collapsedAssistant": "asistente",
+			"request.collapsedTool": "subllamadas",
+			"request.rowAria": "{request}{kind}, {content}",
+			"request.rowPrefix": "Solicitar {request}, ",
+			"request.rowAriaCompaction": "Solicitar {request}, compactación",
+			"request.noContent": "sin contenido",
+			"summary.toolCalls.one": "Llamada a la herramienta {count}",
+			"summary.toolCalls.other": "Llamadas a herramientas {count}",
+			"summary.steps.one": "Paso {count}",
+			"summary.steps.other": "Pasos {count}",
+			"details.event": "Detalles del evento",
+			"details.resize": "Cambiar el tamaño de los detalles del evento",
+			"details.resizeTitle": "Arrastre para cambiar el tamaño. Haga doble clic para restablecer.",
+			"details.close": "Cerrar detalles",
+			"details.status": "Estado",
+			"details.purpose": "Propósito",
+			"details.provider": "Proveedor",
+			"details.model": "modelo",
+			"details.toolCalls": "Llamadas a herramientas",
+			"details.subtoolCalls": "Llamadas a subherramientas",
+			"details.error": "error",
+			"details.lastAttemptError": "Error del último intento",
+			"details.failure.auth": "La clave API no es válida",
+			"details.retry": "Reintentar",
+			"details.retryDelay": "Retraso de reintento",
+			"details.result": "Resultado",
+			"details.compacted": "compactado",
+			"details.assistantMessage": "Mensaje del asistente",
+			"details.source": "Fuente",
+			"details.hierarchy": "Jerarquía",
+			"details.toolCall": "Llamada de herramienta",
+			"timeline.aria": "Cronología de la trayectoria",
+			"timeline.overviewAria": "Descripción general de la línea de tiempo; arrastre horizontalmente para enfocar eventos",
+			"timeline.noTimingData": "Sin datos de tiempo",
+			"timeline.total": "Total {duration}",
+			"timeline.started": "Iniciado {time}",
+			"timeline.ttftDecoding": "TTFT {ttft} · Decodificación {decoding}",
+			"layout.compacting": "Contexto de compactación…",
+			"layout.compactionFailed": "Falló la compactación",
+			"layout.compacted": "Contexto compactado",
+			"layout.toolCallOnly": "Sólo llamada de herramienta",
+			"attachment.list": "Adjuntos",
+			"attachment.imageName": "Imagen {index}",
+			"layout.imageCount": "Imágenes ×{count}",
+			"layout.fileAttachments": "Archivos ×{count}",
+			"layout.initialSystemPrompt": "Aviso inicial del sistema",
+			"layout.systemPromptUpdated": "Aviso del sistema actualizado",
+			"layout.toolsUpdated": "Herramientas actualizadas",
+			"layout.toolAdded": "Herramienta agregada: {name}",
+			"layout.toolRemoved": "Herramienta eliminada: {name}",
+			"layout.toolUpdateNotice": "Herramientas actualizadas",
+			"layout.toolsAdded": "Añadido: {names}",
+			"layout.toolsAddedCount": "{count} añadido",
+			"layout.toolsChanged": "{added} agregado, {removed} eliminado",
+			"layout.toolsRemoved": "Eliminado: {names}",
+			"layout.toolsRemovedCount": "{count} eliminado",
+			"layout.systemPromptAndToolsUpdated": "Aviso del sistema y herramientas actualizadas",
+			"layout.compactionInterrupted": "La compactación se interrumpió antes de finalizar."
+		};
+		/** French dictionary, checked against the English keys. */
+		const fr = {
+			"view.trajectory": "Trajectoire",
+			"toolbar.aria": "Barre d’outils du parcours",
+			"toolbar.duration": "Durée",
+			"toolbar.useActualDuration": "Utiliser la durée réelle",
+			"toolbar.useEqualWidth": "Utiliser des opérations de largeur égale",
+			"toolbar.actualTime": "Temps réel",
+			"toolbar.turns": "Tours",
+			"toolbar.expandTurns": "Développer les tours",
+			"toolbar.collapseTurns": "Réduire les tours",
+			"toolbar.calls": "Appels",
+			"toolbar.expandCalls": "Développer les appels",
+			"toolbar.collapseCalls": "Réduire les appels",
+			"toolbar.subCalls": "Sous-appels",
+			"toolbar.expandSubCalls": "Développer les sous-appels",
+			"toolbar.collapseSubCalls": "Réduire les sous-appels",
+			"toolbar.search": "Rechercher dans le parcours",
+			"toolbar.searchPlaceholder": "Rechercher",
+			"kind.system": "SYSTÈME",
+			"kind.user": "UTILISATEUR",
+			"kind.context": "CONTEXTE",
+			"kind.compacted": "COMPACTÉ",
+			"kind.message": "Message",
+			"kind.assistant": "ASSISTANT",
+			"kind.tool": "OUTIL",
+			"kind.subtool": "SOUS-OUTIL",
+			"kind.sub": "Sous",
+			"column.input": "Entrée",
+			"column.output": "Sortie",
+			"column.think": "Pensez",
+			"column.time": "Temps",
+			"column.model": "Modèle",
+			"column.tools": "Outils",
+			"turn.label": "Tour {turn}",
+			"section.betweenTurns": "Entre les tours",
+			"group.message": "Message",
+			"group.step": "Étape {step}",
+			"group.compaction": "Compactage {seq}",
+			"status.failed": "Échec",
+			"status.pending": "En attente",
+			"status.completed": "Terminé",
+			"timing.notAvailable": "Non disponible",
+			"timing.notRecorded": "Non enregistré",
+			"timing.stepStartUnavailable": "Démarrage par étapes indisponible",
+			"timing.firstTokenUnavailable": "Premier jeton indisponible",
+			"timing.usageUnavailable": "Utilisation indisponible",
+			"timing.outputTokensUnavailable": "Jetons de sortie indisponibles",
+			"timing.durationTooShort": "Durée trop courte",
+			"timing.showLocalTime": "Afficher l'heure locale",
+			"timing.showUnixTimestamp": "Afficher l'horodatage Unix",
+			"timing.started": "Commencé",
+			"timing.totalDuration": "Durée totale",
+			"timing.ttft": "TTFT",
+			"timing.generation": "Génération",
+			"timing.throughput": "Débit",
+			"timing.duration": "Durée",
+			"timing.source": "Source de synchronisation",
+			"timing.sessionTimestamps": "Horodatage des sessions",
+			"timing.sessionTimestampsRunning": "Horodatages de session (en cours d'exécution)",
+			"timing.request": "Calendrier de la demande",
+			"unit.milliseconds": "{value} ms",
+			"unit.seconds": "{value}s",
+			"unit.tokens": "Jeton {value}",
+			"unit.tokensPerSecond": "{value} jetons/s",
+			"usage.tokens": "Jetons",
+			"usage.reasoning": "Raisonnement",
+			"usage.content": "Contenu",
+			"usage.notReported": "Utilisation non signalée",
+			"usage.input": "Entrée",
+			"usage.cached": "En cache",
+			"usage.cacheCreated": "Cache créé",
+			"usage.other": "Autre",
+			"usage.output": "Sortie",
+			"usage.thisRequest": "Cette demande",
+			"usage.sessionCumulative": "Session cumulée",
+			"options.notRecorded": "Options non enregistrées",
+			"options.json": "Options de demande JSON",
+			"source.unknown": "Inconnu",
+			"source.user": "Utilisateur",
+			"source.plugin": "Plugin",
+			"source.pluginNamed": "Plugin · {plugin}",
+			"source.goal": "Objectif",
+			"source.goalRound": "Objectif · Tour {round}",
+			"source.notRecorded": "Source non enregistrée",
+			"source.messageJson": "Origine du message JSON",
+			"tab.summary": "Résumé",
+			"tab.rawOutput": "Sortie brute",
+			"tab.preview": "Aperçu",
+			"tab.raw": "Brut",
+			"tab.source": "Source",
+			"tab.payload": "Charge utile",
+			"tab.result": "Résultat",
+			"tab.schema": "Schéma",
+			"tab.timing": "Calendrier",
+			"tab.diff": "Différence",
+			"tab.systemPrompt": "Invite système",
+			"tab.tools": "Outils",
+			"tab.options": "Possibilités",
+			"tab.usage": "Utilisation",
+			"record.toolCallOnly": "(appel d'outil uniquement)",
+			"record.noContent": "Aucun contenu",
+			"record.noPayload": "Aucune charge utile capturée",
+			"record.noResult": "Aucun résultat capturé",
+			"record.noOutput": "Aucune sortie",
+			"record.schemaUnavailable": "Schéma indisponible",
+			"record.parameters": "Paramètres",
+			"record.resultJson": "Résultat JSON",
+			"record.rawResult": "Résultat brut",
+			"record.renderedResult": "Résultat rendu",
+			"record.rawResultUnavailable": "Les résultats bruts ne sont disponibles que pour les appels d’outils en direct",
+			"record.json": "JSON",
+			"record.parametersJson": "paramètres JSON",
+			"record.namedParametersJson": "Paramètres {name} JSON",
+			"record.payloadJson": "Charge utile JSON",
+			"record.outputJson": "Résultat JSON",
+			"record.thinking": "Réflexion",
+			"record.wrapLines": "Activer le retour à la ligne",
+			"code.source": "Coder",
+			"code.output": "Sortie",
+			"code.copySource": "Copier le code",
+			"code.copyOutput": "Copier la sortie",
+			"code.originalJson": "JSON d’origine",
+			"code.running": "Courir…",
+			"record.systemPromptMissing": "Aucune invite système dans cette requête",
+			"record.toolsMissing": "Aucun outil dans cette demande",
+			"record.systemPrompt": "Invite système",
+			"record.tools": "Outils",
+			"block.openSummary": "Résumé de l'appel de l'outil Open Block #{index}",
+			"block.openSummaryTitle": "Résumé de l'appel d'outil ouvert",
+			"block.label": "Bloc #{index} {type}",
+			"history.loadingTrajectory": "Chargement de la trajectoire…",
+			"history.loadingEarlier": "Chargement de l'historique antérieur…",
+			"history.loadingEarlierAria": "Chargement de l'historique antérieur…",
+			"history.loadEarlier": "Charger l'historique antérieur",
+			"history.clickToLoadEarlier": "Cliquez pour charger l'historique précédent",
+			"request.label": "Demande #{request}",
+			"request.labelCompaction": "Demande #{request} · Compactage",
+			"request.compaction": "Compactage · {section}",
+			"request.compactionPurpose": "Compactage",
+			"request.retryProgress": "{retry} ou {maximum}",
+			"request.collapsedSummary": "Résumé {kind} réduit, {summary}",
+			"request.collapsedTurn": "tour",
+			"request.collapsedAssistant": "assistant",
+			"request.collapsedTool": "sous-appels",
+			"request.rowAria": "{request}{kind}, {content}",
+			"request.rowPrefix": "Demande {request}, ",
+			"request.rowAriaCompaction": "Demande {request}, compactage",
+			"request.noContent": "pas de contenu",
+			"summary.toolCalls.one": "Appel d'outil {count}",
+			"summary.toolCalls.other": "Appels d'outil {count}",
+			"summary.steps.one": "Étape {count}",
+			"summary.steps.other": "Étapes {count}",
+			"details.event": "Détails de l'événement",
+			"details.resize": "Redimensionner les détails de l'événement",
+			"details.resizeTitle": "Faites glisser pour redimensionner. Double-cliquez pour réinitialiser.",
+			"details.close": "Fermer les détails",
+			"details.status": "Statut",
+			"details.purpose": "Objectif",
+			"details.provider": "Fournisseur",
+			"details.model": "Modèle",
+			"details.toolCalls": "Appels d'outils",
+			"details.subtoolCalls": "Appels de sous-outils",
+			"details.error": "Erreur",
+			"details.lastAttemptError": "Erreur de dernière tentative",
+			"details.failure.auth": "La clé API n'est pas valide",
+			"details.retry": "Réessayer",
+			"details.retryDelay": "Délai de nouvelle tentative",
+			"details.result": "Résultat",
+			"details.compacted": "Compacté",
+			"details.assistantMessage": "Message de l'assistant",
+			"details.source": "Source",
+			"details.hierarchy": "Hiérarchie",
+			"details.toolCall": "Appel d'outil",
+			"timeline.aria": "Chronologie de la trajectoire",
+			"timeline.overviewAria": "Aperçu de la chronologie\xA0; faites glisser horizontalement pour concentrer les événements",
+			"timeline.noTimingData": "Aucune donnée de synchronisation",
+			"timeline.total": "Total {duration}",
+			"timeline.started": "Démarré {time}",
+			"timeline.ttftDecoding": "TTFT {ttft} · Décodage {decoding}",
+			"layout.compacting": "Contexte de compactage…",
+			"layout.compactionFailed": "Échec du compactage",
+			"layout.compacted": "Contexte compacté",
+			"layout.toolCallOnly": "Appel d'outil uniquement",
+			"attachment.list": "Pièces jointes",
+			"attachment.imageName": "Image {index}",
+			"layout.imageCount": "Images ×{count}",
+			"layout.fileAttachments": "Fichiers ×{count}",
+			"layout.initialSystemPrompt": "Invite système initiale",
+			"layout.systemPromptUpdated": "Invite système mise à jour",
+			"layout.toolsUpdated": "Outils mis à jour",
+			"layout.toolAdded": "Outil ajouté\xA0: {name}",
+			"layout.toolRemoved": "Outil supprimé\xA0: {name}",
+			"layout.toolUpdateNotice": "Outils mis à jour",
+			"layout.toolsAdded": "Ajouté\xA0: {names}",
+			"layout.toolsAddedCount": "{count} ajouté",
+			"layout.toolsChanged": "{added} ajouté, {removed} supprimé",
+			"layout.toolsRemoved": "Supprimé\xA0: {names}",
+			"layout.toolsRemovedCount": "{count} supprimé",
+			"layout.systemPromptAndToolsUpdated": "Invite système et outils mis à jour",
+			"layout.compactionInterrupted": "Le compactage a été interrompu avant la fin."
+		};
+		/** German dictionary, checked against the English keys. */
+		const de = {
+			"view.trajectory": "Ausführungsverlauf",
+			"toolbar.aria": "Symbolleiste „Ausführungsverlauf“.",
+			"toolbar.duration": "Dauer",
+			"toolbar.useActualDuration": "Verwenden Sie die tatsächliche Dauer",
+			"toolbar.useEqualWidth": "Verwenden Sie Operationen gleicher Breite",
+			"toolbar.actualTime": "Tatsächliche Zeit",
+			"toolbar.turns": "Runden",
+			"toolbar.expandTurns": "Runden ausklappen",
+			"toolbar.collapseTurns": "Runden einklappen",
+			"toolbar.calls": "Aufrufe",
+			"toolbar.expandCalls": "Aufrufe erweitern",
+			"toolbar.collapseCalls": "Aufrufe reduzieren",
+			"toolbar.subCalls": "Unteraufrufe",
+			"toolbar.expandSubCalls": "Unteraufrufe erweitern",
+			"toolbar.collapseSubCalls": "Unteraufrufe reduzieren",
+			"toolbar.search": "Suchbahn",
+			"toolbar.searchPlaceholder": "Suchen",
+			"kind.system": "SYSTEM",
+			"kind.user": "BENUTZER",
+			"kind.context": "KONTEXT",
+			"kind.compacted": "KOMPRIMIERT",
+			"kind.message": "Nachricht",
+			"kind.assistant": "ASSISTENT",
+			"kind.tool": "WERKZEUG",
+			"kind.subtool": "UNTERWERKZEUG",
+			"kind.sub": "Sub",
+			"column.input": "Eingabe",
+			"column.output": "Ausgabe",
+			"column.think": "Denken Sie nach",
+			"column.time": "Zeit",
+			"column.model": "Modell",
+			"column.tools": "Werkzeuge",
+			"turn.label": "Runde {turn}",
+			"section.betweenTurns": "Zwischen den Runden",
+			"group.message": "Nachricht",
+			"group.step": "Schritt {step}",
+			"group.compaction": "Verdichtung {seq}",
+			"status.failed": "Fehlgeschlagen",
+			"status.pending": "Ausstehend",
+			"status.completed": "Abgeschlossen",
+			"timing.notAvailable": "Nicht verfügbar",
+			"timing.notRecorded": "Nicht aufgezeichnet",
+			"timing.stepStartUnavailable": "Schrittstart nicht verfügbar",
+			"timing.firstTokenUnavailable": "Erstes Token nicht verfügbar",
+			"timing.usageUnavailable": "Nutzung nicht verfügbar",
+			"timing.outputTokensUnavailable": "Ausgabetoken nicht verfügbar",
+			"timing.durationTooShort": "Dauer zu kurz",
+			"timing.showLocalTime": "Ortszeit anzeigen",
+			"timing.showUnixTimestamp": "Unix-Zeitstempel anzeigen",
+			"timing.started": "Begonnen",
+			"timing.totalDuration": "Gesamtdauer",
+			"timing.ttft": "TTFT",
+			"timing.generation": "Generation",
+			"timing.throughput": "Durchsatz",
+			"timing.duration": "Dauer",
+			"timing.source": "Timing-Quelle",
+			"timing.sessionTimestamps": "Sitzungszeitstempel",
+			"timing.sessionTimestampsRunning": "Sitzungszeitstempel (laufend)",
+			"timing.request": "Anfragezeitpunkt",
+			"unit.milliseconds": "{value} ms",
+			"unit.seconds": "{value} s",
+			"unit.tokens": "{value}-Token",
+			"unit.tokensPerSecond": "{value} tok/s",
+			"usage.tokens": "Token",
+			"usage.reasoning": "Begründung",
+			"usage.content": "Inhalt",
+			"usage.notReported": "Nutzung nicht gemeldet",
+			"usage.input": "Eingabe",
+			"usage.cached": "Zwischengespeichert",
+			"usage.cacheCreated": "Cache erstellt",
+			"usage.other": "Andere",
+			"usage.output": "Ausgabe",
+			"usage.thisRequest": "Diese Anfrage",
+			"usage.sessionCumulative": "Sitzung kumulativ",
+			"options.notRecorded": "Optionen nicht aufgezeichnet",
+			"options.json": "Anfrageoptionen JSON",
+			"source.unknown": "Unbekannt",
+			"source.user": "Benutzer",
+			"source.plugin": "Plugin",
+			"source.pluginNamed": "Plugin · {plugin}",
+			"source.goal": "Ziel",
+			"source.goalRound": "Ziel · Runde {round}",
+			"source.notRecorded": "Quelle nicht erfasst",
+			"source.messageJson": "Nachrichtenquelle JSON",
+			"tab.summary": "Zusammenfassung",
+			"tab.rawOutput": "Rohausgabe",
+			"tab.preview": "Vorschau",
+			"tab.raw": "Roh",
+			"tab.source": "Quelle",
+			"tab.payload": "Nutzlast",
+			"tab.result": "Ergebnis",
+			"tab.schema": "Schema",
+			"tab.timing": "Timing",
+			"tab.diff": "Diff",
+			"tab.systemPrompt": "Systemaufforderung",
+			"tab.tools": "Werkzeuge",
+			"tab.options": "Optionen",
+			"tab.usage": "Nutzung",
+			"record.toolCallOnly": "(nur Werkzeugaufruf)",
+			"record.noContent": "Kein Inhalt",
+			"record.noPayload": "Keine Nutzlast erfasst",
+			"record.noResult": "Kein Ergebnis erfasst",
+			"record.noOutput": "Keine Ausgabe",
+			"record.schemaUnavailable": "Schema nicht verfügbar",
+			"record.parameters": "Parameter",
+			"record.resultJson": "Ergebnis JSON",
+			"record.rawResult": "Rohergebnis",
+			"record.renderedResult": "Gerendertes Ergebnis",
+			"record.rawResultUnavailable": "Rohergebnisse sind nur für Live-Toolaufrufe verfügbar",
+			"record.json": "JSON",
+			"record.parametersJson": "Parameter JSON",
+			"record.namedParametersJson": "{name} Parameter JSON",
+			"record.payloadJson": "Nutzlast JSON",
+			"record.outputJson": "Ergebnis JSON",
+			"record.thinking": "Nachdenken",
+			"record.wrapLines": "Zeilen umbrechen",
+			"code.source": "Code",
+			"code.output": "Ausgabe",
+			"code.copySource": "Code kopieren",
+			"code.copyOutput": "Ausgabe kopieren",
+			"code.originalJson": "Original JSON",
+			"code.running": "Laufen…",
+			"record.systemPromptMissing": "In dieser Anfrage gibt es keine Systemaufforderung",
+			"record.toolsMissing": "In dieser Anfrage sind keine Werkzeuge enthalten",
+			"record.systemPrompt": "Systemaufforderung",
+			"record.tools": "Werkzeuge",
+			"block.openSummary": "Zusammenfassung des Toolaufrufs „Block #{index} öffnen“.",
+			"block.openSummaryTitle": "Zusammenfassung des Tool-Aufrufs öffnen",
+			"block.label": "Block #{index} {type}",
+			"history.loadingTrajectory": "Ausführungsverlauf wird geladen…",
+			"history.loadingEarlier": "Früherer Verlauf wird geladen…",
+			"history.loadingEarlierAria": "Früherer Verlauf wird geladen…",
+			"history.loadEarlier": "Früheren Verlauf laden",
+			"history.clickToLoadEarlier": "Klicken Sie hier, um den früheren Verlauf zu laden",
+			"request.label": "Fordern Sie #{request} an",
+			"request.labelCompaction": "Anfrage #{request} · Komprimierung",
+			"request.compaction": "Verdichtung · {section}",
+			"request.compactionPurpose": "Verdichtung",
+			"request.retryProgress": "{retry} von {maximum}",
+			"request.collapsedSummary": "Reduzierte {kind}-Zusammenfassung, {summary}",
+			"request.collapsedTurn": "Runde",
+			"request.collapsedAssistant": "Assistent",
+			"request.collapsedTool": "Unteraufrufe",
+			"request.rowAria": "{request}{kind}, {content}",
+			"request.rowPrefix": "Anfrage {request}, ",
+			"request.rowAriaCompaction": "Anfrage {request}, Verdichtung",
+			"request.noContent": "kein Inhalt",
+			"summary.toolCalls.one": "Werkzeugaufruf {count}",
+			"summary.toolCalls.other": "{count} Toolaufrufe",
+			"summary.steps.one": "{count} Schritt",
+			"summary.steps.other": "{count} Schritte",
+			"details.event": "Veranstaltungsdetails",
+			"details.resize": "Ändern Sie die Größe der Veranstaltungsdetails",
+			"details.resizeTitle": "Ziehen Sie, um die Größe zu ändern. Zum Zurücksetzen doppelklicken.",
+			"details.close": "Details schließen",
+			"details.status": "Status",
+			"details.purpose": "Zweck",
+			"details.provider": "Anbieter",
+			"details.model": "Modell",
+			"details.toolCalls": "Werkzeugaufrufe",
+			"details.subtoolCalls": "Subtool-Aufrufe",
+			"details.error": "Fehler",
+			"details.lastAttemptError": "Fehler beim letzten Versuch",
+			"details.failure.auth": "Der API-Schlüssel ist ungültig",
+			"details.retry": "Erneut versuchen",
+			"details.retryDelay": "Wiederholungsverzögerung",
+			"details.result": "Ergebnis",
+			"details.compacted": "Verdichtet",
+			"details.assistantMessage": "Assistentennachricht",
+			"details.source": "Quelle",
+			"details.hierarchy": "Hierarchie",
+			"details.toolCall": "Werkzeugaufruf",
+			"timeline.aria": "Zeitleiste der Ausführungsverlauf",
+			"timeline.overviewAria": "Zeitleistenübersicht; Ziehen Sie horizontal, um Ereignisse zu fokussieren",
+			"timeline.noTimingData": "Keine Zeitdaten",
+			"timeline.total": "Insgesamt {duration}",
+			"timeline.started": "{time} gestartet",
+			"timeline.ttftDecoding": "TTFT {ttft} · Dekodierung {decoding}",
+			"layout.compacting": "Kontext verdichten…",
+			"layout.compactionFailed": "Die Komprimierung ist fehlgeschlagen",
+			"layout.compacted": "Kontext verdichtet",
+			"layout.toolCallOnly": "Nur Werkzeugaufruf",
+			"attachment.list": "Anhänge",
+			"attachment.imageName": "Bild {index}",
+			"layout.imageCount": "Bilder ×{count}",
+			"layout.fileAttachments": "Dateien ×{count}",
+			"layout.initialSystemPrompt": "Erste Systemaufforderung",
+			"layout.systemPromptUpdated": "Systemaufforderung aktualisiert",
+			"layout.toolsUpdated": "Werkzeuge aktualisiert",
+			"layout.toolAdded": "Tool hinzugefügt: {name}",
+			"layout.toolRemoved": "Entferntes Werkzeug: {name}",
+			"layout.toolUpdateNotice": "Werkzeuge aktualisiert",
+			"layout.toolsAdded": "Hinzugefügt: {names}",
+			"layout.toolsAddedCount": "{count} hinzugefügt",
+			"layout.toolsChanged": "{added} hinzugefügt, {removed} entfernt",
+			"layout.toolsRemoved": "Entfernt: {names}",
+			"layout.toolsRemovedCount": "{count} entfernt",
+			"layout.systemPromptAndToolsUpdated": "Systemaufforderung und Tools aktualisiert",
+			"layout.compactionInterrupted": "Die Verdichtung wurde vor der Fertigstellung unterbrochen."
+		};
+		/** Russian dictionary, checked against the English keys. */
+		const ru = {
+			"view.trajectory": "Траектория",
+			"toolbar.aria": "Панель инструментов траектории",
+			"toolbar.duration": "Продолжительность",
+			"toolbar.useActualDuration": "Использовать фактическую продолжительность",
+			"toolbar.useEqualWidth": "Используйте операции равной ширины",
+			"toolbar.actualTime": "Фактическое время",
+			"toolbar.turns": "Ходы",
+			"toolbar.expandTurns": "Развернуть ходы",
+			"toolbar.collapseTurns": "Свернуть ходы",
+			"toolbar.calls": "Вызовы",
+			"toolbar.expandCalls": "Развернуть вызовы",
+			"toolbar.collapseCalls": "Свернуть вызовы",
+			"toolbar.subCalls": "Вложенные вызовы",
+			"toolbar.expandSubCalls": "Развернуть вложенные вызовы",
+			"toolbar.collapseSubCalls": "Свернуть вложенные вызовы",
+			"toolbar.search": "Траектория поиска",
+			"toolbar.searchPlaceholder": "Поиск",
+			"kind.system": "СИСТЕМА",
+			"kind.user": "ПОЛЬЗОВАТЕЛЬ",
+			"kind.context": "КОНТЕКСТ",
+			"kind.compacted": "СЖАТО",
+			"kind.message": "Сообщение",
+			"kind.assistant": "АССИСТЕНТ",
+			"kind.tool": "ИНСТРУМЕНТ",
+			"kind.subtool": "ВЛОЖЕННЫЙ ИНСТРУМЕНТ",
+			"kind.sub": "Саб",
+			"column.input": "Ввод",
+			"column.output": "Выход",
+			"column.think": "Подумайте",
+			"column.time": "Время",
+			"column.model": "Модель",
+			"column.tools": "Инструменты",
+			"turn.label": "Ход {turn}",
+			"section.betweenTurns": "Между ходами",
+			"group.message": "Сообщение",
+			"group.step": "Шаг {step}",
+			"group.compaction": "Уплотнение {seq}",
+			"status.failed": "Не удалось",
+			"status.pending": "Ожидается",
+			"status.completed": "Завершено",
+			"timing.notAvailable": "Недоступно",
+			"timing.notRecorded": "Не записано",
+			"timing.stepStartUnavailable": "Начало шага недоступно",
+			"timing.firstTokenUnavailable": "Первый токен недоступен",
+			"timing.usageUnavailable": "Использование недоступно",
+			"timing.outputTokensUnavailable": "Выходные токены недоступны.",
+			"timing.durationTooShort": "Продолжительность слишком коротка",
+			"timing.showLocalTime": "Показать местное время",
+			"timing.showUnixTimestamp": "Показать временную метку Unix",
+			"timing.started": "Началось",
+			"timing.totalDuration": "Общая продолжительность",
+			"timing.ttft": "TTFT",
+			"timing.generation": "Поколение",
+			"timing.throughput": "Пропускная способность",
+			"timing.duration": "Продолжительность",
+			"timing.source": "Источник синхронизации",
+			"timing.sessionTimestamps": "Временные метки сеанса",
+			"timing.sessionTimestampsRunning": "Временные метки сеанса (работает)",
+			"timing.request": "Запрос времени",
+			"unit.milliseconds": "{value} мс",
+			"unit.seconds": "{value} с",
+			"unit.tokens": "{value} ток",
+			"unit.tokensPerSecond": "{value} ток/с",
+			"usage.tokens": "Токены",
+			"usage.reasoning": "Рассуждение",
+			"usage.content": "Содержание",
+			"usage.notReported": "Об использовании не сообщается",
+			"usage.input": "Ввод",
+			"usage.cached": "Кэшированный",
+			"usage.cacheCreated": "Кэш создан",
+			"usage.other": "Другое",
+			"usage.output": "Выход",
+			"usage.thisRequest": "Этот запрос",
+			"usage.sessionCumulative": "Совокупный сеанс",
+			"options.notRecorded": "Опции не записаны",
+			"options.json": "Варианты запроса JSON",
+			"source.unknown": "Неизвестно",
+			"source.user": "Пользователь",
+			"source.plugin": "Плагин",
+			"source.pluginNamed": "Плагин · {plugin}",
+			"source.goal": "Цель",
+			"source.goalRound": "Гол · Раунд {round}",
+			"source.notRecorded": "Источник не записан",
+			"source.messageJson": "Источник сообщения JSON",
+			"tab.summary": "Резюме",
+			"tab.rawOutput": "Необработанный вывод",
+			"tab.preview": "Предварительный просмотр",
+			"tab.raw": "сырой",
+			"tab.source": "Источник",
+			"tab.payload": "Полезная нагрузка",
+			"tab.result": "Результат",
+			"tab.schema": "Схема",
+			"tab.timing": "Тайминг",
+			"tab.diff": "Разница",
+			"tab.systemPrompt": "Системная подсказка",
+			"tab.tools": "Инструменты",
+			"tab.options": "Опции",
+			"tab.usage": "Использование",
+			"record.toolCallOnly": "(только вызов инструмента)",
+			"record.noContent": "Нет контента",
+			"record.noPayload": "Полезная нагрузка не захвачена",
+			"record.noResult": "Результат не зафиксирован",
+			"record.noOutput": "Нет вывода",
+			"record.schemaUnavailable": "Схема недоступна",
+			"record.parameters": "Параметры",
+			"record.resultJson": "Результат JSON",
+			"record.rawResult": "Исходный результат",
+			"record.renderedResult": "Отображаемый результат",
+			"record.rawResultUnavailable": "Исходные результаты доступны только для вызовов инструментов в реальном времени",
+			"record.json": "JSON",
+			"record.parametersJson": "параметры JSON",
+			"record.namedParametersJson": "{name} параметры JSON",
+			"record.payloadJson": "Полезная нагрузка JSON",
+			"record.outputJson": "Результат JSON",
+			"record.thinking": "Размышление",
+			"record.wrapLines": "Переносить строки",
+			"code.source": "Код",
+			"code.output": "Выход",
+			"code.copySource": "Скопировать код",
+			"code.copyOutput": "Копировать вывод",
+			"code.originalJson": "Исходный JSON",
+			"code.running": "Бег…",
+			"record.systemPromptMissing": "В этом запросе нет системного запроса",
+			"record.toolsMissing": "В этом запросе нет инструментов",
+			"record.systemPrompt": "Системная подсказка",
+			"record.tools": "Инструменты",
+			"block.openSummary": "Открыть сводку вызовов инструментов для блока №{index}",
+			"block.openSummaryTitle": "Открыть сводку вызовов инструментов",
+			"block.label": "Блок №{index} {type}",
+			"history.loadingTrajectory": "Загрузка траектории…",
+			"history.loadingEarlier": "Загрузка более ранней истории…",
+			"history.loadingEarlierAria": "Загрузка более ранней истории…",
+			"history.loadEarlier": "Загрузить предыдущую историю",
+			"history.clickToLoadEarlier": "Нажмите, чтобы загрузить предыдущую историю",
+			"request.label": "Запрос № {request}",
+			"request.labelCompaction": "Запрос №{request} · Сжатие",
+			"request.compaction": "Уплотнение · {section}",
+			"request.compactionPurpose": "Уплотнение",
+			"request.retryProgress": "{retry} из {maximum}",
+			"request.collapsedSummary": "Свернутая сводка {kind}, {summary}",
+			"request.collapsedTurn": "ход",
+			"request.collapsedAssistant": "помощник",
+			"request.collapsedTool": "вложенные вызовы",
+			"request.rowAria": "{request}{kind}, {content}",
+			"request.rowPrefix": "Запрос {request}, ",
+			"request.rowAriaCompaction": "Запрос {request}, уплотнение",
+			"request.noContent": "нет содержания",
+			"summary.toolCalls.one": "{count} вызов инструмента",
+			"summary.toolCalls.other": "{count} вызовов инструментов",
+			"summary.steps.one": "{count} шаг",
+			"summary.steps.other": "{count} шагов",
+			"details.event": "Подробности мероприятия",
+			"details.resize": "Изменить размер сведений о мероприятии",
+			"details.resizeTitle": "Перетащите, чтобы изменить размер. Дважды щелкните для сброса.",
+			"details.close": "Закрыть детали",
+			"details.status": "Статус",
+			"details.purpose": "Цель",
+			"details.provider": "Поставщик",
+			"details.model": "Модель",
+			"details.toolCalls": "Вызовы инструментов",
+			"details.subtoolCalls": "Вызовы подинструментов",
+			"details.error": "Ошибка",
+			"details.lastAttemptError": "Ошибка последней попытки",
+			"details.failure.auth": "Ключ API недействителен.",
+			"details.retry": "Повторить",
+			"details.retryDelay": "Задержка повтора",
+			"details.result": "Результат",
+			"details.compacted": "Уплотненный",
+			"details.assistantMessage": "Сообщение помощника",
+			"details.source": "Источник",
+			"details.hierarchy": "Иерархия",
+			"details.toolCall": "Вызов инструмента",
+			"timeline.aria": "Хронология траектории",
+			"timeline.overviewAria": "Обзор временной шкалы; перетащите горизонтально, чтобы сфокусировать события",
+			"timeline.noTimingData": "Нет данных о времени",
+			"timeline.total": "Всего {duration}",
+			"timeline.started": "Запустил {time}",
+			"timeline.ttftDecoding": "TTFT {ttft} · Декодирование {decoding}",
+			"layout.compacting": "Сжатие контекста…",
+			"layout.compactionFailed": "Сжатие не удалось",
+			"layout.compacted": "Контекст сжат",
+			"layout.toolCallOnly": "Только вызов инструмента",
+			"attachment.list": "Вложения",
+			"attachment.imageName": "Изображение {index}",
+			"layout.imageCount": "Изображения ×{count}",
+			"layout.fileAttachments": "Файлы ×{count}",
+			"layout.initialSystemPrompt": "Начальная системная подсказка",
+			"layout.systemPromptUpdated": "Системная подсказка обновлена",
+			"layout.toolsUpdated": "Инструменты обновлены",
+			"layout.toolAdded": "Добавлен инструмент: {name}.",
+			"layout.toolRemoved": "Инструмент удален: {name}.",
+			"layout.toolUpdateNotice": "Инструменты обновлены",
+			"layout.toolsAdded": "Добавлено: {names}",
+			"layout.toolsAddedCount": "{count} добавлен",
+			"layout.toolsChanged": "{added} добавлен, {removed} удален.",
+			"layout.toolsRemoved": "Удалено: {names}.",
+			"layout.toolsRemovedCount": "{count} удален.",
+			"layout.systemPromptAndToolsUpdated": "Системная подсказка и инструменты обновлены",
+			"layout.compactionInterrupted": "Уплотнение было прервано до завершения."
+		};
+		/** Portuguese dictionary, checked against the English keys. */
+		const pt = {
+			"view.trajectory": "Trajetória",
+			"toolbar.aria": "Barra de ferramentas Trajetória",
+			"toolbar.duration": "Duração",
+			"toolbar.useActualDuration": "Usar a duração real",
+			"toolbar.useEqualWidth": "Use operações de largura igual",
+			"toolbar.actualTime": "Hora real",
+			"toolbar.turns": "Turnos",
+			"toolbar.expandTurns": "Expandir turnos",
+			"toolbar.collapseTurns": "Recolher turnos",
+			"toolbar.calls": "Chamadas",
+			"toolbar.expandCalls": "Expandir chamadas",
+			"toolbar.collapseCalls": "Recolher chamadas",
+			"toolbar.subCalls": "Subchamadas",
+			"toolbar.expandSubCalls": "Expandir subchamadas",
+			"toolbar.collapseSubCalls": "Recolher subchamadas",
+			"toolbar.search": "Trajetória de pesquisa",
+			"toolbar.searchPlaceholder": "Pesquisar",
+			"kind.system": "SISTEMA",
+			"kind.user": "USUÁRIO",
+			"kind.context": "CONTEXTO",
+			"kind.compacted": "COMPACTADO",
+			"kind.message": "Mensagem",
+			"kind.assistant": "ASSISTENTE",
+			"kind.tool": "FERRAMENTA",
+			"kind.subtool": "SUBFERRAMENTA",
+			"kind.sub": "Sub",
+			"column.input": "Entrada",
+			"column.output": "Saída",
+			"column.think": "Pense",
+			"column.time": "Hora",
+			"column.model": "Modelo",
+			"column.tools": "Ferramentas",
+			"turn.label": "Turno {turn}",
+			"section.betweenTurns": "Entre turnos",
+			"group.message": "Mensagem",
+			"group.step": "Etapa {step}",
+			"group.compaction": "Compactação {seq}",
+			"status.failed": "Falha",
+			"status.pending": "Pendente",
+			"status.completed": "Concluído",
+			"timing.notAvailable": "Não disponível",
+			"timing.notRecorded": "Não gravado",
+			"timing.stepStartUnavailable": "Início da etapa indisponível",
+			"timing.firstTokenUnavailable": "Primeiro token indisponível",
+			"timing.usageUnavailable": "Uso indisponível",
+			"timing.outputTokensUnavailable": "Tokens de saída indisponíveis",
+			"timing.durationTooShort": "Duração muito curta",
+			"timing.showLocalTime": "Mostrar hora local",
+			"timing.showUnixTimestamp": "Mostrar carimbo de data/hora Unix",
+			"timing.started": "Iniciado",
+			"timing.totalDuration": "Duração total",
+			"timing.ttft": "TTFT",
+			"timing.generation": "Geração",
+			"timing.throughput": "Taxa de transferência",
+			"timing.duration": "Duração",
+			"timing.source": "Fonte de tempo",
+			"timing.sessionTimestamps": "Carimbos de data e hora da sessão",
+			"timing.sessionTimestampsRunning": "Carimbos de data/hora da sessão (em execução)",
+			"timing.request": "Tempo de solicitação",
+			"unit.milliseconds": "{value} ms",
+			"unit.seconds": "{value} segundos",
+			"unit.tokens": "{value} tok",
+			"unit.tokensPerSecond": "{value} tok/s",
+			"usage.tokens": "Fichas",
+			"usage.reasoning": "Raciocínio",
+			"usage.content": "Conteúdo",
+			"usage.notReported": "Uso não relatado",
+			"usage.input": "Entrada",
+			"usage.cached": "Em cache",
+			"usage.cacheCreated": "Cache criado",
+			"usage.other": "Outro",
+			"usage.output": "Saída",
+			"usage.thisRequest": "Este pedido",
+			"usage.sessionCumulative": "Sessão cumulativa",
+			"options.notRecorded": "Opções não registradas",
+			"options.json": "Opções de solicitação JSON",
+			"source.unknown": "Desconhecido",
+			"source.user": "Usuário",
+			"source.plugin": "Plug-in",
+			"source.pluginNamed": "Plug-in · {plugin}",
+			"source.goal": "Objetivo",
+			"source.goalRound": "Meta · Rodada {round}",
+			"source.notRecorded": "Fonte não registrada",
+			"source.messageJson": "Fonte da mensagem JSON",
+			"tab.summary": "Resumo",
+			"tab.rawOutput": "Saída Bruta",
+			"tab.preview": "Visualização",
+			"tab.raw": "Cru",
+			"tab.source": "Fonte",
+			"tab.payload": "Carga útil",
+			"tab.result": "Resultado",
+			"tab.schema": "Esquema",
+			"tab.timing": "Tempo",
+			"tab.diff": "Diferença",
+			"tab.systemPrompt": "Alerta do sistema",
+			"tab.tools": "Ferramentas",
+			"tab.options": "Opções",
+			"tab.usage": "Uso",
+			"record.toolCallOnly": "(somente chamada de ferramenta)",
+			"record.noContent": "Sem conteúdo",
+			"record.noPayload": "Nenhuma carga capturada",
+			"record.noResult": "Nenhum resultado capturado",
+			"record.noOutput": "Sem saída",
+			"record.schemaUnavailable": "Esquema indisponível",
+			"record.parameters": "Parâmetros",
+			"record.resultJson": "Resultado JSON",
+			"record.rawResult": "Resultado original",
+			"record.renderedResult": "Resultado renderizado",
+			"record.rawResultUnavailable": "Os resultados originais só estão disponíveis para chamadas de ferramentas ao vivo",
+			"record.json": "JSON",
+			"record.parametersJson": "parâmetros JSON",
+			"record.namedParametersJson": "{name} parâmetros JSON",
+			"record.payloadJson": "Carga útil JSON",
+			"record.outputJson": "Resultado JSON",
+			"record.thinking": "Pensando",
+			"record.wrapLines": "Quebrar linhas",
+			"code.source": "Código",
+			"code.output": "Saída",
+			"code.copySource": "Copiar código",
+			"code.copyOutput": "Copiar saída",
+			"code.originalJson": "JSON original",
+			"code.running": "Correndo…",
+			"record.systemPromptMissing": "Nenhum prompt do sistema nesta solicitação",
+			"record.toolsMissing": "Nenhuma ferramenta nesta solicitação",
+			"record.systemPrompt": "Alerta do sistema",
+			"record.tools": "Ferramentas",
+			"block.openSummary": "Resumo da chamada da ferramenta do bloco aberto #{index}",
+			"block.openSummaryTitle": "Resumo de chamada de ferramenta aberta",
+			"block.label": "Bloco nº{index} {type}",
+			"history.loadingTrajectory": "Carregando trajetória…",
+			"history.loadingEarlier": "Carregando histórico anterior…",
+			"history.loadingEarlierAria": "Carregando histórico anterior…",
+			"history.loadEarlier": "Carregar histórico anterior",
+			"history.clickToLoadEarlier": "Clique para carregar o histórico anterior",
+			"request.label": "Solicitação nº{request}",
+			"request.labelCompaction": "Solicitação nº{request} · Compactação",
+			"request.compaction": "Compactação · {section}",
+			"request.compactionPurpose": "Compactação",
+			"request.retryProgress": "{retry} de {maximum}",
+			"request.collapsedSummary": "Resumo {kind} recolhido, {summary}",
+			"request.collapsedTurn": "turno",
+			"request.collapsedAssistant": "assistente",
+			"request.collapsedTool": "subchamadas",
+			"request.rowAria": "{request}{kind}, {content}",
+			"request.rowPrefix": "Solicitação {request}, ",
+			"request.rowAriaCompaction": "Solicitação {request}, compactação",
+			"request.noContent": "sem conteúdo",
+			"summary.toolCalls.one": "{count} chamada de ferramenta",
+			"summary.toolCalls.other": "{count} chamadas de ferramenta",
+			"summary.steps.one": "{count} etapa",
+			"summary.steps.other": "{count} etapas",
+			"details.event": "Detalhes do evento",
+			"details.resize": "Redimensionar detalhes do evento",
+			"details.resizeTitle": "Arraste para redimensionar. Clique duas vezes para redefinir.",
+			"details.close": "Fechar detalhes",
+			"details.status": "Estado",
+			"details.purpose": "Objetivo",
+			"details.provider": "Provedor",
+			"details.model": "Modelo",
+			"details.toolCalls": "Chamadas de ferramentas",
+			"details.subtoolCalls": "Chamadas de subferramenta",
+			"details.error": "Erro",
+			"details.lastAttemptError": "Erro na última tentativa",
+			"details.failure.auth": "A chave API é inválida",
+			"details.retry": "Tentar novamente",
+			"details.retryDelay": "Atraso na nova tentativa",
+			"details.result": "Resultado",
+			"details.compacted": "Compactado",
+			"details.assistantMessage": "Mensagem do assistente",
+			"details.source": "Fonte",
+			"details.hierarchy": "Hierarquia",
+			"details.toolCall": "Chamada de ferramenta",
+			"timeline.aria": "Linha do tempo da trajetória",
+			"timeline.overviewAria": "Visão geral da linha do tempo; arraste horizontalmente para focar eventos",
+			"timeline.noTimingData": "Sem dados de tempo",
+			"timeline.total": "Total {duration}",
+			"timeline.started": "Iniciado {time}",
+			"timeline.ttftDecoding": "TTFT {ttft} · Decodificação {decoding}",
+			"layout.compacting": "Contexto compactado…",
+			"layout.compactionFailed": "Falha na compactação",
+			"layout.compacted": "Contexto compactado",
+			"layout.toolCallOnly": "Somente chamada de ferramenta",
+			"attachment.list": "Anexos",
+			"attachment.imageName": "Imagem {index}",
+			"layout.imageCount": "Imagens ×{count}",
+			"layout.fileAttachments": "Arquivos ×{count}",
+			"layout.initialSystemPrompt": "Prompt inicial do sistema",
+			"layout.systemPromptUpdated": "Prompt do sistema atualizado",
+			"layout.toolsUpdated": "Ferramentas atualizadas",
+			"layout.toolAdded": "Ferramenta adicionada: {name}",
+			"layout.toolRemoved": "Ferramenta removida: {name}",
+			"layout.toolUpdateNotice": "Ferramentas atualizadas",
+			"layout.toolsAdded": "Adicionado: {names}",
+			"layout.toolsAddedCount": "{count} adicionado",
+			"layout.toolsChanged": "{added} adicionado, {removed} removido",
+			"layout.toolsRemoved": "Removido: {names}",
+			"layout.toolsRemovedCount": "{count} removido",
+			"layout.systemPromptAndToolsUpdated": "Prompt do sistema e ferramentas atualizadas",
+			"layout.compactionInterrupted": "A compactação foi interrompida antes da conclusão."
+		};
 		//#endregion
-		//#region ../../util/values/src/partial-json.ts
+		//#region ../../util/values/lib/index.js
 		/**
 		* Lazily scanned view of one JSON object's top-level fields, built from text
 		* that may still be streaming or from an already parsed object. Nothing is
@@ -1051,8 +2323,7 @@ window.__ModuleLoader__.load({
 				this.#current = null;
 			}
 		};
-		//#endregion
-		//#region ../../util/values/src/index.ts
+		/** Duplicate-install-safe JSON and immutable-value helpers. @module @deepseek-ai/dsh-util-values */
 		/**
 		* Mark an unreachable closed-union branch.
 		* @param value - impossible value; an unhandled typed variant fails at the call site.
@@ -1064,7 +2335,7 @@ window.__ModuleLoader__.load({
 			throw new Error(`unreachable variant${context ? ` in ${context}` : ""}: ${rendered}`);
 		}
 		//#endregion
-		//#region ../../llm/llm/src/assistant-stream.ts
+		//#region ../../llm/llm/lib/types/assistant-stream.js
 		/**
 		* Whether one chunk carries the model's first output token for latency measurement.
 		* @param chunk - any stream chunk.
@@ -3236,14 +4507,17 @@ window.__ModuleLoader__.load({
 			}
 		}
 		function recordedLanguage(schemaRaw) {
-			const description = record(record(record(parseRecord(schemaRaw)?.parameters)?.properties)?.code)?.description;
-			if (typeof description !== "string") return void 0;
-			const typescript = /\bTypeScript\b/i.test(description);
-			if (typescript === /\bPython\b/i.test(description)) return void 0;
+			const schema = parseRecord(schemaRaw);
+			const declaredLanguage = typeof schema?.description === "string" ? /^Execute a program in `([^`]+)`/.exec(schema.description)?.[1]?.toLowerCase() : void 0;
+			if (declaredLanguage !== void 0 && declaredLanguage !== "typescript" && declaredLanguage !== "python") return void 0;
+			const description = record(record(record(schema?.parameters)?.properties)?.code)?.description;
+			const typescript = declaredLanguage === "typescript" || typeof description === "string" && /\bTypeScript\b/i.test(description);
+			if (typescript === (declaredLanguage === "python" || typeof description === "string" && /\bPython\b/i.test(description))) return void 0;
 			return typescript ? "typescript" : "python";
 		}
 		/**
 		* Resolve a PTC program without guessing its language from source or current runtime settings.
+		* Unknown explicit languages or conflicting recorded hints leave the source unhighlighted.
 		* @param cell - Recorded tool arguments and the schema visible at call time.
 		* @returns The program, or undefined for another tool or unsupported arguments.
 		*/
@@ -3263,7 +4537,7 @@ window.__ModuleLoader__.load({
 		}
 		//#endregion
 		//#region \0dsh-css:/home/runner/work/deepseek-harness/deepseek-harness/packages/client/ui-trajectory/src/client/TrajectoryTable.module.css.mjs
-		const css$3 = ".Y0dWHa_split{--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2);background:var(--dsw-alias-bg-layer-1);flex:1;width:100%;min-height:0;display:flex;position:relative;overflow:hidden;container-type:inline-size}.Y0dWHa_tablePane{min-width:0;padding-bottom:var(--dsh-trajectory-bottom-clearance,0px);flex:1;position:relative;overflow:hidden auto;container:Y0dWHa_trajectory-table/inline-size}.Y0dWHa_historyLoading{z-index:5;pointer-events:none;height:0;position:sticky;top:0;overflow:visible}.Y0dWHa_historyLoadingBar{box-sizing:border-box;border-bottom:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);width:100%;height:30px;color:var(--dsw-alias-label-secondary);font:var(--dsw-font-xxs-12);justify-content:center;align-items:center;gap:6px;display:flex}.Y0dWHa_table tbody .Y0dWHa_historyLoadRow td{height:30px;padding:0}.Y0dWHa_table tbody .Y0dWHa_historyLoadRow+tr[data-turn-start=true] td:before{content:none}.Y0dWHa_historyLoadButton{background:var(--dsw-alias-bg-layer-1);width:100%;height:29px;color:var(--dsw-alias-label-secondary);cursor:pointer;font:var(--dsw-font-xxs-12);border:0;justify-content:center;align-items:center;gap:6px;display:flex}.Y0dWHa_historyLoadButton:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}.Y0dWHa_historyLoadButton:focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:-2px}.Y0dWHa_historyLoadButton:disabled{cursor:default}.Y0dWHa_visuallyHidden{clip:rect(0 0 0 0);white-space:nowrap;width:1px;height:1px;position:absolute;overflow:hidden}.Y0dWHa_table:not([data-scroll-ready=true]){visibility:hidden}.Y0dWHa_table{--trajectory-turn-accent:color-mix(in srgb, var(--dsw-static-blue-500) 22%, var(--dsw-alias-bg-layer-1));border-spacing:0;table-layout:fixed;width:100%;min-width:0;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);font:var(--dsw-font-xxs-12)}.Y0dWHa_eventColumn{width:122px}.Y0dWHa_eventColumn:where(:lang(zh)){width:84px}.Y0dWHa_contentColumn{width:auto}.Y0dWHa_table th{z-index:3;box-sizing:border-box;border-bottom:.5px solid var(--dsw-alias-border-l2);height:30px;color:var(--dsw-alias-label-tertiary);background:var(--dsw-specific-sidebar-fill);font:var(--dsw-font-xxs-12);text-align:left;text-overflow:ellipsis;user-select:none;white-space:nowrap;padding:0 8px;font-weight:500;position:sticky;top:0;overflow:hidden}.Y0dWHa_eventHeader{text-align:right!important;padding-right:4px!important}.Y0dWHa_table td{box-sizing:border-box;border-bottom:.5px solid var(--dsw-alias-border-l1);text-overflow:ellipsis;white-space:nowrap;height:30px;padding:0 8px;overflow:hidden}.Y0dWHa_table tbody .Y0dWHa_virtualSpacer{pointer-events:none}.Y0dWHa_table tbody .Y0dWHa_virtualSpacer td{height:var(--trajectory-virtual-spacer-height);border:0;padding:0}.Y0dWHa_table tbody tr:not([data-collapsed-summary]):not([data-virtual-spacer]):not([data-history-load]){cursor:default;transition:background-color .12s var(--ds-ease-in-out), opacity .12s var(--ds-ease-in-out);outline:none}.Y0dWHa_table tbody tr[data-timeline-focus=outside]{opacity:.24}.Y0dWHa_table tbody tr:not([data-collapsed-summary]):not([data-virtual-spacer]):not([data-history-load]):not([data-selected=true]):hover{background:var(--dsw-alias-interactive-bg-hover)}.Y0dWHa_table tbody tr[data-request-only=true]:hover{background:0 0}.Y0dWHa_table tbody tr[data-request-only=true] td{border-bottom:0;height:0;padding-top:0;padding-bottom:0}.Y0dWHa_table tbody tr[data-terminal-request-boundary=true] td{height:9px}.Y0dWHa_table tbody tr[data-request-only=true] .Y0dWHa_turnRail{top:-15px;bottom:0}.Y0dWHa_table tbody tr:not([data-collapsed-summary]):focus-visible{box-shadow:inset 0 0 0 1px var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary))}.Y0dWHa_table tbody tr[data-selected=true]{background:var(--dsw-alias-interactive-bg-active)}.Y0dWHa_requestBoundaryControl{--request-boundary-base-left:12px;z-index:6;top:-8px;left:calc(var(--request-boundary-base-left) + var(--request-boundary-offset,0px));cursor:pointer;background:0 0;border:0;width:16px;height:16px;padding:0;position:absolute}.Y0dWHa_requestBoundaryControl:before{corner-shape:round;background:var(--dsw-alias-label-caption);width:5px;height:5px;box-shadow:0 0 0 2px var(--dsw-alias-bg-layer-1), 0 0 0 3px transparent;content:\"\";transition:background .12s var(--ds-ease-in-out), box-shadow .12s var(--ds-ease-in-out);border-radius:50%;position:absolute;top:5.5px;left:5.5px}.Y0dWHa_requestBoundaryControl:after{border:.5px solid var(--dsw-alias-border-l1);width:max-content;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);content:attr(data-label);font:9px/12px var(--ds-font-family-code);opacity:0;pointer-events:none;transition:opacity .12s var(--ds-ease-in-out), transform .12s var(--ds-ease-in-out);user-select:none;white-space:nowrap;border-radius:2px;padding:0 4px;position:absolute;top:2px;left:17px;transform:translate(-2px);box-shadow:0 2px 6px #0000001f}.Y0dWHa_requestBoundaryControl:hover:before,.Y0dWHa_requestBoundaryControl:focus-visible:before{background:var(--dsw-alias-brand-primary-new-colorprimary-new-color)}.Y0dWHa_requestBoundaryControlActive:before,.Y0dWHa_requestBoundaryControlActive:hover:before,.Y0dWHa_requestBoundaryControlActive:focus-visible:before{background:color-mix(in srgb, var(--dsw-alias-brand-primary-new-colorprimary-new-color) 18%, var(--dsw-alias-bg-layer-1));box-shadow:0 0 0 1.5px var(--dsw-alias-state-business-primary)}.Y0dWHa_requestBoundaryControl[data-request-status=error]:before,.Y0dWHa_requestBoundaryControl[data-request-status=error]:hover:before,.Y0dWHa_requestBoundaryControl[data-request-status=error]:focus-visible:before{background:var(--dsw-alias-state-error-primary)}.Y0dWHa_requestBoundaryControl:hover:after,.Y0dWHa_requestBoundaryControl:focus-visible:after{opacity:1;transform:translate(0)}.Y0dWHa_requestBoundaryControl:focus-visible{outline:none}.Y0dWHa_table tbody tr:has(.Y0dWHa_requestBoundaryControl:hover):not([data-selected=true]){background:0 0}.Y0dWHa_event{position:relative}.Y0dWHa_turnRail,.Y0dWHa_selectionRail{background:var(--dsw-alias-brand-primary-new-colorprimary-new-color);pointer-events:none;position:absolute;left:0}.Y0dWHa_turnRail{z-index:4;background:var(--trajectory-turn-accent);width:2px;top:-1px;bottom:-1px}.Y0dWHa_table tbody tr[data-turn-end=true] .Y0dWHa_turnRail{bottom:0}.Y0dWHa_selectionRail{z-index:5;width:3px;top:0;bottom:0}.Y0dWHa_table tbody tr[data-error=true] .Y0dWHa_turnRail{background:color-mix(in srgb, var(--dsw-alias-state-error-primary) 22%, var(--dsw-alias-bg-layer-1))}.Y0dWHa_table tbody tr[data-error=true] .Y0dWHa_selectionRail{background:var(--dsw-alias-state-error-primary)}.Y0dWHa_table tbody tr[data-turn-start=true] td{position:relative;overflow:visible}.Y0dWHa_table tbody tr[data-turn-start=true]:not(:first-child) td:before{z-index:1;background:var(--dsw-alias-border-l1);content:\"\";pointer-events:none;height:2px;position:absolute;top:0;left:0;right:0;transform:translateY(-50%)}.Y0dWHa_event{padding-left:36px!important;padding-right:4px!important;overflow:visible!important}.Y0dWHa_turnLabel{z-index:3;box-sizing:border-box;width:max-content;color:var(--dsw-alias-label-tertiary);background:var(--dsw-alias-bg-module-platform);font:8px/10px var(--ds-font-family-code);font-variant-numeric:tabular-nums;user-select:none;white-space:nowrap;border-radius:0 0 2px;flex:none;align-items:center;padding:1px 5px;display:inline-grid;position:absolute;top:0;left:0}.Y0dWHa_turnLabelFull,.Y0dWHa_turnLabelCompact{opacity:1;white-space:nowrap;grid-area:1/1;max-width:64px;overflow:hidden}.Y0dWHa_turnLabelCompact{opacity:0;max-width:0}.Y0dWHa_turnLabelActive{color:color-mix(in srgb, var(--dsw-static-blue-500) 55%, var(--dsw-alias-label-tertiary));background:var(--trajectory-turn-accent)}.Y0dWHa_eventInner{justify-content:flex-start;align-items:center;min-width:0;height:100%;display:flex}.Y0dWHa_kindSlot{flex:none;justify-content:flex-end;align-items:flex-end;width:76px;display:flex}.Y0dWHa_kindSlot:where(:lang(zh)){width:44px}.Y0dWHa_kindSlot [role=tooltip]{background:var(--dsw-alias-bg-layer-2);box-shadow:var(--dsw-elevation-panel);color:var(--dsw-alias-label-primary);border:0}.Y0dWHa_content{color:var(--dsw-alias-label-primary);padding-left:4px!important}.Y0dWHa_kindTag{box-sizing:border-box;border-radius:var(--dsw-radius-xs);letter-spacing:.035em;user-select:none;border:1px solid #0000;flex:none;align-items:center;height:19px;padding:0 5px;font-size:10px;font-weight:650;line-height:16px;display:inline-flex}.Y0dWHa_kindTagIcon{opacity:0;flex:none;justify-content:center;align-items:center;width:0;height:13px;display:inline-flex;overflow:hidden;transform:scale(.8)}.Y0dWHa_kindTagLabel{opacity:1;white-space:nowrap;max-width:72px;display:inline-block;overflow:hidden}.Y0dWHa_table .Y0dWHa_kindSlot .Y0dWHa_message{justify-content:center;width:100%}@container Y0dWHa_trajectory-table (width<=620px){.Y0dWHa_eventColumn{width:50px}.Y0dWHa_event{padding-left:28px!important;padding-right:3px!important}.Y0dWHa_requestBoundaryControl{--request-boundary-base-left:6px}.Y0dWHa_kindSlot{width:19px}.Y0dWHa_kindTag,.Y0dWHa_table .Y0dWHa_kindSlot .Y0dWHa_message{justify-content:center;width:19px;padding-left:0;padding-right:0}.Y0dWHa_kindTagIcon{opacity:1;width:13px;transform:scale(1)}.Y0dWHa_kindTagLabel,.Y0dWHa_turnLabelFull{opacity:0;max-width:0}.Y0dWHa_turnLabelCompact{opacity:1;max-width:64px}}@media (prefers-reduced-motion:no-preference){.Y0dWHa_eventColumn,.Y0dWHa_event,.Y0dWHa_requestBoundaryControl,.Y0dWHa_kindSlot,.Y0dWHa_kindTag,.Y0dWHa_kindTagIcon,.Y0dWHa_kindTagLabel,.Y0dWHa_turnLabelFull,.Y0dWHa_turnLabelCompact{transition-duration:.18s;transition-timing-function:var(--ds-ease-in-out)}.Y0dWHa_eventColumn,.Y0dWHa_kindSlot{transition-property:width}.Y0dWHa_event{transition-property:padding-right,padding-left}.Y0dWHa_requestBoundaryControl{transition-property:left}.Y0dWHa_kindTag{transition-property:padding-right,padding-left}.Y0dWHa_kindTagIcon{transition-property:width,opacity,transform}.Y0dWHa_kindTagLabel,.Y0dWHa_turnLabelFull,.Y0dWHa_turnLabelCompact{transition-property:max-width,opacity}}.Y0dWHa_user{color:var(--dsw-alias-state-business-primary);background:var(--dsw-alias-state-business-tertiary)}.Y0dWHa_systemNeutral{color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-module-platform)}.Y0dWHa_contextGreen{color:color-mix(in srgb, var(--dsw-alias-state-success-primary) 68%, var(--dsw-alias-label-secondary));background:var(--dsw-alias-state-success-tertiary)}.Y0dWHa_compacted{color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-module-platform)}.Y0dWHa_compactedSummary{font:var(--dsw-font-xs-13);margin-top:12px;padding:0 0 14px}.Y0dWHa_promptDiffSections{flex-direction:column;gap:14px;max-height:100%;padding:10px 14px 14px;display:flex;overflow:auto}.Y0dWHa_promptDiffSection{min-width:0}.Y0dWHa_promptDiffTitle{color:var(--dsw-alias-label-secondary);font:var(--dsw-font-xs-strong-13);user-select:none;margin:0 0 6px}.Y0dWHa_promptDiff{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);font:11px/17px var(--ds-font-family-code);white-space:pre;margin:0;overflow:auto}.Y0dWHa_promptDiff span{min-width:max-content;padding:0 6px;display:block}.Y0dWHa_promptDiffLinemeta{color:var(--dsw-alias-label-caption);background:var(--dsw-alias-bg-module-platform);user-select:none}.Y0dWHa_promptDiffLinecontext{color:var(--dsw-alias-label-secondary)}.Y0dWHa_promptDiffLineadded{color:color-mix(in srgb, var(--dsw-alias-state-success-primary) 72%, var(--dsw-alias-label-primary));background:var(--dsw-alias-state-success-tertiary)}.Y0dWHa_promptDiffLineremoved{color:var(--dsw-alias-state-error-primary);background:color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, var(--dsw-alias-bg-layer-1))}.Y0dWHa_assistantVioletBright{color:color-mix(in srgb, var(--dsw-alias-brand-primary-new-colorprimary-new-color) 60%, var(--dsw-alias-state-error-secondary));background:color-mix(in srgb, color-mix(in srgb, var(--dsw-alias-brand-primary-new-colorprimary-new-color) 55%, var(--dsw-alias-state-error-secondary)) 15%, var(--dsw-alias-bg-layer-1))}.Y0dWHa_toolAmber{color:var(--dsw-alias-state-warn-label);background:var(--dsw-alias-state-warn-tertiary)}.Y0dWHa_subtoolAmber{color:color-mix(in srgb, var(--dsw-alias-state-warn-label) 62%, var(--dsw-alias-label-tertiary));background:color-mix(in srgb, var(--dsw-alias-state-warn-tertiary) 58%, var(--dsw-alias-bg-layer-1))}.Y0dWHa_contentText{text-overflow:ellipsis;white-space:nowrap;min-width:0;display:block;overflow:hidden}.Y0dWHa_toolCallOnly{color:var(--dsw-alias-label-tertiary)}.Y0dWHa_table tbody tr[data-collapsed-summary=turn] td,.Y0dWHa_table tbody tr[data-collapsed-summary=assistant] td{height:20px}.Y0dWHa_table tbody tr[data-collapsed-summary]{cursor:pointer;transition:background-color .12s var(--ds-ease-in-out);outline:none}.Y0dWHa_table tbody tr[data-collapsed-summary]:hover{background:var(--dsw-alias-interactive-bg-hover)}.Y0dWHa_table tbody tr[data-collapsed-summary]:focus-visible{box-shadow:inset 0 0 0 1px var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary))}.Y0dWHa_collapsedTurnContent{min-width:0;color:var(--dsw-alias-label-secondary);align-items:center;font-size:12px;line-height:16px;display:flex}.Y0dWHa_collapsedTurnEllipsis{color:var(--dsw-alias-label-tertiary);user-select:none;flex:none;margin-right:6px;font-weight:600}.Y0dWHa_collapsedTurnText{text-overflow:ellipsis;white-space:nowrap;min-width:0;overflow:hidden}.Y0dWHa_resultPreview{grid-template-columns:clamp(180px, var(--trajectory-tool-request-width,calc(36cqw - 56px)), 480px) minmax(0, 1fr);align-items:center;gap:8px;min-width:0;display:grid}.Y0dWHa_resultRequest,.Y0dWHa_inlineResultText{text-overflow:ellipsis;white-space:nowrap;min-width:0;overflow:hidden}.Y0dWHa_toolCallNameTypeface{color:var(--dsw-alias-label-primary);font:400 12px/18px Menlo,Consolas,Liberation Mono,PingFang SC,Microsoft YaHei}.Y0dWHa_toolCallPayload{color:var(--dsw-alias-label-secondary);font:400 12px/18px var(--ds-font-family-code);margin-left:7px}.Y0dWHa_table tbody tr[data-kind=tool] .Y0dWHa_contentText,.Y0dWHa_table tbody tr[data-kind=subtool] .Y0dWHa_contentText,.Y0dWHa_table tbody tr[data-kind=tool] .Y0dWHa_resultPreview,.Y0dWHa_table tbody tr[data-kind=subtool] .Y0dWHa_resultPreview{font-family:var(--ds-font-family-code);font-size:12px}.Y0dWHa_table tbody tr[data-kind=subtool] .Y0dWHa_content{padding-left:26px}.Y0dWHa_inlineResult{min-width:0;color:var(--dsw-alias-label-secondary);align-items:center;display:flex}.Y0dWHa_noOutputText{color:var(--dsw-alias-label-caption)}.Y0dWHa_arrow{color:var(--dsw-alias-label-caption);flex:none;margin-right:8px}.Y0dWHa_error,.Y0dWHa_overview dd.Y0dWHa_error,.Y0dWHa_details .Y0dWHa_errorPayload{color:var(--dsw-alias-state-error-primary)}.Y0dWHa_details .Y0dWHa_errorPayload .Y0dWHa_resultBlockText{color:inherit}.Y0dWHa_details .Y0dWHa_jsonPayload.Y0dWHa_errorPayload,.Y0dWHa_details .Y0dWHa_jsonPreview.Y0dWHa_errorPayload{--json-tree-property:var(--dsw-alias-state-error-primary);--json-tree-string:var(--dsw-alias-state-error-primary);--json-tree-number:var(--dsw-alias-state-error-primary);--json-tree-keyword:var(--dsw-alias-state-error-primary);--json-tree-punctuation:var(--dsw-alias-state-error-primary);--json-tree-icon:var(--dsw-alias-state-error-primary)}.Y0dWHa_details{border-left:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);flex-direction:column;flex:none;width:clamp(320px,38%,440px);min-width:0;max-width:calc(100% - 280px);min-height:0;display:flex;position:relative}.Y0dWHa_detailsResizeHandle{z-index:6;cursor:col-resize;touch-action:none;user-select:none;background:0 0;border:0;width:8px;padding:0;position:absolute;top:0;bottom:0;left:-4px}.Y0dWHa_detailsResizeHandle:focus-visible{outline:none}.Y0dWHa_detailsHeader{box-sizing:border-box;border-bottom:.5px solid var(--dsw-alias-border-l2);flex:none;justify-content:space-between;align-items:center;height:42px;padding:0 8px 0 12px;display:flex}.Y0dWHa_detailsTitle{min-width:0;color:var(--dsw-alias-label-primary);align-items:center;gap:8px;display:flex}.Y0dWHa_requestDetailsDot{corner-shape:round;background:var(--dsw-alias-label-secondary);border-radius:50%;flex:none;width:5px;height:5px}.Y0dWHa_requestDetailsName{font:500 12px/16px var(--ds-font-family-code);flex:none}.Y0dWHa_detailsLocation{min-width:0;color:var(--dsw-alias-label-tertiary);font:11px/16px var(--ds-font-family-code);text-overflow:ellipsis;white-space:nowrap;overflow:hidden}.Y0dWHa_close{border-radius:var(--dsw-radius-sm);width:28px;height:28px;color:var(--dsw-alias-label-secondary);cursor:pointer;background:0 0;border:0;flex:none;justify-content:center;align-items:center;padding:0;font-size:18px;line-height:18px;display:inline-flex}.Y0dWHa_close:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}.Y0dWHa_detailTabs{box-sizing:border-box;border-bottom:.5px solid var(--dsw-alias-border-l2);overscroll-behavior-x:contain;scrollbar-width:none;white-space:nowrap;flex:none;gap:1px;width:100%;min-width:0;max-width:100%;height:34px;padding:0 8px;display:flex;overflow:auto hidden}.Y0dWHa_detailTabs::-webkit-scrollbar{display:none}.Y0dWHa_detailTab{color:var(--dsw-alias-label-tertiary);cursor:pointer;font:var(--dsw-font-xs-13);background:0 0;border:0;flex:none;padding:0 9px;position:relative}.Y0dWHa_detailTab:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}.Y0dWHa_detailTabActive{color:var(--dsw-alias-state-business-primary)}.Y0dWHa_detailTabActive:after{background:var(--dsw-alias-state-business-primary);content:\"\";border-radius:1px 1px 0 0;height:2px;position:absolute;bottom:0;left:9px;right:9px}.Y0dWHa_close:focus-visible,.Y0dWHa_detailTab:focus-visible{outline:1px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:-1px}.Y0dWHa_detailBody{min-height:0;padding-bottom:var(--dsh-trajectory-bottom-clearance,0px);scrollbar-gutter:stable;flex:1;overflow:hidden auto}.Y0dWHa_detailBodySummary{box-sizing:border-box;padding-bottom:calc(12px + var(--dsh-trajectory-bottom-clearance,0px));flex-direction:column;display:flex;overflow:hidden}.Y0dWHa_detailBodySummary>.Y0dWHa_overview{overscroll-behavior:contain;flex:0 auto;min-height:0;padding-bottom:0;overflow:auto}.Y0dWHa_detailBodySummary>.Y0dWHa_compactedSummary{flex:1;min-height:0;overflow:auto}.Y0dWHa_summaryScrollRegion{--dsh-scrollbar-thumb:transparent;--dsh-scrollbar-thumb-hover:transparent}.Y0dWHa_summaryScrollRegion:hover,.Y0dWHa_summaryScrollRegion:focus-within{--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2)}.Y0dWHa_compactedSummary .Y0dWHa_markdownPayload{padding-right:18px}.Y0dWHa_overview{font:var(--dsw-font-xs-13);margin:0;padding:8px 0}.Y0dWHa_overviewParentLinks{gap:14px;display:flex}.Y0dWHa_overviewHierarchyNavLink{all:unset;color:var(--dsw-alias-label-secondary);cursor:pointer;font:inherit;opacity:1;align-items:center;gap:1px;display:inline-flex}.Y0dWHa_overviewHierarchyNavLink:hover{color:var(--dsw-alias-label-primary)}.Y0dWHa_overviewHierarchyJumpIconTight{color:var(--dsw-alias-label-caption);flex:none}.Y0dWHa_overviewHierarchyNavLink:hover .Y0dWHa_overviewHierarchyJumpIconTight,.Y0dWHa_overviewHierarchyNavLink:focus-visible .Y0dWHa_overviewHierarchyJumpIconTight{color:var(--dsw-alias-label-primary)}.Y0dWHa_overviewHierarchyNavLink:focus-visible{color:var(--dsw-alias-label-primary);outline:1px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}.Y0dWHa_overview>div{grid-template-columns:94px minmax(0,1fr);align-items:center;min-height:22px;padding:0 14px;display:grid}.Y0dWHa_overview>.Y0dWHa_requestTokenDetail dt{padding-left:12px}.Y0dWHa_usagePanel{padding:4px 0 10px}.Y0dWHa_usageGroup+.Y0dWHa_usageGroup{margin-top:8px}.Y0dWHa_usageHeading{color:var(--dsw-alias-label-secondary);font:var(--dsw-font-xs-strong-13);user-select:none;margin:0;padding:4px 14px 1px}.Y0dWHa_usageGroup .Y0dWHa_overview{padding:0}.Y0dWHa_overview dt{color:var(--dsw-alias-label-tertiary)}.Y0dWHa_overview dd{min-width:0;color:var(--dsw-alias-label-primary);text-overflow:ellipsis;white-space:nowrap;margin:0;overflow:hidden}.Y0dWHa_timestampToggle{all:unset;color:inherit;cursor:pointer;font:inherit;user-select:text}.Y0dWHa_timestampToggle:focus-visible{outline:1px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}.Y0dWHa_overviewSections{border-top:0;flex-direction:column;flex:1;min-height:min-content;display:flex;overflow:hidden}.Y0dWHa_overviewSection{flex-direction:column;flex:1 1 0;min-height:24px;max-height:max-content;display:flex;overflow:hidden}.Y0dWHa_overviewSection+.Y0dWHa_overviewSection{padding-top:2px}.Y0dWHa_overviewHeading{box-sizing:border-box;width:100%;height:24px;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);font:var(--dsw-font-xs-strong-13);user-select:none;flex:none;align-items:flex-end;margin:0;padding:0 0 3px 14px;display:flex}.Y0dWHa_overviewTitle{width:max-content;height:auto;color:inherit;cursor:pointer;font:inherit;user-select:none;background:0 0;border:0;flex:none;align-items:center;gap:3px;padding:0;line-height:1;display:inline-flex}.Y0dWHa_overviewTitleIcon{color:var(--dsw-alias-label-caption);flex:none}.Y0dWHa_overviewTitle:hover .Y0dWHa_overviewTitleIcon{color:var(--dsw-alias-label-primary)}.Y0dWHa_overviewTitle:focus-visible{outline:1px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}.Y0dWHa_overviewTitle:focus-visible .Y0dWHa_overviewTitleIcon{color:var(--dsw-alias-state-business-primary)}.Y0dWHa_overviewPreview{overscroll-behavior:contain;background:var(--dsw-alias-bg-layer-1);flex:1;min-height:0;overflow:auto}.Y0dWHa_overviewPreview[data-scroll-more]{mask-image:linear-gradient(#000 calc(100% - 12px),#0000)}.Y0dWHa_overviewPreview>:last-child{margin-bottom:0;padding-bottom:0}.Y0dWHa_programDescription{color:var(--dsw-alias-label-primary);font:var(--dsw-font-xs-13);white-space:pre-wrap;overflow-wrap:anywhere;flex:none;margin:0;padding:8px 14px 2px}.Y0dWHa_programIcon{vertical-align:-2px;margin-right:4px}.Y0dWHa_programSummary{font-family:var(--dsw-font-family);margin-left:5px}.Y0dWHa_detailBodyProgram,.Y0dWHa_programPanel{flex-direction:column;min-height:0;display:flex;overflow:hidden}.Y0dWHa_programPanel{background:var(--dsw-alias-bg-layer-1);flex:1}.Y0dWHa_programActions{flex:none;align-items:center;gap:4px;height:16px;margin-left:auto;padding-right:14px;display:inline-flex}.Y0dWHa_programLanguage{color:var(--dsw-alias-label-tertiary);font:11px/16px var(--ds-font-family-code);padding-right:4px}.Y0dWHa_programAction{box-sizing:border-box;width:20px;height:16px;color:var(--dsw-alias-label-secondary);cursor:pointer;background:0 0;border:0;justify-content:center;align-items:center;padding:0;display:inline-flex}.Y0dWHa_programAction:hover{color:var(--dsw-alias-label-primary)}.Y0dWHa_programAction[aria-pressed=true]{color:var(--dsw-alias-state-business-primary)}.Y0dWHa_programAction[data-state=failed]{color:var(--dsw-alias-state-error-primary)}.Y0dWHa_programAction:focus-visible{outline:1px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:-1px}.Y0dWHa_programContent{min-width:0;min-height:0}.Y0dWHa_programPanel>.Y0dWHa_programContent{overscroll-behavior:contain;flex:1;overflow:auto}.Y0dWHa_programSource{background:var(--dsw-alias-bg-layer-1);--dsl-code-block-line-white-space:pre;border-radius:0;margin:0!important}.Y0dWHa_programSource :where(pre){font:12px/16px var(--ds-font-family-code);overflow-wrap:normal;word-break:normal;tab-size:2;border-radius:0;padding:2px 14px 8px;overflow:visible;background:var(--dsw-alias-bg-layer-1)!important}.Y0dWHa_programSource pre code>.line{box-sizing:border-box;width:max-content;min-width:100%}.Y0dWHa_programContent[data-wrap=true] .Y0dWHa_programSource{--dsl-code-block-line-white-space:pre-wrap}.Y0dWHa_programContent[data-wrap=true] .Y0dWHa_programSource pre code>.line{overflow-wrap:anywhere;word-break:break-all;width:auto}.Y0dWHa_programOutput{color:var(--dsw-alias-label-primary);font:12px/16px var(--ds-font-family-code);white-space:pre-wrap;overflow-wrap:anywhere;margin:0;padding:2px 14px 8px}.Y0dWHa_programError:first-line{color:var(--dsw-alias-state-error-primary);font-weight:600}.Y0dWHa_overviewPreview .Y0dWHa_jsonPreview>:first-child,.Y0dWHa_overviewPreview .Y0dWHa_schemaTree>:first-child{padding-top:2px;padding-bottom:0}.Y0dWHa_overviewPreview .Y0dWHa_schemaTree{margin-bottom:0}.Y0dWHa_overviewPreview .Y0dWHa_overview{padding:2px 0 0}.Y0dWHa_overviewPreview .Y0dWHa_overview>div{min-height:22px}.Y0dWHa_markdownPreview,.Y0dWHa_markdownPayload{color:var(--dsw-alias-label-primary)}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact]),.Y0dWHa_markdownPayload>div:not([data-markdown-variant=compact]){font:var(--dsw-font-xs-13);gap:8px}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact]) h1,.Y0dWHa_markdownPayload>div:not([data-markdown-variant=compact]) h1{font:600 16px/22px var(--dsw-font-family)}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact]) h2,.Y0dWHa_markdownPayload>div:not([data-markdown-variant=compact]) h2{font:600 15px/22px var(--dsw-font-family)}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact]) :where(h3,h4,h5,h6),.Y0dWHa_markdownPayload>div:not([data-markdown-variant=compact]) :where(h3,h4,h5,h6){font:600 14px/20px var(--dsw-font-family)}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact]) :not(pre)>code,.Y0dWHa_markdownPayload>div:not([data-markdown-variant=compact]) :not(pre)>code{font:12px/18px var(--ds-font-family-code)}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact]) table,.Y0dWHa_markdownPayload>div:not([data-markdown-variant=compact]) table{font:var(--dsw-font-xs-13)}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact])>:first-child{margin-top:0}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact])>:last-child{margin-bottom:0}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact]) :where(h1,h2,h3){margin:12px 0 6px}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact]) :where(h4,h5,h6){margin:10px 0 5px}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact]) :where(p,ul,ol){margin:8px 0}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact]) li:not(:first-child){margin-top:3px}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact]) blockquote{margin-top:8px}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact]) hr{margin:14px 0}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact])>.md-code-block{margin:10px 0}.Y0dWHa_assistantContent .Y0dWHa_markdownPayload,.Y0dWHa_assistantContent .Y0dWHa_payload{min-height:0}.Y0dWHa_thinkingQuote{--dsh-content-font-size-secondary:13px;--dsh-content-font-delta-secondary:0px;border-left:2px solid var(--dsw-alias-markdown-citation);color:var(--dsw-alias-label-secondary);background:0 0;margin:6px 14px 0 12px;padding-left:6px}.Y0dWHa_thinkingQuoteOnlyPreview{margin-bottom:8px}.Y0dWHa_detailBody>.Y0dWHa_assistantContentRendered .Y0dWHa_thinkingQuote{margin-top:14px}.Y0dWHa_thinkingToggle{width:max-content;height:18px;color:var(--dsw-alias-label-tertiary);cursor:pointer;font:600 12px/18px var(--dsw-font-family);user-select:none;background:0 0;border:0;align-items:center;gap:2px;padding:0;display:flex}.Y0dWHa_thinkingChevron{transition:transform .12s var(--ds-ease-in-out);flex:none}.Y0dWHa_thinkingToggle[aria-expanded=true] .Y0dWHa_thinkingChevron{transform:rotate(90deg)}.Y0dWHa_thinkingToggle:hover{color:var(--dsw-alias-label-secondary)}.Y0dWHa_thinkingToggle:focus-visible{outline:1px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}.Y0dWHa_thinkingQuote .Y0dWHa_markdownPreview,.Y0dWHa_thinkingQuote .Y0dWHa_markdownPayload,.Y0dWHa_thinkingQuote .Y0dWHa_payload{min-height:0;color:var(--dsw-alias-label-secondary);background:0 0;padding:2px 0}.Y0dWHa_assistantOutput{background:var(--dsw-alias-bg-layer-1)}.Y0dWHa_markdownPreview{padding:2px 14px 8px}.Y0dWHa_markdownPayload{min-height:100%;padding:14px}.Y0dWHa_jsonPayload{min-height:100%}.Y0dWHa_jsonPreview{min-height:0}.Y0dWHa_schema{background:var(--dsw-alias-bg-layer-1);min-height:100%}.Y0dWHa_schemaPreview{min-height:0}.Y0dWHa_schemaIntro{padding:12px 14px 6px}.Y0dWHa_schemaPreview .Y0dWHa_schemaIntro{padding-top:2px}.Y0dWHa_schemaName{color:var(--dsw-alias-label-primary);font:600 12px/18px var(--ds-font-family-code);margin:0}.Y0dWHa_schemaDescription{color:var(--dsw-alias-label-secondary);font:var(--dsw-font-xs-13);white-space:pre-wrap;margin:2px 0 0}.Y0dWHa_schemaParameters{min-width:0}.Y0dWHa_schemaParametersTitle{color:var(--dsw-alias-label-tertiary);font:600 11px/16px var(--dsw-font-family);user-select:none;margin:0;padding:4px 14px 2px}.Y0dWHa_schemaTree{margin:0 6px 8px 0}.Y0dWHa_payload{box-sizing:border-box;overflow-wrap:anywhere;min-height:100%;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-markdown-code-block);font:12px/19px var(--ds-font-family-code);tab-size:2;white-space:pre-wrap;margin:0;padding:14px}.Y0dWHa_payloadPreview{min-height:0;padding:2px 14px 8px}.Y0dWHa_sourceBlocks{box-sizing:border-box;min-height:100%;padding:12px 14px}.Y0dWHa_sourceBlock+.Y0dWHa_sourceBlock{margin-top:14px}.Y0dWHa_sourceBlockHeader,.Y0dWHa_sourceBlockJumpTarget{user-select:none;align-items:center;gap:3px;width:max-content;margin-bottom:3px;display:flex}.Y0dWHa_sourceBlockJumpTarget{all:unset;cursor:pointer;user-select:none;align-items:center;gap:3px;width:max-content;margin-bottom:3px;display:flex}.Y0dWHa_sourceBlockLabel{color:var(--dsw-alias-label-tertiary);font:11px/16px var(--ds-font-family-code)}.Y0dWHa_sourceBlockJumpIcon{color:var(--dsw-alias-label-caption);flex:none}.Y0dWHa_sourceBlockJumpTarget:hover .Y0dWHa_sourceBlockJumpIcon{color:var(--dsw-alias-label-primary)}.Y0dWHa_sourceBlockJumpTarget:focus-visible{outline:none}.Y0dWHa_sourceBlockJumpTarget:focus-visible .Y0dWHa_sourceBlockJumpIcon{color:var(--dsw-alias-state-business-primary)}.Y0dWHa_sourceBlockContent{overflow-wrap:anywhere;color:var(--dsw-alias-label-primary);font:12px/19px var(--ds-font-family-code);tab-size:2;white-space:pre-wrap;background:0 0;margin:0}.Y0dWHa_messageImages{flex-direction:column;gap:8px;margin:8px 14px 14px;display:flex}.Y0dWHa_attachments{flex-direction:column;gap:8px;margin:8px 14px 14px;padding:0;list-style:none;display:flex}.Y0dWHa_attachmentsPreview{gap:6px;margin-block:6px 8px}.Y0dWHa_attachmentRow{border:.5px solid var(--dsw-alias-border-l2-darkmode-thin);border-radius:var(--dsw-radius-lg);align-items:center;gap:10px;min-width:0;padding:8px;display:flex}.Y0dWHa_attachmentIcon{flex:0 0 48px;place-items:center;width:48px;height:48px;display:grid}.Y0dWHa_attachmentInfo{flex-direction:column;flex:1;gap:3px;min-width:0;display:flex}.Y0dWHa_attachmentName{color:var(--dsw-alias-label-primary);text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:18px;overflow:hidden}.Y0dWHa_attachmentMetadata{color:var(--dsw-alias-label-tertiary);text-overflow:ellipsis;white-space:nowrap;font-size:11px;line-height:16px;overflow:hidden}.Y0dWHa_attachmentDisclosure{border:.5px solid var(--dsw-alias-border-l2-darkmode-thin);border-radius:var(--dsw-radius-md);margin-block:8px}.Y0dWHa_attachmentDisclosure>summary{cursor:pointer;padding:8px}.Y0dWHa_attachmentDisclosure>summary .Y0dWHa_attachmentName{display:block}.Y0dWHa_attachmentDisclosure>summary:focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}.Y0dWHa_attachmentDisclosure>pre{padding:0 8px 8px}.Y0dWHa_assistantToolCalls{box-sizing:border-box;max-width:100%;color:var(--dsw-alias-label-secondary);font:11px/17px var(--ds-font-family-code);margin:2px 14px 12px;padding:0;list-style:none}.Y0dWHa_assistantToolCallsPreview{margin-top:2px;margin-bottom:8px}.Y0dWHa_assistantToolCalls li{min-width:0}.Y0dWHa_assistantToolCallButton{all:unset;box-sizing:border-box;border-radius:var(--dsw-radius-xs);cursor:pointer;align-items:center;width:calc(100% + 4px);min-width:0;height:19px;margin-left:-4px;padding:0 4px;display:flex}.Y0dWHa_assistantToolCallButton:hover{background:var(--dsw-alias-interactive-bg-hover)}.Y0dWHa_assistantToolCallButton:focus-visible{background:var(--dsw-alias-interactive-bg-hover);outline:1px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:-1px}.Y0dWHa_assistantToolCallIcon{color:var(--dsw-alias-label-caption);flex:none;margin-right:5px}.Y0dWHa_assistantToolCallButton:hover .Y0dWHa_assistantToolCallIcon,.Y0dWHa_assistantToolCallButton:focus-visible .Y0dWHa_assistantToolCallIcon{color:var(--dsw-alias-label-secondary)}.Y0dWHa_assistantToolCallText{white-space:nowrap;flex:1;min-width:0;display:flex;overflow:hidden}.Y0dWHa_assistantToolCallName{color:var(--dsw-alias-label-secondary);flex:none;margin-right:5px;font-weight:500}.Y0dWHa_assistantToolCallArgs{min-width:0;color:var(--dsw-alias-label-tertiary);text-overflow:ellipsis;white-space:nowrap;overflow:hidden}.Y0dWHa_systemPrompt{box-sizing:border-box}.Y0dWHa_toolCatalog{min-height:100%;padding:8px 0 16px}.Y0dWHa_toolCatalogItem{border-bottom:.5px solid var(--dsw-alias-border-l1)}.Y0dWHa_toolCatalogSummary{box-sizing:border-box;cursor:pointer;user-select:none;grid-template-columns:12px 12px max-content minmax(0,1fr);align-items:center;gap:5px;min-height:30px;padding:4px 12px;list-style:none;display:grid}.Y0dWHa_toolCatalogSummary::-webkit-details-marker{display:none}.Y0dWHa_toolCatalogSummary:hover{background:var(--dsw-alias-interactive-bg-hover)}.Y0dWHa_toolCatalogSummary:focus-visible{background:var(--dsw-alias-interactive-bg-hover);outline:1px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:-1px}.Y0dWHa_toolCatalogChevron,.Y0dWHa_toolCatalogIcon{color:var(--dsw-alias-label-caption)}.Y0dWHa_toolCatalogChevron{transition:transform .1s var(--ds-ease-in-out)}.Y0dWHa_toolCatalogItem[open] .Y0dWHa_toolCatalogChevron{transform:rotate(90deg)}.Y0dWHa_toolCatalogName{color:var(--dsw-alias-label-primary);font:500 12px/18px var(--ds-font-family-code)}.Y0dWHa_toolCatalogDescription{min-width:0;color:var(--dsw-alias-label-tertiary);font:var(--dsw-font-xs-13);text-overflow:ellipsis;white-space:nowrap;overflow:hidden}.Y0dWHa_toolCatalogDefinition{background:var(--dsw-alias-bg-base);padding:0 0 8px 29px}.Y0dWHa_toolCatalogFullDescription{color:var(--dsw-alias-label-secondary);font:var(--dsw-font-xs-13);white-space:pre-wrap;margin:0;padding:7px 14px 4px 0}.Y0dWHa_toolCatalogTree{margin-left:-14px;margin-right:6px}.Y0dWHa_resultBlocks{box-sizing:border-box;flex-direction:column;gap:10px;min-height:100%;padding:14px;display:flex}.Y0dWHa_resultBlocksPreview{gap:6px;min-height:0;padding:2px 14px 8px}.Y0dWHa_resultBlockText{overflow-wrap:anywhere;color:var(--dsw-alias-label-primary);font:12px/19px var(--ds-font-family-code);tab-size:2;white-space:pre-wrap;background:0 0;margin:0}.Y0dWHa_overviewPreview .Y0dWHa_noPayload{padding:2px 14px 0}.Y0dWHa_noPayload{color:var(--dsw-alias-label-tertiary);font:var(--dsw-font-xs-13);margin:0;padding:18px 14px}@media (width<=760px){.Y0dWHa_details{z-index:5;border-left-color:var(--dsw-alias-border-l3);width:min(92%,420px);max-width:92%;position:absolute;top:0;bottom:0;right:0;box-shadow:-12px 0 32px #00000024}}.Y0dWHa_toolUpdatePayload{white-space:pre;overflow-x:auto}";
+		const css$3 = ".Y0dWHa_split{--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2);background:var(--dsw-alias-bg-layer-1);flex:1;width:100%;min-height:0;display:flex;position:relative;overflow:hidden;container-type:inline-size}.Y0dWHa_tablePane{min-width:0;padding-bottom:var(--dsh-trajectory-bottom-clearance,0px);flex:1;position:relative;overflow:hidden auto;container:Y0dWHa_trajectory-table/inline-size}.Y0dWHa_historyLoading{z-index:5;pointer-events:none;height:0;position:sticky;top:0;overflow:visible}.Y0dWHa_historyLoadingBar{box-sizing:border-box;border-bottom:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);width:100%;height:30px;color:var(--dsw-alias-label-secondary);font:var(--dsw-font-xxs-12);justify-content:center;align-items:center;gap:6px;display:flex}.Y0dWHa_table tbody .Y0dWHa_historyLoadRow td{height:30px;padding:0}.Y0dWHa_table tbody .Y0dWHa_historyLoadRow+tr[data-turn-start=true] td:before{content:none}.Y0dWHa_historyLoadButton{background:var(--dsw-alias-bg-layer-1);width:100%;height:29px;color:var(--dsw-alias-label-secondary);cursor:pointer;font:var(--dsw-font-xxs-12);border:0;justify-content:center;align-items:center;gap:6px;display:flex}@media (hover:hover){.Y0dWHa_historyLoadButton:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}}.Y0dWHa_historyLoadButton:focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:-2px}.Y0dWHa_historyLoadButton:disabled{cursor:default}.Y0dWHa_visuallyHidden{clip:rect(0 0 0 0);white-space:nowrap;width:1px;height:1px;position:absolute;overflow:hidden}.Y0dWHa_table:not([data-scroll-ready=true]){visibility:hidden}.Y0dWHa_table{--trajectory-turn-accent:color-mix(in srgb, var(--dsw-static-blue-500) 22%, var(--dsw-alias-bg-layer-1));border-spacing:0;table-layout:fixed;width:100%;min-width:0;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);font:var(--dsw-font-xxs-12)}.Y0dWHa_eventColumn{width:122px}.Y0dWHa_eventColumn:where(:lang(zh)){width:84px}.Y0dWHa_contentColumn{width:auto}.Y0dWHa_table th{z-index:3;box-sizing:border-box;border-bottom:.5px solid var(--dsw-alias-border-l2);height:30px;color:var(--dsw-alias-label-tertiary);background:var(--dsw-specific-sidebar-fill);font:var(--dsw-font-xxs-12);text-align:left;text-overflow:ellipsis;user-select:none;white-space:nowrap;padding:0 8px;font-weight:500;position:sticky;top:0;overflow:hidden}.Y0dWHa_eventHeader{text-align:right!important;padding-right:4px!important}.Y0dWHa_table td{box-sizing:border-box;border-bottom:.5px solid var(--dsw-alias-border-l1);text-overflow:ellipsis;white-space:nowrap;height:30px;padding:0 8px;overflow:hidden}.Y0dWHa_table tbody .Y0dWHa_virtualSpacer{pointer-events:none}.Y0dWHa_table tbody .Y0dWHa_virtualSpacer td{height:var(--trajectory-virtual-spacer-height);border:0;padding:0}.Y0dWHa_table tbody tr:not([data-collapsed-summary]):not([data-virtual-spacer]):not([data-history-load]){cursor:default;transition:background-color .12s var(--ds-ease-in-out), opacity .12s var(--ds-ease-in-out);outline:none}.Y0dWHa_table tbody tr[data-timeline-focus=outside]{opacity:.24}@media (hover:hover){.Y0dWHa_table tbody tr:not([data-collapsed-summary]):not([data-virtual-spacer]):not([data-history-load]):not([data-selected=true]):hover{background:var(--dsw-alias-interactive-bg-hover)}.Y0dWHa_table tbody tr[data-request-only=true]:hover{background:0 0}}.Y0dWHa_table tbody tr[data-request-only=true] td{border-bottom:0;height:0;padding-top:0;padding-bottom:0}.Y0dWHa_table tbody tr[data-terminal-request-boundary=true] td{height:9px}.Y0dWHa_table tbody tr[data-request-only=true] .Y0dWHa_turnRail{top:-15px;bottom:0}.Y0dWHa_table tbody tr:not([data-collapsed-summary]):focus-visible{box-shadow:inset 0 0 0 1px var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary))}.Y0dWHa_table tbody tr[data-selected=true]{background:var(--dsw-alias-interactive-bg-active)}.Y0dWHa_requestBoundaryControl{--request-boundary-base-left:12px;z-index:6;top:-8px;left:calc(var(--request-boundary-base-left) + var(--request-boundary-offset,0px));cursor:pointer;background:0 0;border:0;width:16px;height:16px;padding:0;position:absolute}.Y0dWHa_requestBoundaryControl:before{corner-shape:round;background:var(--dsw-alias-label-caption);width:5px;height:5px;box-shadow:0 0 0 2px var(--dsw-alias-bg-layer-1), 0 0 0 3px transparent;content:\"\";transition:background .12s var(--ds-ease-in-out), box-shadow .12s var(--ds-ease-in-out);border-radius:50%;position:absolute;top:5.5px;left:5.5px}.Y0dWHa_requestBoundaryControl:after{border:.5px solid var(--dsw-alias-border-l1);width:max-content;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);content:attr(data-label);font:9px/12px var(--ds-font-family-code);opacity:0;pointer-events:none;transition:opacity .12s var(--ds-ease-in-out), transform .12s var(--ds-ease-in-out);user-select:none;white-space:nowrap;border-radius:2px;padding:0 4px;position:absolute;top:2px;left:17px;transform:translate(-2px);box-shadow:0 2px 6px #0000001f}.Y0dWHa_requestBoundaryControl:focus-visible:before{background:var(--dsw-alias-brand-primary-new-colorprimary-new-color)}@media (hover:hover){.Y0dWHa_requestBoundaryControl:hover:before{background:var(--dsw-alias-brand-primary-new-colorprimary-new-color)}}.Y0dWHa_requestBoundaryControlActive:before,.Y0dWHa_requestBoundaryControlActive:focus-visible:before{background:color-mix(in srgb, var(--dsw-alias-brand-primary-new-colorprimary-new-color) 18%, var(--dsw-alias-bg-layer-1));box-shadow:0 0 0 1.5px var(--dsw-alias-state-business-primary)}@media (hover:hover){.Y0dWHa_requestBoundaryControlActive:hover:before{background:color-mix(in srgb, var(--dsw-alias-brand-primary-new-colorprimary-new-color) 18%, var(--dsw-alias-bg-layer-1));box-shadow:0 0 0 1.5px var(--dsw-alias-state-business-primary)}}.Y0dWHa_requestBoundaryControl[data-request-status=error]:before,.Y0dWHa_requestBoundaryControl[data-request-status=error]:focus-visible:before{background:var(--dsw-alias-state-error-primary)}@media (hover:hover){.Y0dWHa_requestBoundaryControl[data-request-status=error]:hover:before{background:var(--dsw-alias-state-error-primary)}}.Y0dWHa_requestBoundaryControl:focus-visible:after{opacity:1;transform:translate(0)}@media (hover:hover){.Y0dWHa_requestBoundaryControl:hover:after{opacity:1;transform:translate(0)}}.Y0dWHa_requestBoundaryControl:focus-visible{outline:none}@media (hover:hover){.Y0dWHa_table tbody tr:has(.Y0dWHa_requestBoundaryControl:hover):not([data-selected=true]){background:0 0}}.Y0dWHa_event{position:relative}.Y0dWHa_turnRail,.Y0dWHa_selectionRail{background:var(--dsw-alias-brand-primary-new-colorprimary-new-color);pointer-events:none;position:absolute;left:0}.Y0dWHa_turnRail{z-index:4;background:var(--trajectory-turn-accent);width:2px;top:-1px;bottom:-1px}.Y0dWHa_table tbody tr[data-turn-end=true] .Y0dWHa_turnRail{bottom:0}.Y0dWHa_selectionRail{z-index:5;width:3px;top:0;bottom:0}.Y0dWHa_table tbody tr[data-error=true] .Y0dWHa_turnRail{background:color-mix(in srgb, var(--dsw-alias-state-error-primary) 22%, var(--dsw-alias-bg-layer-1))}.Y0dWHa_table tbody tr[data-error=true] .Y0dWHa_selectionRail{background:var(--dsw-alias-state-error-primary)}.Y0dWHa_table tbody tr[data-turn-start=true] td{position:relative;overflow:visible}.Y0dWHa_table tbody tr[data-turn-start=true]:not(:first-child) td:before{z-index:1;background:var(--dsw-alias-border-l1);content:\"\";pointer-events:none;height:2px;position:absolute;top:0;left:0;right:0;transform:translateY(-50%)}.Y0dWHa_event{padding-left:36px!important;padding-right:4px!important;overflow:visible!important}.Y0dWHa_turnLabel{z-index:3;box-sizing:border-box;width:max-content;color:var(--dsw-alias-label-tertiary);background:var(--dsw-alias-bg-module-platform);font:8px/10px var(--ds-font-family-code);font-variant-numeric:tabular-nums;user-select:none;white-space:nowrap;border-radius:0 0 2px;flex:none;align-items:center;padding:1px 5px;display:inline-grid;position:absolute;top:0;left:0}.Y0dWHa_turnLabelFull,.Y0dWHa_turnLabelCompact{opacity:1;white-space:nowrap;grid-area:1/1;max-width:64px;overflow:hidden}.Y0dWHa_turnLabelCompact{opacity:0;max-width:0}.Y0dWHa_turnLabelActive{color:color-mix(in srgb, var(--dsw-static-blue-500) 55%, var(--dsw-alias-label-tertiary));background:var(--trajectory-turn-accent)}.Y0dWHa_eventInner{justify-content:flex-start;align-items:center;min-width:0;height:100%;display:flex}.Y0dWHa_kindSlot{flex:none;justify-content:flex-end;align-items:flex-end;width:76px;display:flex}.Y0dWHa_kindSlot:where(:lang(zh)){width:44px}.Y0dWHa_kindSlot [role=tooltip]{background:var(--dsw-alias-bg-layer-2);box-shadow:var(--dsw-elevation-panel);color:var(--dsw-alias-label-primary);border:0}.Y0dWHa_content{color:var(--dsw-alias-label-primary);padding-left:4px!important}.Y0dWHa_kindTag{box-sizing:border-box;border-radius:var(--dsw-radius-xs);letter-spacing:.035em;user-select:none;border:1px solid #0000;flex:none;align-items:center;height:19px;padding:0 5px;font-size:10px;font-weight:650;line-height:16px;display:inline-flex}.Y0dWHa_kindTagIcon{opacity:0;flex:none;justify-content:center;align-items:center;width:0;height:13px;display:inline-flex;overflow:hidden;transform:scale(.8)}.Y0dWHa_kindTagLabel{opacity:1;white-space:nowrap;max-width:72px;display:inline-block;overflow:hidden}.Y0dWHa_table .Y0dWHa_kindSlot .Y0dWHa_message{justify-content:center;width:100%}@container Y0dWHa_trajectory-table (width<=620px){.Y0dWHa_eventColumn{width:50px}.Y0dWHa_event{padding-left:28px!important;padding-right:3px!important}.Y0dWHa_requestBoundaryControl{--request-boundary-base-left:6px}.Y0dWHa_kindSlot{width:19px}.Y0dWHa_kindTag,.Y0dWHa_table .Y0dWHa_kindSlot .Y0dWHa_message{justify-content:center;width:19px;padding-left:0;padding-right:0}.Y0dWHa_kindTagIcon{opacity:1;width:13px;transform:scale(1)}.Y0dWHa_kindTagLabel,.Y0dWHa_turnLabelFull{opacity:0;max-width:0}.Y0dWHa_turnLabelCompact{opacity:1;max-width:64px}}@media (prefers-reduced-motion:no-preference){.Y0dWHa_eventColumn,.Y0dWHa_event,.Y0dWHa_requestBoundaryControl,.Y0dWHa_kindSlot,.Y0dWHa_kindTag,.Y0dWHa_kindTagIcon,.Y0dWHa_kindTagLabel,.Y0dWHa_turnLabelFull,.Y0dWHa_turnLabelCompact{transition-duration:.18s;transition-timing-function:var(--ds-ease-in-out)}.Y0dWHa_eventColumn,.Y0dWHa_kindSlot{transition-property:width}.Y0dWHa_event{transition-property:padding-right,padding-left}.Y0dWHa_requestBoundaryControl{transition-property:left}.Y0dWHa_kindTag{transition-property:padding-right,padding-left}.Y0dWHa_kindTagIcon{transition-property:width,opacity,transform}.Y0dWHa_kindTagLabel,.Y0dWHa_turnLabelFull,.Y0dWHa_turnLabelCompact{transition-property:max-width,opacity}}.Y0dWHa_user{color:var(--dsw-alias-state-business-primary);background:var(--dsw-alias-state-business-tertiary)}.Y0dWHa_systemNeutral{color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-module-platform)}.Y0dWHa_contextGreen{color:color-mix(in srgb, var(--dsw-alias-state-success-primary) 68%, var(--dsw-alias-label-secondary));background:var(--dsw-alias-state-success-tertiary)}.Y0dWHa_compacted{color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-module-platform)}.Y0dWHa_compactedSummary{font:var(--dsw-font-xs-13);margin-top:12px;padding:0 0 14px}.Y0dWHa_promptDiffSections{flex-direction:column;gap:14px;max-height:100%;padding:10px 14px 14px;display:flex;overflow:auto}.Y0dWHa_promptDiffSection{min-width:0}.Y0dWHa_promptDiffTitle{color:var(--dsw-alias-label-secondary);font:var(--dsw-font-xs-strong-13);user-select:none;margin:0 0 6px}.Y0dWHa_promptDiff{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);font:11px/17px var(--ds-font-family-code);white-space:pre;margin:0;overflow:auto}.Y0dWHa_promptDiff span{min-width:max-content;padding:0 6px;display:block}.Y0dWHa_promptDiffLinemeta{color:var(--dsw-alias-label-caption);background:var(--dsw-alias-bg-module-platform);user-select:none}.Y0dWHa_promptDiffLinecontext{color:var(--dsw-alias-label-secondary)}.Y0dWHa_promptDiffLineadded{color:color-mix(in srgb, var(--dsw-alias-state-success-primary) 72%, var(--dsw-alias-label-primary));background:var(--dsw-alias-state-success-tertiary)}.Y0dWHa_promptDiffLineremoved{color:var(--dsw-alias-state-error-primary);background:color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, var(--dsw-alias-bg-layer-1))}.Y0dWHa_assistantVioletBright{color:color-mix(in srgb, var(--dsw-alias-brand-primary-new-colorprimary-new-color) 60%, var(--dsw-alias-state-error-secondary));background:color-mix(in srgb, color-mix(in srgb, var(--dsw-alias-brand-primary-new-colorprimary-new-color) 55%, var(--dsw-alias-state-error-secondary)) 15%, var(--dsw-alias-bg-layer-1))}.Y0dWHa_toolAmber{color:var(--dsw-alias-state-warn-label);background:var(--dsw-alias-state-warn-tertiary)}.Y0dWHa_subtoolAmber{color:color-mix(in srgb, var(--dsw-alias-state-warn-label) 62%, var(--dsw-alias-label-tertiary));background:color-mix(in srgb, var(--dsw-alias-state-warn-tertiary) 58%, var(--dsw-alias-bg-layer-1))}.Y0dWHa_contentText{text-overflow:ellipsis;white-space:nowrap;min-width:0;display:block;overflow:hidden}.Y0dWHa_toolCallOnly{color:var(--dsw-alias-label-tertiary)}.Y0dWHa_table tbody tr[data-collapsed-summary=turn] td,.Y0dWHa_table tbody tr[data-collapsed-summary=assistant] td,.Y0dWHa_table tbody tr[data-collapsed-summary=tool] td{height:20px}.Y0dWHa_table tbody tr[data-collapsed-summary]{cursor:pointer;transition:background-color .12s var(--ds-ease-in-out);outline:none}@media (hover:hover){.Y0dWHa_table tbody tr[data-collapsed-summary]:hover{background:var(--dsw-alias-interactive-bg-hover)}}.Y0dWHa_table tbody tr[data-collapsed-summary]:focus-visible{box-shadow:inset 0 0 0 1px var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary))}.Y0dWHa_collapsedTurnContent{min-width:0;color:var(--dsw-alias-label-secondary);align-items:center;font-size:12px;line-height:16px;display:flex}.Y0dWHa_collapsedTurnEllipsis{color:var(--dsw-alias-label-tertiary);user-select:none;flex:none;margin-right:6px;font-weight:600}.Y0dWHa_collapsedTurnText{text-overflow:ellipsis;white-space:nowrap;min-width:0;overflow:hidden}.Y0dWHa_resultPreview{grid-template-columns:clamp(180px, var(--trajectory-tool-request-width,calc(36cqw - 56px)), 480px) minmax(0, 1fr);align-items:center;gap:8px;min-width:0;display:grid}.Y0dWHa_resultRequest,.Y0dWHa_inlineResultText{text-overflow:ellipsis;white-space:nowrap;min-width:0;overflow:hidden}.Y0dWHa_toolCallNameTypeface{color:var(--dsw-alias-label-primary);font:400 12px/18px Menlo,Consolas,Liberation Mono,PingFang SC,Microsoft YaHei}.Y0dWHa_toolCallPayload{color:var(--dsw-alias-label-secondary);font:400 12px/18px var(--ds-font-family-code);margin-left:7px}.Y0dWHa_table tbody tr[data-kind=tool] .Y0dWHa_contentText,.Y0dWHa_table tbody tr[data-kind=subtool] .Y0dWHa_contentText,.Y0dWHa_table tbody tr[data-kind=tool] .Y0dWHa_resultPreview,.Y0dWHa_table tbody tr[data-kind=subtool] .Y0dWHa_resultPreview{font-family:var(--ds-font-family-code);font-size:12px}.Y0dWHa_table tbody tr[data-kind=subtool] .Y0dWHa_content{padding-left:26px}.Y0dWHa_inlineResult{min-width:0;color:var(--dsw-alias-label-secondary);align-items:center;display:flex}.Y0dWHa_noOutputText{color:var(--dsw-alias-label-caption)}.Y0dWHa_arrow{color:var(--dsw-alias-label-caption);flex:none;margin-right:8px}.Y0dWHa_error,.Y0dWHa_overview dd.Y0dWHa_error,.Y0dWHa_details .Y0dWHa_errorPayload{color:var(--dsw-alias-state-error-primary)}.Y0dWHa_details .Y0dWHa_errorPayload .Y0dWHa_resultBlockText{color:inherit}.Y0dWHa_details .Y0dWHa_jsonPayload.Y0dWHa_errorPayload,.Y0dWHa_details .Y0dWHa_jsonPreview.Y0dWHa_errorPayload{--json-tree-property:var(--dsw-alias-state-error-primary);--json-tree-string:var(--dsw-alias-state-error-primary);--json-tree-number:var(--dsw-alias-state-error-primary);--json-tree-keyword:var(--dsw-alias-state-error-primary);--json-tree-punctuation:var(--dsw-alias-state-error-primary);--json-tree-icon:var(--dsw-alias-state-error-primary)}.Y0dWHa_details{border-left:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);flex-direction:column;flex:none;width:clamp(320px,38%,440px);min-width:0;max-width:calc(100% - 280px);min-height:0;display:flex;position:relative}.Y0dWHa_detailsResizeHandle{z-index:6;cursor:col-resize;touch-action:none;user-select:none;background:0 0;border:0;width:8px;padding:0;position:absolute;top:0;bottom:0;left:-4px}.Y0dWHa_detailsResizeHandle:focus-visible{outline:none}.Y0dWHa_detailsHeader{box-sizing:border-box;border-bottom:.5px solid var(--dsw-alias-border-l2);flex:none;justify-content:space-between;align-items:center;height:42px;padding:0 8px 0 12px;display:flex}.Y0dWHa_detailsTitle{min-width:0;color:var(--dsw-alias-label-primary);align-items:center;gap:8px;display:flex}.Y0dWHa_requestDetailsDot{corner-shape:round;background:var(--dsw-alias-label-secondary);border-radius:50%;flex:none;width:5px;height:5px}.Y0dWHa_requestDetailsName{font:500 12px/16px var(--ds-font-family-code);flex:none}.Y0dWHa_detailsLocation{min-width:0;color:var(--dsw-alias-label-tertiary);font:11px/16px var(--ds-font-family-code);text-overflow:ellipsis;white-space:nowrap;overflow:hidden}.Y0dWHa_close{border-radius:var(--dsw-radius-sm);width:28px;height:28px;color:var(--dsw-alias-label-secondary);cursor:pointer;background:0 0;border:0;flex:none;justify-content:center;align-items:center;padding:0;font-size:18px;line-height:18px;display:inline-flex}@media (hover:hover){.Y0dWHa_close:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}}.Y0dWHa_detailTabs{box-sizing:border-box;border-bottom:.5px solid var(--dsw-alias-border-l2);overscroll-behavior-x:contain;scrollbar-width:none;white-space:nowrap;flex:none;gap:1px;width:100%;min-width:0;max-width:100%;height:34px;padding:0 8px;display:flex;overflow:auto hidden}.Y0dWHa_detailTabs::-webkit-scrollbar{display:none}.Y0dWHa_detailTab{color:var(--dsw-alias-label-tertiary);cursor:pointer;font:var(--dsw-font-xs-13);background:0 0;border:0;flex:none;padding:0 9px;position:relative}@media (hover:hover){.Y0dWHa_detailTab:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}}.Y0dWHa_detailTabActive{color:var(--dsw-alias-state-business-primary)}.Y0dWHa_detailTabActive:after{background:var(--dsw-alias-state-business-primary);content:\"\";border-radius:1px 1px 0 0;height:2px;position:absolute;bottom:0;left:9px;right:9px}.Y0dWHa_close:focus-visible,.Y0dWHa_detailTab:focus-visible{outline:1px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:-1px}.Y0dWHa_detailBody{min-height:0;padding-bottom:var(--dsh-trajectory-bottom-clearance,0px);scrollbar-gutter:stable;flex:1;overflow:hidden auto}.Y0dWHa_detailBodySummary{box-sizing:border-box;padding-bottom:calc(12px + var(--dsh-trajectory-bottom-clearance,0px));flex-direction:column;display:flex;overflow:hidden}.Y0dWHa_detailBodySummary>.Y0dWHa_overview{overscroll-behavior:contain;flex:0 auto;min-height:0;padding-bottom:0;overflow:auto}.Y0dWHa_detailBodySummary>.Y0dWHa_compactedSummary{flex:1;min-height:0;overflow:auto}.Y0dWHa_summaryScrollRegion{--dsh-scrollbar-thumb:transparent;--dsh-scrollbar-thumb-hover:transparent}.Y0dWHa_summaryScrollRegion:focus-within{--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2)}@media (hover:hover){.Y0dWHa_summaryScrollRegion:hover{--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2)}}.Y0dWHa_compactedSummary .Y0dWHa_markdownPayload{padding-right:18px}.Y0dWHa_overview{font:var(--dsw-font-xs-13);margin:0;padding:8px 0}.Y0dWHa_overviewParentLinks{gap:14px;display:flex}.Y0dWHa_overviewHierarchyNavLink{all:unset;color:var(--dsw-alias-label-secondary);cursor:pointer;font:inherit;opacity:1;align-items:center;gap:1px;display:inline-flex}@media (hover:hover){.Y0dWHa_overviewHierarchyNavLink:hover{color:var(--dsw-alias-label-primary)}}.Y0dWHa_overviewHierarchyJumpIconTight{color:var(--dsw-alias-label-caption);flex:none}.Y0dWHa_overviewHierarchyNavLink:focus-visible .Y0dWHa_overviewHierarchyJumpIconTight{color:var(--dsw-alias-label-primary)}@media (hover:hover){.Y0dWHa_overviewHierarchyNavLink:hover .Y0dWHa_overviewHierarchyJumpIconTight{color:var(--dsw-alias-label-primary)}}.Y0dWHa_overviewHierarchyNavLink:focus-visible{color:var(--dsw-alias-label-primary);outline:1px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}.Y0dWHa_overview>div{grid-template-columns:94px minmax(0,1fr);align-items:center;min-height:22px;padding:0 14px;display:grid}.Y0dWHa_overview>.Y0dWHa_requestTokenDetail dt{padding-left:12px}.Y0dWHa_usagePanel{padding:4px 0 10px}.Y0dWHa_usageGroup+.Y0dWHa_usageGroup{margin-top:8px}.Y0dWHa_usageHeading{color:var(--dsw-alias-label-secondary);font:var(--dsw-font-xs-strong-13);user-select:none;margin:0;padding:4px 14px 1px}.Y0dWHa_usageGroup .Y0dWHa_overview{padding:0}.Y0dWHa_overview dt{color:var(--dsw-alias-label-tertiary)}.Y0dWHa_overview dd{min-width:0;color:var(--dsw-alias-label-primary);text-overflow:ellipsis;white-space:nowrap;margin:0;overflow:hidden}.Y0dWHa_timestampToggle{all:unset;color:inherit;cursor:pointer;font:inherit;user-select:text}.Y0dWHa_timestampToggle:focus-visible{outline:1px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}.Y0dWHa_overviewSections{border-top:0;flex-direction:column;flex:1;min-height:min-content;display:flex;overflow:hidden}.Y0dWHa_overviewSection{flex-direction:column;flex:1 1 0;min-height:24px;max-height:max-content;display:flex;overflow:hidden}.Y0dWHa_overviewSection+.Y0dWHa_overviewSection{padding-top:2px}.Y0dWHa_overviewHeading{box-sizing:border-box;width:100%;height:24px;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);font:var(--dsw-font-xs-strong-13);user-select:none;flex:none;align-items:flex-end;margin:0;padding:0 0 3px 14px;display:flex}.Y0dWHa_resultSections{flex-direction:column;gap:2px;padding:8px 0 12px;display:flex}.Y0dWHa_resultSection{min-width:0}.Y0dWHa_resultSection .Y0dWHa_jsonPayload{min-height:0;overflow:visible}.Y0dWHa_resultSection .Y0dWHa_resultBlocks,.Y0dWHa_resultSection .Y0dWHa_payload,.Y0dWHa_resultSection .Y0dWHa_noPayload{min-height:0;padding:2px 14px 8px}.Y0dWHa_resultTitle{font:inherit;margin:0}.Y0dWHa_overviewTitle{width:max-content;height:auto;color:inherit;cursor:pointer;font:inherit;user-select:none;background:0 0;border:0;flex:none;align-items:center;gap:3px;padding:0;line-height:1;display:inline-flex}.Y0dWHa_overviewTitleIcon{color:var(--dsw-alias-label-caption);flex:none}@media (hover:hover){.Y0dWHa_overviewTitle:hover .Y0dWHa_overviewTitleIcon{color:var(--dsw-alias-label-primary)}}.Y0dWHa_overviewTitle:focus-visible{outline:1px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}.Y0dWHa_overviewTitle:focus-visible .Y0dWHa_overviewTitleIcon{color:var(--dsw-alias-state-business-primary)}.Y0dWHa_overviewPreview{overscroll-behavior:contain;background:var(--dsw-alias-bg-layer-1);flex:1;min-height:0;overflow:auto}.Y0dWHa_overviewPreview[data-scroll-more]{mask-image:linear-gradient(#000 calc(100% - 12px),#0000)}.Y0dWHa_overviewPreview>:last-child{margin-bottom:0;padding-bottom:0}.Y0dWHa_programDescription{color:var(--dsw-alias-label-primary);font:var(--dsw-font-xs-13);white-space:pre-wrap;overflow-wrap:anywhere;flex:none;margin:0;padding:8px 14px 2px}.Y0dWHa_programIcon{vertical-align:-2px;margin-right:4px}.Y0dWHa_programSummary{font-family:var(--dsw-font-family);margin-left:5px}.Y0dWHa_detailBodyProgram,.Y0dWHa_programPanel{flex-direction:column;min-height:0;display:flex;overflow:hidden}.Y0dWHa_programPanel{background:var(--dsw-alias-bg-layer-1);flex:1}.Y0dWHa_programActions{flex:none;align-items:center;gap:4px;height:16px;margin-left:auto;padding-right:14px;display:inline-flex}.Y0dWHa_programLanguage{color:var(--dsw-alias-label-tertiary);font:11px/16px var(--ds-font-family-code);padding-right:4px}.Y0dWHa_programAction{box-sizing:border-box;width:20px;height:16px;color:var(--dsw-alias-label-secondary);cursor:pointer;background:0 0;border:0;justify-content:center;align-items:center;padding:0;display:inline-flex}@media (hover:hover){.Y0dWHa_programAction:hover{color:var(--dsw-alias-label-primary)}}.Y0dWHa_programAction[aria-pressed=true]{color:var(--dsw-alias-state-business-primary)}.Y0dWHa_programAction[data-state=failed]{color:var(--dsw-alias-state-error-primary)}.Y0dWHa_programAction:focus-visible{outline:1px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:-1px}.Y0dWHa_programContent{min-width:0;min-height:0}.Y0dWHa_programPanel>.Y0dWHa_programContent{overscroll-behavior:contain;flex:1;overflow:auto}.Y0dWHa_programSource{background:var(--dsw-alias-bg-layer-1);--dsl-code-block-line-white-space:pre;border-radius:0;margin:0!important}.Y0dWHa_programSource :where(pre){font:12px/16px var(--ds-font-family-code);overflow-wrap:normal;word-break:normal;tab-size:2;border-radius:0;padding:2px 14px 8px;overflow:visible;background:var(--dsw-alias-bg-layer-1)!important}.Y0dWHa_programSource pre code>.line{box-sizing:border-box;width:max-content;min-width:100%}.Y0dWHa_programContent[data-wrap=true] .Y0dWHa_programSource{--dsl-code-block-line-white-space:pre-wrap}.Y0dWHa_programContent[data-wrap=true] .Y0dWHa_programSource pre code>.line{overflow-wrap:anywhere;word-break:break-all;width:auto}.Y0dWHa_programOutput{color:var(--dsw-alias-label-primary);font:12px/16px var(--ds-font-family-code);white-space:pre-wrap;overflow-wrap:anywhere;margin:0;padding:2px 14px 8px}.Y0dWHa_programError:first-line{color:var(--dsw-alias-state-error-primary);font-weight:600}.Y0dWHa_overviewPreview .Y0dWHa_jsonPreview>:first-child,.Y0dWHa_overviewPreview .Y0dWHa_schemaTree>:first-child{padding-top:2px;padding-bottom:0}.Y0dWHa_overviewPreview .Y0dWHa_schemaTree{margin-bottom:0}.Y0dWHa_overviewPreview .Y0dWHa_overview{padding:2px 0 0}.Y0dWHa_overviewPreview .Y0dWHa_overview>div{min-height:22px}.Y0dWHa_markdownPreview,.Y0dWHa_markdownPayload{color:var(--dsw-alias-label-primary)}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact]),.Y0dWHa_markdownPayload>div:not([data-markdown-variant=compact]){font:var(--dsw-font-xs-13);gap:8px}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact]) h1,.Y0dWHa_markdownPayload>div:not([data-markdown-variant=compact]) h1{font:600 16px/22px var(--dsw-font-family)}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact]) h2,.Y0dWHa_markdownPayload>div:not([data-markdown-variant=compact]) h2{font:600 15px/22px var(--dsw-font-family)}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact]) :where(h3,h4,h5,h6),.Y0dWHa_markdownPayload>div:not([data-markdown-variant=compact]) :where(h3,h4,h5,h6){font:600 14px/20px var(--dsw-font-family)}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact]) :not(pre)>code,.Y0dWHa_markdownPayload>div:not([data-markdown-variant=compact]) :not(pre)>code{font:12px/18px var(--ds-font-family-code)}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact]) table,.Y0dWHa_markdownPayload>div:not([data-markdown-variant=compact]) table{font:var(--dsw-font-xs-13)}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact])>:first-child{margin-top:0}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact])>:last-child{margin-bottom:0}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact]) :where(h1,h2,h3){margin:12px 0 6px}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact]) :where(h4,h5,h6){margin:10px 0 5px}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact]) :where(p,ul,ol){margin:8px 0}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact]) li:not(:first-child){margin-top:3px}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact]) blockquote{margin-top:8px}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact]) hr{margin:14px 0}.Y0dWHa_markdownPreview>div:not([data-markdown-variant=compact])>.md-code-block{margin:10px 0}.Y0dWHa_assistantContent .Y0dWHa_markdownPayload,.Y0dWHa_assistantContent .Y0dWHa_payload{min-height:0}.Y0dWHa_thinkingQuote{--dsh-content-font-size-secondary:13px;--dsh-content-font-delta-secondary:0px;border-left:2px solid var(--dsw-alias-markdown-citation);color:var(--dsw-alias-label-secondary);background:0 0;margin:6px 14px 0 12px;padding-left:6px}.Y0dWHa_thinkingQuoteOnlyPreview{margin-bottom:8px}.Y0dWHa_detailBody>.Y0dWHa_assistantContentRendered .Y0dWHa_thinkingQuote{margin-top:14px}.Y0dWHa_thinkingToggle{width:max-content;height:18px;color:var(--dsw-alias-label-tertiary);cursor:pointer;font:600 12px/18px var(--dsw-font-family);user-select:none;background:0 0;border:0;align-items:center;gap:2px;padding:0;display:flex}.Y0dWHa_thinkingChevron{transition:transform .12s var(--ds-ease-in-out);flex:none}.Y0dWHa_thinkingToggle[aria-expanded=true] .Y0dWHa_thinkingChevron{transform:rotate(90deg)}@media (hover:hover){.Y0dWHa_thinkingToggle:hover{color:var(--dsw-alias-label-secondary)}}.Y0dWHa_thinkingToggle:focus-visible{outline:1px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}.Y0dWHa_thinkingQuote .Y0dWHa_markdownPreview,.Y0dWHa_thinkingQuote .Y0dWHa_markdownPayload,.Y0dWHa_thinkingQuote .Y0dWHa_payload{min-height:0;color:var(--dsw-alias-label-secondary);background:0 0;padding:2px 0}.Y0dWHa_assistantOutput{background:var(--dsw-alias-bg-layer-1)}.Y0dWHa_markdownPreview{padding:2px 14px 8px}.Y0dWHa_markdownPayload{min-height:100%;padding:14px}.Y0dWHa_jsonPayload{min-height:100%}.Y0dWHa_jsonPreview{min-height:0}.Y0dWHa_schema{background:var(--dsw-alias-bg-layer-1);min-height:100%}.Y0dWHa_schemaPreview{min-height:0}.Y0dWHa_schemaIntro{padding:12px 14px 6px}.Y0dWHa_schemaPreview .Y0dWHa_schemaIntro{padding-top:2px}.Y0dWHa_schemaName{color:var(--dsw-alias-label-primary);font:600 12px/18px var(--ds-font-family-code);margin:0}.Y0dWHa_schemaDescription{color:var(--dsw-alias-label-secondary);font:var(--dsw-font-xs-13);white-space:pre-wrap;margin:2px 0 0}.Y0dWHa_schemaParameters{min-width:0}.Y0dWHa_schemaParametersTitle{color:var(--dsw-alias-label-tertiary);font:600 11px/16px var(--dsw-font-family);user-select:none;margin:0;padding:4px 14px 2px}.Y0dWHa_schemaTree{margin:0 6px 8px 0}.Y0dWHa_payload{box-sizing:border-box;overflow-wrap:anywhere;min-height:100%;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-markdown-code-block);font:12px/19px var(--ds-font-family-code);tab-size:2;white-space:pre-wrap;margin:0;padding:14px}.Y0dWHa_payloadPreview{min-height:0;padding:2px 14px 8px}.Y0dWHa_sourceBlocks{box-sizing:border-box;min-height:100%;padding:12px 14px}.Y0dWHa_sourceBlock+.Y0dWHa_sourceBlock{margin-top:14px}.Y0dWHa_sourceBlockHeader,.Y0dWHa_sourceBlockJumpTarget{user-select:none;align-items:center;gap:3px;width:max-content;margin-bottom:3px;display:flex}.Y0dWHa_sourceBlockJumpTarget{all:unset;cursor:pointer;user-select:none;align-items:center;gap:3px;width:max-content;margin-bottom:3px;display:flex}.Y0dWHa_sourceBlockLabel{color:var(--dsw-alias-label-tertiary);font:11px/16px var(--ds-font-family-code)}.Y0dWHa_sourceBlockJumpIcon{color:var(--dsw-alias-label-caption);flex:none}@media (hover:hover){.Y0dWHa_sourceBlockJumpTarget:hover .Y0dWHa_sourceBlockJumpIcon{color:var(--dsw-alias-label-primary)}}.Y0dWHa_sourceBlockJumpTarget:focus-visible{outline:none}.Y0dWHa_sourceBlockJumpTarget:focus-visible .Y0dWHa_sourceBlockJumpIcon{color:var(--dsw-alias-state-business-primary)}.Y0dWHa_sourceBlockContent{overflow-wrap:anywhere;color:var(--dsw-alias-label-primary);font:12px/19px var(--ds-font-family-code);tab-size:2;white-space:pre-wrap;background:0 0;margin:0}.Y0dWHa_messageImages{flex-direction:column;gap:8px;margin:8px 14px 14px;display:flex}.Y0dWHa_attachments{flex-direction:column;gap:8px;margin:8px 14px 14px;padding:0;list-style:none;display:flex}.Y0dWHa_attachmentsPreview{gap:6px;margin-block:6px 8px}.Y0dWHa_attachmentRow{border:.5px solid var(--dsw-alias-border-l2-darkmode-thin);border-radius:var(--dsw-radius-lg);align-items:center;gap:10px;min-width:0;padding:8px;display:flex}.Y0dWHa_attachmentIcon{flex:0 0 48px;place-items:center;width:48px;height:48px;display:grid}.Y0dWHa_attachmentInfo{flex-direction:column;flex:1;gap:3px;min-width:0;display:flex}.Y0dWHa_attachmentName{color:var(--dsw-alias-label-primary);text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:18px;overflow:hidden}.Y0dWHa_attachmentMetadata{color:var(--dsw-alias-label-tertiary);text-overflow:ellipsis;white-space:nowrap;font-size:11px;line-height:16px;overflow:hidden}.Y0dWHa_attachmentDisclosure{border:.5px solid var(--dsw-alias-border-l2-darkmode-thin);border-radius:var(--dsw-radius-md);margin-block:8px}.Y0dWHa_attachmentDisclosure>summary{cursor:pointer;padding:8px}.Y0dWHa_attachmentDisclosure>summary .Y0dWHa_attachmentName{display:block}.Y0dWHa_attachmentDisclosure>summary:focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}.Y0dWHa_attachmentDisclosure>pre{padding:0 8px 8px}.Y0dWHa_assistantToolCalls{box-sizing:border-box;max-width:100%;color:var(--dsw-alias-label-secondary);font:11px/17px var(--ds-font-family-code);margin:2px 14px 12px;padding:0;list-style:none}.Y0dWHa_assistantToolCallsPreview{margin-top:2px;margin-bottom:8px}.Y0dWHa_assistantToolCalls li{min-width:0}.Y0dWHa_assistantToolCallButton{all:unset;box-sizing:border-box;border-radius:var(--dsw-radius-xs);cursor:pointer;align-items:center;width:calc(100% + 4px);min-width:0;height:19px;margin-left:-4px;padding:0 4px;display:flex}@media (hover:hover){.Y0dWHa_assistantToolCallButton:hover{background:var(--dsw-alias-interactive-bg-hover)}}.Y0dWHa_assistantToolCallButton:focus-visible{background:var(--dsw-alias-interactive-bg-hover);outline:1px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:-1px}.Y0dWHa_assistantToolCallIcon{color:var(--dsw-alias-label-caption);flex:none;margin-right:5px}.Y0dWHa_assistantToolCallButton:focus-visible .Y0dWHa_assistantToolCallIcon{color:var(--dsw-alias-label-secondary)}@media (hover:hover){.Y0dWHa_assistantToolCallButton:hover .Y0dWHa_assistantToolCallIcon{color:var(--dsw-alias-label-secondary)}}.Y0dWHa_assistantToolCallText{white-space:nowrap;flex:1;min-width:0;display:flex;overflow:hidden}.Y0dWHa_assistantToolCallName{color:var(--dsw-alias-label-secondary);flex:none;margin-right:5px;font-weight:500}.Y0dWHa_assistantToolCallArgs{min-width:0;color:var(--dsw-alias-label-tertiary);text-overflow:ellipsis;white-space:nowrap;overflow:hidden}.Y0dWHa_systemPrompt{box-sizing:border-box}.Y0dWHa_toolCatalog{min-height:100%;padding:8px 0 16px}.Y0dWHa_toolCatalogItem{border-bottom:.5px solid var(--dsw-alias-border-l1)}.Y0dWHa_toolCatalogSummary{box-sizing:border-box;cursor:pointer;user-select:none;grid-template-columns:12px 12px max-content minmax(0,1fr);align-items:center;gap:5px;min-height:30px;padding:4px 12px;list-style:none;display:grid}.Y0dWHa_toolCatalogSummary::-webkit-details-marker{display:none}@media (hover:hover){.Y0dWHa_toolCatalogSummary:hover{background:var(--dsw-alias-interactive-bg-hover)}}.Y0dWHa_toolCatalogSummary:focus-visible{background:var(--dsw-alias-interactive-bg-hover);outline:1px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:-1px}.Y0dWHa_toolCatalogChevron,.Y0dWHa_toolCatalogIcon{color:var(--dsw-alias-label-caption)}.Y0dWHa_toolCatalogChevron{transition:transform .1s var(--ds-ease-in-out)}.Y0dWHa_toolCatalogItem[open] .Y0dWHa_toolCatalogChevron{transform:rotate(90deg)}.Y0dWHa_toolCatalogName{color:var(--dsw-alias-label-primary);font:500 12px/18px var(--ds-font-family-code)}.Y0dWHa_toolCatalogDescription{min-width:0;color:var(--dsw-alias-label-tertiary);font:var(--dsw-font-xs-13);text-overflow:ellipsis;white-space:nowrap;overflow:hidden}.Y0dWHa_toolCatalogDefinition{background:var(--dsw-alias-bg-base);padding:0 0 8px 29px}.Y0dWHa_toolCatalogFullDescription{color:var(--dsw-alias-label-secondary);font:var(--dsw-font-xs-13);white-space:pre-wrap;margin:0;padding:7px 14px 4px 0}.Y0dWHa_toolCatalogTree{margin-left:-14px;margin-right:6px}.Y0dWHa_resultBlocks{box-sizing:border-box;flex-direction:column;gap:10px;min-height:100%;padding:14px;display:flex}.Y0dWHa_resultBlocksPreview{gap:6px;min-height:0;padding:2px 14px 8px}.Y0dWHa_resultBlockText{overflow-wrap:anywhere;color:var(--dsw-alias-label-primary);font:12px/19px var(--ds-font-family-code);tab-size:2;white-space:pre-wrap;background:0 0;margin:0}.Y0dWHa_overviewPreview .Y0dWHa_noPayload{padding:2px 14px 0}.Y0dWHa_noPayload{color:var(--dsw-alias-label-tertiary);font:var(--dsw-font-xs-13);margin:0;padding:18px 14px}@media (width<=760px){.Y0dWHa_details{z-index:5;border-left-color:var(--dsw-alias-border-l3);width:min(92%,420px);max-width:92%;position:absolute;top:0;bottom:0;right:0;box-shadow:-12px 0 32px #00000024}}.Y0dWHa_toolUpdatePayload{white-space:pre;overflow-x:auto}";
 		const tagId$3 = "@deepseek-ai/dsh-client-ui-trajectory/TrajectoryTable.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$3) + "]") === null) {
 			const tag = document.createElement("style");
@@ -3379,6 +4653,9 @@ window.__ModuleLoader__.load({
 			"resultBlocksPreview": "Y0dWHa_resultBlocksPreview",
 			"resultPreview": "Y0dWHa_resultPreview",
 			"resultRequest": "Y0dWHa_resultRequest",
+			"resultSection": "Y0dWHa_resultSection",
+			"resultSections": "Y0dWHa_resultSections",
+			"resultTitle": "Y0dWHa_resultTitle",
 			"schema": "Y0dWHa_schema",
 			"schemaDescription": "Y0dWHa_schemaDescription",
 			"schemaIntro": "Y0dWHa_schemaIntro",
@@ -3527,6 +4804,11 @@ window.__ModuleLoader__.load({
 			message: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconSparkleRegular, { size: 13 }),
 			tool: (0, react_jsx_runtime.jsx)(ToolWrenchIcon, {}),
 			subtool: (0, react_jsx_runtime.jsx)(ToolWrenchIcon, {})
+		};
+		const COLLAPSED_SUMMARY_LABEL_KEY = {
+			turn: "request.collapsedTurn",
+			assistant: "request.collapsedAssistant",
+			tool: "request.collapsedTool"
 		};
 		function useStableVirtualRowStructure(rows) {
 			const cache = (0, react.useRef)({
@@ -3740,7 +5022,7 @@ window.__ModuleLoader__.load({
 				const key = requestKey(record.turn, record.group);
 				if (!requestGroups.has(key)) continue;
 				if (boundaries.has(key)) continue;
-				if (record.cell.kind === "user" || record.cell.kind === "context") continue;
+				if (record.cell.kind === "user" || record.cell.kind === "context" || record.cell.kind === "system") continue;
 				boundaries.set(key, record.cell.index);
 			}
 			return boundaries;
@@ -3811,7 +5093,7 @@ window.__ModuleLoader__.load({
 			}
 			return calls;
 		}
-		function summarizeAssistantTools(records, t) {
+		function summarizeCalls(records, t) {
 			const names = [...new Set(records.map((record) => {
 				const separator = record.cell.text.indexOf(" · ");
 				return separator === -1 ? record.cell.text : record.cell.text.slice(0, separator);
@@ -3820,17 +5102,17 @@ window.__ModuleLoader__.load({
 			const summary = t(count === 1 ? "summary.toolCalls.one" : "summary.toolCalls.other", { count });
 			return names.length > 0 ? `${summary} · ${names.join(", ")}` : summary;
 		}
-		function collapseAssistantRecords(records, collapsedAssistants, t) {
+		function collapseCallRecords(records, collapsedIds, kind, t) {
 			const out = [];
 			for (let i = 0; i < records.length; i++) {
 				const record = records[i];
 				if (record === void 0) continue;
 				out.push(record);
-				if (record.cell.kind !== "message" || !collapsedAssistants.has(trajectoryRecordId(record.cell))) continue;
+				if (record.collapsedSummary !== void 0 || record.cell.kind !== (kind === "assistant" ? "message" : "tool") || !collapsedIds.has(trajectoryRecordId(record.cell))) continue;
 				const calls = [];
 				for (let j = i + 1; j < records.length; j++) {
 					const candidate = records[j];
-					if (candidate === void 0 || candidate.collapsedSummary !== void 0 || candidate.cell.kind !== "tool" && candidate.cell.kind !== "subtool") break;
+					if (candidate === void 0 || candidate.collapsedSummary !== void 0 || candidate.cell.kind !== "tool" && candidate.cell.kind !== "subtool" || kind === "tool" && candidate.cell.kind !== "subtool") break;
 					calls.push(candidate);
 				}
 				if (calls.length === 0) continue;
@@ -3844,8 +5126,8 @@ window.__ModuleLoader__.load({
 					groupStart: false,
 					turnStart: false,
 					turnEnd: last?.turnEnd ?? false,
-					collapsedSummary: summarizeAssistantTools(calls, t),
-					collapsedSummaryKind: "assistant"
+					collapsedSummary: summarizeCalls(calls, t),
+					collapsedSummaryKind: kind
 				});
 				i += calls.length;
 			}
@@ -4429,7 +5711,7 @@ window.__ModuleLoader__.load({
 					preview ? TrajectoryTable_module_css_default.resultBlocksPreview : void 0,
 					error ? TrajectoryTable_module_css_default.errorPayload : void 0
 				].filter((value) => value !== void 0).join(" "),
-				children: [error && errorDetail !== void 0 && errorDetail !== "" && (0, react_jsx_runtime.jsx)("pre", {
+				children: [error && errorDetail !== void 0 && errorDetail !== "" && !blocks.some((block) => block.type === "text" && block.content !== "") && (0, react_jsx_runtime.jsx)("pre", {
 					className: TrajectoryTable_module_css_default.resultBlockText,
 					children: errorDetail
 				}), blocks.map((block, index) => block.attachment !== void 0 ? (0, react_jsx_runtime.jsx)("div", {
@@ -4603,7 +5885,7 @@ window.__ModuleLoader__.load({
 			const error = direction === "output" && record.cell.isError === true;
 			const payloadClass = preview ? TrajectoryTable_module_css_default.jsonPreview : TrajectoryTable_module_css_default.jsonPayload;
 			const payloadClassName = error ? `${payloadClass} ${TrajectoryTable_module_css_default.errorPayload}` : payloadClass;
-			const json = parseJsonContainer(value);
+			const json = error ? void 0 : parseJsonContainer(value);
 			if (direction === "output" && record.cell.outputBlocks?.length === 1 && record.cell.outputBlocks[0]?.type === "text" && json !== void 0) return (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.JsonTree, {
 				data: json,
 				stringWrapping,
@@ -4845,13 +6127,7 @@ window.__ModuleLoader__.load({
 					children: output
 				})
 			});
-			return onOpen === void 0 ? (0, react_jsx_runtime.jsxs)("section", {
-				className: TrajectoryTable_module_css_default.programPanel,
-				children: [(0, react_jsx_runtime.jsxs)("header", {
-					className: TrajectoryTable_module_css_default.overviewHeading,
-					children: [(0, react_jsx_runtime.jsx)("span", { children: t("code.output") }), actions]
-				}), body]
-			}) : (0, react_jsx_runtime.jsx)(OverviewSection, {
+			return onOpen === void 0 ? body : (0, react_jsx_runtime.jsx)(OverviewSection, {
 				label: t("code.output"),
 				onOpen,
 				actions,
@@ -4909,7 +6185,7 @@ window.__ModuleLoader__.load({
 		* @param props - Grouped trajectory data and whole-ledger fold state.
 		* @returns The ledger and an optional local record inspector.
 		*/
-		function TrajectoryTable({ t, stringWrapping, renderSlot, loadImage, requestNumbers: sessionRequestNumbers, turns, streamingCells = [], timelineFocusIndexes = null, searchMatchIndexes = null, onSelectedIndexChange, onRecordSelect, recordSelection = null, recordFocus = null, historyLoading = false, olderHistoryLoading = false, historyStartSeq, hasOlderRecords = false, onLoadOlder, onClearSelection, collapsedTurns, onToggleTurn, collapsedAssistants, onToggleAssistant, inspectCallId = null, onInspectApplied }) {
+		function TrajectoryTable({ watchToolResult, t, stringWrapping, renderSlot, loadImage, requestNumbers: sessionRequestNumbers, turns, streamingCells = [], timelineFocusIndexes = null, searchMatchIndexes = null, onSelectedIndexChange, onRecordSelect, recordSelection = null, recordFocus = null, historyLoading = false, olderHistoryLoading = false, historyStartSeq, hasOlderRecords = false, onLoadOlder, onClearSelection, collapsedTurns, onToggleTurn, collapsedAssistants, onToggleAssistant, collapsedTools, onToggleTool, inspectCallId = null, onInspectApplied }) {
 			const [selectedRecordId, setSelectedRecordId] = (0, react.useState)(null);
 			const [selectedRequest, setSelectedRequest] = (0, react.useState)(null);
 			const [activeTab, setActiveTab] = (0, react.useState)("overview");
@@ -4941,6 +6217,25 @@ window.__ModuleLoader__.load({
 			}, [streamingCellsByIndex]);
 			const selectedTemplate = (0, react.useMemo)(() => selectedRecordId === null ? void 0 : allRecords.find((record) => trajectoryRecordId(record.cell) === selectedRecordId), [allRecords, selectedRecordId]);
 			const selected = selectedTemplate === void 0 ? void 0 : currentRecord(selectedTemplate);
+			const resultSeq = activeTab === "output" ? selected?.cell.resultSeq : void 0;
+			const [liveResult, setLiveResult] = (0, react.useState)();
+			(0, react.useEffect)(() => {
+				setLiveResult(void 0);
+				if (resultSeq === void 0 || watchToolResult === void 0) return;
+				let active = true;
+				const dispose = watchToolResult(resultSeq, (value) => {
+					if (active) setLiveResult({
+						seq: resultSeq,
+						owner: watchToolResult,
+						value
+					});
+				});
+				return () => {
+					active = false;
+					dispose();
+				};
+			}, [resultSeq, watchToolResult]);
+			const resultValue = liveResult?.seq === resultSeq && liveResult?.owner === watchToolResult ? liveResult?.value : void 0;
 			const selectedProgram = selected === void 0 ? void 0 : codeProgram(selected.cell);
 			const thinkingExpanded = thinkingDisclosure?.recordId === selectedRecordId ? thinkingDisclosure.expanded : selected?.cell.kind === "message" && Boolean(selected.cell.thinkingDetail?.trim());
 			const setThinkingExpanded = (expanded) => {
@@ -4959,10 +6254,12 @@ window.__ModuleLoader__.load({
 			const records = (0, react.useMemo)(() => {
 				if (searchMatchIndexes !== null) return filterRecords(allRecords, searchMatchIndexes);
 				const turnRecords = collapsedTurns.size === 0 ? allRecords : collapseTurnRecords(allRecords, collapsedTurns, requestGroups, t);
-				return collapsedAssistants.size === 0 ? turnRecords : collapseAssistantRecords(turnRecords, collapsedAssistants, t);
+				const assistantRecords = collapsedAssistants.size === 0 ? turnRecords : collapseCallRecords(turnRecords, collapsedAssistants, "assistant", t);
+				return collapsedTools.size === 0 ? assistantRecords : collapseCallRecords(assistantRecords, collapsedTools, "tool", t);
 			}, [
 				allRecords,
 				collapsedAssistants,
+				collapsedTools,
 				collapsedTurns,
 				requestGroups,
 				searchMatchIndexes,
@@ -5102,6 +6399,15 @@ window.__ModuleLoader__.load({
 			const openRecordSummary = (target) => {
 				const targetAt = allRecords.findIndex((record) => record.cell.index === target.cell.index);
 				if (target.turn !== null && collapsedTurns.has(target.turn)) onToggleTurn(target.turn);
+				if (target.cell.kind === "subtool") for (let i = targetAt - 1; i >= 0; i--) {
+					const candidate = allRecords[i];
+					if (candidate === void 0 || candidate.cell.kind === "subtool") continue;
+					if (candidate.cell.kind === "tool") {
+						const toolId = trajectoryRecordId(candidate.cell);
+						if (collapsedTools.has(toolId)) onToggleTool(toolId);
+					}
+					break;
+				}
 				if (target.cell.kind === "tool" || target.cell.kind === "subtool") for (let i = targetAt - 1; i >= 0; i--) {
 					const candidate = allRecords[i];
 					if (candidate === void 0 || candidate.turn !== target.turn) break;
@@ -5117,6 +6423,20 @@ window.__ModuleLoader__.load({
 			const openCallSummary = (callId) => {
 				const target = allRecords.find((record) => record.cell.callId === callId);
 				if (target !== void 0) openRecordSummary(target);
+			};
+			const expandSummary = (record, kind) => {
+				switch (kind) {
+					case "turn":
+						if (record.turn !== null) onToggleTurn(record.turn);
+						return;
+					case "tool":
+						onToggleTool(trajectoryRecordId(record.cell));
+						return;
+					case "assistant":
+						onToggleAssistant(trajectoryRecordId(record.cell));
+						return;
+					default: assertNever(kind);
+				}
 			};
 			const openRecordSummaryRef = (0, react.useRef)(openRecordSummary);
 			openRecordSummaryRef.current = openRecordSummary;
@@ -5337,7 +6657,8 @@ window.__ModuleLoader__.load({
 								cell: record.cell,
 								t,
 								children: ({ displayText, listDisplayText, resultText, toolCallOnly, toolCallText }) => {
-									const isCollapsedSummary = record.collapsedSummary !== void 0;
+									const summaryKind = record.collapsedSummaryKind;
+									const isCollapsedSummary = summaryKind !== void 0;
 									const isRequestOnly = record.cell.requestOnly === true;
 									const isInitialSystem = record.cell.kind === "system" && record.cell.index === allRecords[0]?.cell.index;
 									const key = requestKey(record.turn, record.group);
@@ -5354,7 +6675,7 @@ window.__ModuleLoader__.load({
 										tabIndex: isRequestOnly || singleToolNotice ? -1 : 0,
 										"aria-rowindex": position + 1 + historyRowOffset,
 										"aria-label": isCollapsedSummary ? t("request.collapsedSummary", {
-											kind: t(record.collapsedSummaryKind === "turn" ? "request.collapsedTurn" : "request.collapsedAssistant"),
+											kind: t(COLLAPSED_SUMMARY_LABEL_KEY[summaryKind]),
 											summary: record.collapsedSummary
 										}) : isRequestOnly ? t("request.rowAriaCompaction", { request: request ?? "" }) : t("request.rowAria", {
 											request: request === void 0 ? "" : t("request.rowPrefix", { request }),
@@ -5377,8 +6698,7 @@ window.__ModuleLoader__.load({
 										"data-selected": !isCollapsedSummary && selectedIndex === record.cell.index || void 0,
 										"data-timeline-focus": isCollapsedSummary || timelineFocusIndexes === null ? void 0 : timelineFocusIndexes.has(record.cell.index) ? "inside" : "outside",
 										onClick: isRequestOnly || singleToolNotice ? void 0 : isCollapsedSummary ? () => {
-											if (record.collapsedSummaryKind === "turn" && record.turn !== null) onToggleTurn(record.turn);
-											else onToggleAssistant(trajectoryRecordId(record.cell));
+											expandSummary(record, summaryKind);
 										} : () => {
 											selectRecord(record.cell.index);
 										},
@@ -5405,8 +6725,7 @@ window.__ModuleLoader__.load({
 											if (event.key !== "Enter" && event.key !== " ") return;
 											event.preventDefault();
 											if (isCollapsedSummary) {
-												if (record.collapsedSummaryKind === "turn" && record.turn !== null) onToggleTurn(record.turn);
-												else onToggleAssistant(trajectoryRecordId(record.cell));
+												expandSummary(record, summaryKind);
 												return;
 											}
 											selectRecord(record.cell.index);
@@ -5649,7 +6968,7 @@ window.__ModuleLoader__.load({
 						}),
 						(0, react_jsx_runtime.jsxs)("div", {
 							id: "trajectory-detail-panel",
-							className: activeTab === "overview" ? `${TrajectoryTable_module_css_default.detailBody} ${TrajectoryTable_module_css_default.detailBodySummary}` : selectedProgram !== void 0 && (activeTab === "input" || activeTab === "output") ? `${TrajectoryTable_module_css_default.detailBody} ${TrajectoryTable_module_css_default.detailBodyProgram}` : TrajectoryTable_module_css_default.detailBody,
+							className: activeTab === "overview" ? `${TrajectoryTable_module_css_default.detailBody} ${TrajectoryTable_module_css_default.detailBodySummary}` : selectedProgram !== void 0 && activeTab === "input" ? `${TrajectoryTable_module_css_default.detailBody} ${TrajectoryTable_module_css_default.detailBodyProgram}` : TrajectoryTable_module_css_default.detailBody,
 							role: "tabpanel",
 							"aria-labelledby": `trajectory-detail-${activeTab}`,
 							children: [
@@ -6004,15 +7323,58 @@ window.__ModuleLoader__.load({
 									stringWrapping,
 									t
 								}, `input:${selectedRecordId}`)),
-								!promptSelected && selected !== void 0 && activeTab === "output" && (selectedProgram === void 0 ? (0, react_jsx_runtime.jsx)(RecordPayload, {
+								!promptSelected && selected !== void 0 && activeTab === "output" && (selected.cell.kind === "tool" || selected.cell.kind === "subtool" ? (0, react_jsx_runtime.jsxs)("div", {
+									className: TrajectoryTable_module_css_default.resultSections,
+									children: [(0, react_jsx_runtime.jsxs)("section", {
+										className: TrajectoryTable_module_css_default.resultSection,
+										"aria-label": t("record.rawResult"),
+										children: [(0, react_jsx_runtime.jsx)("header", {
+											className: TrajectoryTable_module_css_default.overviewHeading,
+											children: (0, react_jsx_runtime.jsx)("h3", {
+												className: TrajectoryTable_module_css_default.resultTitle,
+												children: t("record.rawResult")
+											})
+										}), resultValue === void 0 ? (0, react_jsx_runtime.jsx)("p", {
+											className: TrajectoryTable_module_css_default.noPayload,
+											children: t(stateOf(selected) === "running" ? "code.running" : "record.rawResultUnavailable")
+										}) : resultValue !== null && typeof resultValue === "object" ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.JsonTree, {
+											data: resultValue,
+											label: t("record.resultJson"),
+											labels: jsonTreeLabels(t),
+											stringWrapping,
+											collapsedStringLines: 12,
+											className: TrajectoryTable_module_css_default.jsonPayload
+										}) : (0, react_jsx_runtime.jsx)("pre", {
+											className: TrajectoryTable_module_css_default.programOutput,
+											children: JSON.stringify(resultValue)
+										})]
+									}), (0, react_jsx_runtime.jsxs)("section", {
+										className: TrajectoryTable_module_css_default.resultSection,
+										"aria-label": t("record.renderedResult"),
+										children: [(0, react_jsx_runtime.jsx)("header", {
+											className: TrajectoryTable_module_css_default.overviewHeading,
+											children: (0, react_jsx_runtime.jsx)("h3", {
+												className: TrajectoryTable_module_css_default.resultTitle,
+												children: t("record.renderedResult")
+											})
+										}), selectedProgram === void 0 ? (0, react_jsx_runtime.jsx)(RecordPayload, {
+											record: selected,
+											direction: "output",
+											renderSlot,
+											loadImage,
+											stringWrapping,
+											t
+										}) : (0, react_jsx_runtime.jsx)(ProgramOutput, {
+											record: selected,
+											stringWrapping,
+											t
+										})]
+									})]
+								}) : (0, react_jsx_runtime.jsx)(RecordPayload, {
 									record: selected,
 									direction: "output",
 									renderSlot,
 									loadImage,
-									stringWrapping,
-									t
-								}) : (0, react_jsx_runtime.jsx)(ProgramOutput, {
-									record: selected,
 									stringWrapping,
 									t
 								})),
@@ -6033,7 +7395,7 @@ window.__ModuleLoader__.load({
 		}
 		//#endregion
 		//#region \0dsh-css:/home/runner/work/deepseek-harness/deepseek-harness/packages/client/ui-trajectory/src/client/TrajectoryToolbar.module.css.mjs
-		const css$2 = ".fV0t5q_root{z-index:4;box-sizing:border-box;width:100%;height:var(--dsh-trajectory-toolbar-height);border-bottom:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);position:sticky;top:0}.fV0t5q_inner{box-sizing:border-box;align-items:center;gap:8px;width:100%;height:100%;padding:0 6px;display:flex}.fV0t5q_actions{flex:none;align-items:center;gap:2px;display:flex}.fV0t5q_toggle{border-radius:var(--dsw-radius-sm);height:20px;color:var(--dsw-alias-label-tertiary);cursor:pointer;font:var(--dsw-font-xxs-12);background:0 0;border:0;flex:none;align-items:center;gap:4px;padding:0 7px;display:inline-flex}.fV0t5q_toggle:hover,.fV0t5q_toggle[aria-pressed=true]{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}.fV0t5q_toggle:focus-visible{outline:1px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:1px}.fV0t5q_toggleIcon{stroke:currentColor;stroke-width:1.25px;stroke-linecap:round;stroke-linejoin:round;flex:none;width:12px;height:12px}.fV0t5q_control{box-sizing:border-box;width:88px;height:20px;color:var(--dsw-alias-label-tertiary);cursor:pointer;font:var(--dsw-font-xxs-12);background:0 0;border:0;border-radius:0;flex:none;justify-content:center;align-items:center;gap:4px;padding:0 5px;display:inline-flex}.fV0t5q_control[hidden]{display:none}.fV0t5q_control:hover:not(:disabled),.fV0t5q_control[aria-checked=true],.fV0t5q_control[aria-pressed=true]{color:var(--dsw-alias-label-primary)}.fV0t5q_control:focus-visible{outline:1px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:1px}.fV0t5q_control:disabled{color:var(--dsw-alias-label-dimmed);cursor:not-allowed}.fV0t5q_controlTrack{background:var(--dsw-alias-border-l2);width:20px;height:10px;transition:background-color .12s var(--ds-ease-in-out);border-radius:5px;flex:none;display:inline-block;position:relative}.fV0t5q_controlThumb{corner-shape:round;background:var(--dsw-alias-bg-layer-1);width:6px;height:6px;transition:transform .12s var(--ds-ease-in-out);border-radius:50%;position:absolute;top:2px;left:2px}.fV0t5q_controlTrack[data-on=true]{background:var(--dsw-alias-state-business-primary)}.fV0t5q_controlTrack[data-on=true] .fV0t5q_controlThumb{transform:translate(10px)}.fV0t5q_action{border-radius:var(--dsw-radius-sm);height:20px;color:var(--dsw-alias-label-tertiary);cursor:pointer;font:var(--dsw-font-xxs-12);background:0 0;border:0;flex:none;align-items:center;gap:4px;padding:0 5px;display:inline-flex}.fV0t5q_action:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}.fV0t5q_action:focus-visible{outline:1px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:1px}.fV0t5q_actionIcon{color:var(--dsw-alias-label-tertiary);font:14px/14px var(--ds-font-family-code)}.fV0t5q_search{border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-sm);min-width:84px;height:22px;color:var(--dsw-alias-label-caption);background:var(--dsw-alias-bg-layer-2);flex:0 164px;align-items:center;gap:4px;margin-left:auto;padding:0 6px;display:flex}.fV0t5q_search:hover{border-color:var(--dsw-alias-label-caption)}.fV0t5q_search:focus-within{border-color:var(--dsw-alias-state-business-primary);background:var(--dsw-alias-bg-layer-1)}.fV0t5q_searchIcon{flex:none}.fV0t5q_searchInput{width:100%;min-width:0;color:var(--dsw-alias-label-primary);font:var(--dsw-font-xxs-12);background:0 0;border:0;outline:0;padding:0}.fV0t5q_searchInput::placeholder{color:var(--dsw-alias-label-caption)}.fV0t5q_searchInput::-webkit-search-cancel-button{cursor:pointer;width:12px;height:12px}";
+		const css$2 = ".fV0t5q_root{z-index:4;box-sizing:border-box;width:100%;min-height:var(--dsh-trajectory-toolbar-height);border-bottom:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);flex:none;position:sticky;top:0}.fV0t5q_inner{box-sizing:border-box;width:100%;min-height:var(--dsh-trajectory-toolbar-height);flex-wrap:wrap;align-items:center;gap:4px 8px;padding:4px 6px;display:flex}.fV0t5q_actions{flex-wrap:wrap;flex:0 auto;align-items:center;gap:2px;min-width:0;display:flex}.fV0t5q_toggle{border-radius:var(--dsw-radius-sm);height:20px;color:var(--dsw-alias-label-tertiary);cursor:pointer;font:var(--dsw-font-xxs-12);background:0 0;border:0;flex:none;align-items:center;gap:4px;padding:0 7px;display:inline-flex}@media (hover:hover){.fV0t5q_toggle:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}}.fV0t5q_toggle[aria-pressed=true]{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}.fV0t5q_toggle:focus-visible{outline:1px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:1px}.fV0t5q_toggleIcon{stroke:currentColor;stroke-width:1.25px;stroke-linecap:round;stroke-linejoin:round;flex:none;width:12px;height:12px}.fV0t5q_control{box-sizing:border-box;width:88px;height:20px;color:var(--dsw-alias-label-tertiary);cursor:pointer;font:var(--dsw-font-xxs-12);background:0 0;border:0;border-radius:0;flex:none;justify-content:center;align-items:center;gap:4px;padding:0 5px;display:inline-flex}.fV0t5q_control[hidden]{display:none}.fV0t5q_control[aria-checked=true],.fV0t5q_control[aria-pressed=true]{color:var(--dsw-alias-label-primary)}@media (hover:hover){.fV0t5q_control:hover:not(:disabled){color:var(--dsw-alias-label-primary)}}.fV0t5q_control:focus-visible{outline:1px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:1px}.fV0t5q_control:disabled{color:var(--dsw-alias-label-dimmed);cursor:not-allowed}.fV0t5q_controlTrack{background:var(--dsw-alias-border-l2);width:20px;height:10px;transition:background-color .12s var(--ds-ease-in-out);border-radius:5px;flex:none;display:inline-block;position:relative}.fV0t5q_controlThumb{corner-shape:round;background:var(--dsw-alias-bg-layer-1);width:6px;height:6px;transition:transform .12s var(--ds-ease-in-out);border-radius:50%;position:absolute;top:2px;left:2px}.fV0t5q_controlTrack[data-on=true]{background:var(--dsw-alias-state-business-primary)}.fV0t5q_controlTrack[data-on=true] .fV0t5q_controlThumb{transform:translate(10px)}.fV0t5q_action{border-radius:var(--dsw-radius-sm);height:20px;color:var(--dsw-alias-label-tertiary);cursor:pointer;font:var(--dsw-font-xxs-12);background:0 0;border:0;flex:none;align-items:center;gap:4px;padding:0 5px;display:inline-flex}@media (hover:hover){.fV0t5q_action:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}}.fV0t5q_action:focus-visible{outline:1px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:1px}.fV0t5q_actionIcon{color:var(--dsw-alias-label-tertiary);font:14px/14px var(--ds-font-family-code)}.fV0t5q_search{border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-sm);min-width:84px;height:22px;color:var(--dsw-alias-label-caption);background:var(--dsw-alias-bg-layer-2);flex:0 164px;align-items:center;gap:4px;margin-left:auto;padding:0 6px;display:flex}@media (hover:hover){.fV0t5q_search:hover{border-color:var(--dsw-alias-label-caption)}}.fV0t5q_search:focus-within{border-color:var(--dsw-alias-state-business-primary);background:var(--dsw-alias-bg-layer-1)}.fV0t5q_searchIcon{flex:none}.fV0t5q_searchInput{width:100%;min-width:0;color:var(--dsw-alias-label-primary);font:var(--dsw-font-xxs-12);background:0 0;border:0;outline:0;padding:0}.fV0t5q_searchInput::placeholder{color:var(--dsw-alias-label-caption)}.fV0t5q_searchInput::-webkit-search-cancel-button{cursor:pointer;width:12px;height:12px}";
 		const tagId$2 = "@deepseek-ai/dsh-client-ui-trajectory/TrajectoryToolbar.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$2) + "]") === null) {
 			const tag = document.createElement("style");
@@ -6064,7 +7426,7 @@ window.__ModuleLoader__.load({
 		* @param props - rendered counts and whole-list fold state.
 		* @returns the toolbar element.
 		*/
-		function TrajectoryToolbar({ actualDuration, onActualDurationChange, actualTime, onActualTimeChange, allTurnsCollapsed, onToggleAllTurns, allAssistantsCollapsed, onToggleAllAssistants, searchQuery, onSearchQueryChange, t }) {
+		function TrajectoryToolbar({ actualDuration, onActualDurationChange, actualTime, onActualTimeChange, allTurnsCollapsed, onToggleAllTurns, allAssistantsCollapsed, onToggleAllAssistants, allSubCallsCollapsed, onToggleAllSubCalls, searchQuery, onSearchQueryChange, t }) {
 			return (0, react_jsx_runtime.jsx)("div", {
 				className: TrajectoryToolbar_module_css_default.root,
 				role: "toolbar",
@@ -6136,6 +7498,19 @@ window.__ModuleLoader__.load({
 									"aria-hidden": "true",
 									children: allAssistantsCollapsed ? "⊞" : "⊟"
 								}), t("toolbar.calls")]
+							}),
+							(0, react_jsx_runtime.jsxs)("button", {
+								type: "button",
+								className: TrajectoryToolbar_module_css_default.action,
+								"aria-label": allSubCallsCollapsed ? t("toolbar.expandSubCalls") : t("toolbar.collapseSubCalls"),
+								"aria-pressed": allSubCallsCollapsed,
+								title: allSubCallsCollapsed ? t("toolbar.expandSubCalls") : t("toolbar.collapseSubCalls"),
+								onClick: onToggleAllSubCalls,
+								children: [(0, react_jsx_runtime.jsx)("span", {
+									className: TrajectoryToolbar_module_css_default.actionIcon,
+									"aria-hidden": "true",
+									children: allSubCallsCollapsed ? "⊞" : "⊟"
+								}), t("toolbar.subCalls")]
 							})
 						]
 					}), (0, react_jsx_runtime.jsxs)("div", {
@@ -6286,7 +7661,7 @@ window.__ModuleLoader__.load({
 		}
 		//#endregion
 		//#region \0dsh-css:/home/runner/work/deepseek-harness/deepseek-harness/packages/client/ui-trajectory/src/client/TrajectoryTimeline.module.css.mjs
-		const css$1 = "._1p9O6q_root{z-index:1;isolation:isolate;border-bottom:.5px solid var(--dsw-alias-border-l2);user-select:none;flex:none;position:relative}._1p9O6q_root [role=tooltip]{font:var(--dsw-font-xxxs-11)}._1p9O6q_plot{background:var(--dsw-alias-bg-layer-2);grid-template-columns:44px minmax(0,1fr);height:50px;display:grid;overflow:hidden}._1p9O6q_labels{border-right:.5px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-caption);font:var(--dsw-font-xs-13);font-size:10px;line-height:1;position:relative}._1p9O6q_labels span{text-align:right;justify-content:flex-end;align-items:center;height:8px;display:flex;position:absolute;right:3px}._1p9O6q_labels span:first-child{top:7px}._1p9O6q_labels span:nth-child(2){top:21px}._1p9O6q_labels span:nth-child(3){top:35px}._1p9O6q_track{cursor:crosshair;touch-action:none;position:relative;overflow:hidden}._1p9O6q_track[data-panning=true]{cursor:grabbing}._1p9O6q_earlierHistory{z-index:5;appearance:none;box-sizing:border-box;background:linear-gradient(to right, var(--dsw-alias-bg-layer-2) 0, var(--dsw-alias-bg-layer-2) 38%, transparent 100%);width:28px;color:var(--dsw-alias-label-secondary);font:var(--dsw-font-xs-13);opacity:.72;cursor:pointer;border:0;outline:none;justify-content:flex-start;align-items:center;padding-left:3px;line-height:1;display:flex;position:absolute;top:0;bottom:0;left:0}._1p9O6q_earlierHistory:hover{opacity:1}._1p9O6q_earlierHistory[aria-disabled=true]{cursor:default}._1p9O6q_earlierHistory:focus-visible{box-shadow:inset 0 0 0 1px var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary))}._1p9O6q_empty{color:var(--dsw-alias-label-caption);font:var(--dsw-font-xs-13);position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)}._1p9O6q_track:focus-visible{outline:1px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:-1px}._1p9O6q_lanes{z-index:2;top:7px;bottom:7px;left:var(--trajectory-domain-left);width:var(--trajectory-domain-width);position:absolute}._1p9O6q_turnBoundaries{z-index:3;top:0;bottom:0;left:var(--trajectory-domain-left);width:var(--trajectory-domain-width);pointer-events:none;position:absolute}@media (prefers-reduced-motion:no-preference){._1p9O6q_lanes[data-animate-viewport=true],._1p9O6q_turnBoundaries[data-animate-viewport=true]{transition:left .18s ease-out}}._1p9O6q_turnBoundary{top:0;bottom:0;left:var(--trajectory-turn-left);background:var(--dsw-alias-border-l2);width:.5px;position:absolute}._1p9O6q_span{top:calc(var(--trajectory-span-lane) * 14px);left:calc(var(--trajectory-span-left) + var(--trajectory-span-gap));width:max(2px, calc(var(--trajectory-span-width) - var(--trajectory-span-gap) - var(--trajectory-span-gap)));background:var(--dsw-alias-label-secondary);opacity:.78;border-radius:1px;min-width:2px;height:8px;position:absolute}._1p9O6q_span[data-timeline-span=user]{background:var(--dsw-alias-state-business-primary)}._1p9O6q_span[data-timeline-span=context]{background:color-mix(in srgb, var(--dsw-alias-state-success-primary) 68%, var(--dsw-alias-label-secondary))}._1p9O6q_span[data-timeline-span=message]{--trajectory-assistant-decoding-color:color-mix(in srgb, var(--dsw-alias-brand-primary-new-colorprimary-new-color) 60%, var(--dsw-alias-state-error-secondary));--trajectory-assistant-ttft-color:color-mix(in srgb, var(--trajectory-assistant-decoding-color) 54%, var(--dsw-alias-bg-layer-2));background:var(--trajectory-assistant-decoding-color);opacity:1}._1p9O6q_span[data-timeline-span=message][data-assistant-timing=true]{background:linear-gradient(to right, var(--trajectory-assistant-ttft-color) 0, var(--trajectory-assistant-ttft-color) var(--trajectory-assistant-ttft), var(--trajectory-assistant-decoding-color) var(--trajectory-assistant-ttft), var(--trajectory-assistant-decoding-color) 100%)}._1p9O6q_span[data-timeline-span=tool],._1p9O6q_span[data-timeline-span=subtool]{background:var(--dsw-alias-state-warn-label);opacity:1}._1p9O6q_span[data-error=true]{background:var(--dsw-alias-state-error-primary)}._1p9O6q_span[data-equal-duration=true]{width:8px;min-width:8px}._1p9O6q_span[data-selected=false]{opacity:.2}._1p9O6q_span[data-hovered=true]:not([data-current=true]){z-index:1;opacity:1;box-shadow:0 0 0 1px var(--dsw-alias-bg-layer-2), 0 0 0 2px color-mix(in srgb, var(--dsw-alias-state-business-primary) 80%, transparent)}._1p9O6q_span[data-current=true]{z-index:1;opacity:1;box-shadow:0 0 0 1px var(--dsw-alias-bg-layer-2), 0 0 0 2px var(--dsw-alias-state-business-primary)}._1p9O6q_span[data-search-match=false]{opacity:.14}._1p9O6q_selection{z-index:1;top:0;bottom:0;left:var(--trajectory-selection-left);width:var(--trajectory-selection-width);background:color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, transparent);min-width:1px;box-shadow:-100vw 0 0 100vw color-mix(in srgb, var(--dsw-alias-bg-layer-1) 58%, transparent), 100vw 0 0 100vw color-mix(in srgb, var(--dsw-alias-bg-layer-1) 58%, transparent);pointer-events:none;position:absolute}._1p9O6q_selectionEdges{z-index:4;top:0;bottom:0;left:var(--trajectory-selection-left);width:var(--trajectory-selection-width);pointer-events:none;min-width:1px;position:absolute}._1p9O6q_hoverLine{z-index:4;top:0;bottom:0;left:clamp(0px, calc(var(--trajectory-hover-left) - 1px), calc(100% - 2px));background:var(--dsw-alias-state-business-primary);pointer-events:none;width:2px;position:absolute}._1p9O6q_selectionEdges:before,._1p9O6q_selectionEdges:after{background:var(--dsw-alias-state-business-primary);content:\"\";width:3px;position:absolute;top:0;bottom:0}._1p9O6q_selectionEdges:before{left:0}._1p9O6q_selectionEdges:after{right:0}._1p9O6q_selectionEdges[data-dragging=true]:before,._1p9O6q_selectionEdges[data-dragging=true]:after{width:2px}._1p9O6q_selection[data-dragging=true]{background:color-mix(in srgb, var(--dsw-alias-state-business-primary) 18%, transparent)}";
+		const css$1 = "._1p9O6q_root{z-index:1;isolation:isolate;border-bottom:.5px solid var(--dsw-alias-border-l2);user-select:none;flex:none;position:relative}._1p9O6q_root [role=tooltip]{font:var(--dsw-font-xxxs-11)}._1p9O6q_plot{background:var(--dsw-alias-bg-layer-2);grid-template-columns:44px minmax(0,1fr);height:50px;display:grid;overflow:hidden}._1p9O6q_labels{border-right:.5px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-caption);font:var(--dsw-font-xs-13);font-size:10px;line-height:1;position:relative}._1p9O6q_labels span{text-align:right;justify-content:flex-end;align-items:center;height:8px;display:flex;position:absolute;right:3px}._1p9O6q_labels span:first-child{top:7px}._1p9O6q_labels span:nth-child(2){top:21px}._1p9O6q_labels span:nth-child(3){top:35px}._1p9O6q_track{cursor:crosshair;touch-action:none;position:relative;overflow:hidden}._1p9O6q_track[data-panning=true]{cursor:grabbing}._1p9O6q_earlierHistory{z-index:5;appearance:none;box-sizing:border-box;background:linear-gradient(to right, var(--dsw-alias-bg-layer-2) 0, var(--dsw-alias-bg-layer-2) 38%, transparent 100%);width:28px;color:var(--dsw-alias-label-secondary);font:var(--dsw-font-xs-13);opacity:.72;cursor:pointer;border:0;outline:none;justify-content:flex-start;align-items:center;padding-left:3px;line-height:1;display:flex;position:absolute;top:0;bottom:0;left:0}@media (hover:hover){._1p9O6q_earlierHistory:hover{opacity:1}}._1p9O6q_earlierHistory[aria-disabled=true]{cursor:default}._1p9O6q_earlierHistory:focus-visible{box-shadow:inset 0 0 0 1px var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary))}._1p9O6q_empty{color:var(--dsw-alias-label-caption);font:var(--dsw-font-xs-13);position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)}._1p9O6q_track:focus-visible{outline:1px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:-1px}._1p9O6q_lanes{z-index:2;top:7px;bottom:7px;left:var(--trajectory-domain-left);width:var(--trajectory-domain-width);position:absolute}._1p9O6q_turnBoundaries{z-index:3;top:0;bottom:0;left:var(--trajectory-domain-left);width:var(--trajectory-domain-width);pointer-events:none;position:absolute}@media (prefers-reduced-motion:no-preference){._1p9O6q_lanes[data-animate-viewport=true],._1p9O6q_turnBoundaries[data-animate-viewport=true]{transition:left .18s ease-out}}._1p9O6q_turnBoundary{top:0;bottom:0;left:var(--trajectory-turn-left);background:var(--dsw-alias-border-l2);width:.5px;position:absolute}._1p9O6q_span{top:calc(var(--trajectory-span-lane) * 14px);left:calc(var(--trajectory-span-left) + var(--trajectory-span-gap));width:max(2px, calc(var(--trajectory-span-width) - var(--trajectory-span-gap) - var(--trajectory-span-gap)));background:var(--dsw-alias-label-secondary);opacity:.78;border-radius:1px;min-width:2px;height:8px;position:absolute}._1p9O6q_span[data-timeline-span=user]{background:var(--dsw-alias-state-business-primary)}._1p9O6q_span[data-timeline-span=context]{background:color-mix(in srgb, var(--dsw-alias-state-success-primary) 68%, var(--dsw-alias-label-secondary))}._1p9O6q_span[data-timeline-span=message]{--trajectory-assistant-decoding-color:color-mix(in srgb, var(--dsw-alias-brand-primary-new-colorprimary-new-color) 60%, var(--dsw-alias-state-error-secondary));--trajectory-assistant-ttft-color:color-mix(in srgb, var(--trajectory-assistant-decoding-color) 54%, var(--dsw-alias-bg-layer-2));background:var(--trajectory-assistant-decoding-color);opacity:1}._1p9O6q_span[data-timeline-span=message][data-assistant-timing=true]{background:linear-gradient(to right, var(--trajectory-assistant-ttft-color) 0, var(--trajectory-assistant-ttft-color) var(--trajectory-assistant-ttft), var(--trajectory-assistant-decoding-color) var(--trajectory-assistant-ttft), var(--trajectory-assistant-decoding-color) 100%)}._1p9O6q_span[data-timeline-span=tool],._1p9O6q_span[data-timeline-span=subtool]{background:var(--dsw-alias-state-warn-label);opacity:1}._1p9O6q_span[data-error=true]{background:var(--dsw-alias-state-error-primary)}._1p9O6q_span[data-equal-duration=true]{width:8px;min-width:8px}._1p9O6q_span[data-selected=false]{opacity:.2}._1p9O6q_span[data-hovered=true]:not([data-current=true]){z-index:1;opacity:1;box-shadow:0 0 0 1px var(--dsw-alias-bg-layer-2), 0 0 0 2px color-mix(in srgb, var(--dsw-alias-state-business-primary) 80%, transparent)}._1p9O6q_span[data-current=true]{z-index:1;opacity:1;box-shadow:0 0 0 1px var(--dsw-alias-bg-layer-2), 0 0 0 2px var(--dsw-alias-state-business-primary)}._1p9O6q_span[data-search-match=false]{opacity:.14}._1p9O6q_selection{z-index:1;top:0;bottom:0;left:var(--trajectory-selection-left);width:var(--trajectory-selection-width);background:color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, transparent);min-width:1px;box-shadow:-100vw 0 0 100vw color-mix(in srgb, var(--dsw-alias-bg-layer-1) 58%, transparent), 100vw 0 0 100vw color-mix(in srgb, var(--dsw-alias-bg-layer-1) 58%, transparent);pointer-events:none;position:absolute}._1p9O6q_selectionEdges{z-index:4;top:0;bottom:0;left:var(--trajectory-selection-left);width:var(--trajectory-selection-width);pointer-events:none;min-width:1px;position:absolute}._1p9O6q_hoverLine{z-index:4;top:0;bottom:0;left:clamp(0px, calc(var(--trajectory-hover-left) - 1px), calc(100% - 2px));background:var(--dsw-alias-state-business-primary);pointer-events:none;width:2px;position:absolute}._1p9O6q_selectionEdges:before,._1p9O6q_selectionEdges:after{background:var(--dsw-alias-state-business-primary);content:\"\";width:3px;position:absolute;top:0;bottom:0}._1p9O6q_selectionEdges:before{left:0}._1p9O6q_selectionEdges:after{right:0}._1p9O6q_selectionEdges[data-dragging=true]:before,._1p9O6q_selectionEdges[data-dragging=true]:after{width:2px}._1p9O6q_selection[data-dragging=true]{background:color-mix(in srgb, var(--dsw-alias-state-business-primary) 18%, transparent)}";
 		const tagId$1 = "@deepseek-ai/dsh-client-ui-trajectory/TrajectoryTimeline.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$1) + "]") === null) {
 			const tag = document.createElement("style");
@@ -6849,6 +8224,7 @@ window.__ModuleLoader__.load({
 		}
 		/**
 		* Fold a snapshot into turn → Message/Step groups with expanded cells.
+		* Inputs admitted to the same Step retain log order before its response.
 		* @param input - nodes plus in-flight partial/runningCalls.
 		* @param t - Trajectory locale translator.
 		* @returns turns ordered by first appearance.
@@ -6984,7 +8360,7 @@ window.__ModuleLoader__.load({
 				}
 				if (entry.kind === "system") {
 					const { change, request } = entry;
-					pushMessage(change.kind === "initial" ? firstVisibleTurn(nodes, partial) : enclosingPromptTurn(nodes, change.seq, partial), {
+					const laid = {
 						absTime: finiteTime(change.time),
 						cell: {
 							index: ++index,
@@ -6997,7 +8373,9 @@ window.__ModuleLoader__.load({
 							timeSeconds: 0,
 							startedAt: finiteTime(change.time)
 						}
-					});
+					};
+					if (request !== void 0) pushStepInput(request.turn, request.step, [laid]);
+					else pushMessage(change.kind === "initial" ? firstVisibleTurn(nodes, partial) : enclosingPromptTurn(nodes, change.seq, partial), laid);
 					prevAbsTime = finiteTime(change.time) ?? prevAbsTime;
 					continue;
 				}
@@ -7035,27 +8413,15 @@ window.__ModuleLoader__.load({
 					continue;
 				}
 				const { node, nodeIndex: i } = entry;
-				if (node.kind === "user") {
-					pushMessage(enclosingUserTurn(followingAssistants[i], partial, lastAssistantTurn), {
-						absTime: finiteTime(node.time),
-						cell: {
-							index: ++index,
-							kind: "user",
-							...inputCellDetail(node, t),
-							opensTurn: true
-						}
-					});
-					prevAbsTime = finiteTime(node.time) ?? prevAbsTime;
-					continue;
-				}
-				if (node.kind === "steering") {
-					const placement = steeringPlacement(followingAssistants[i], partial, lastAssistantTurn, eventLocations?.get(node.seq));
+				if (node.kind === "user" || node.kind === "steering" || node.kind === "context") {
+					const placement = inputPlacement(followingAssistants[i], partial, eventLocations?.get(node.seq), node.kind === "steering" ? lastAssistantTurn ?? 1 : (lastAssistantTurn ?? 0) + 1);
 					const laid = {
 						absTime: finiteTime(node.time),
 						cell: {
 							index: ++index,
-							kind: "user",
-							...inputCellDetail(node, t)
+							kind: node.kind === "context" ? "context" : "user",
+							...inputCellDetail(node, t),
+							...node.kind === "user" ? { opensTurn: true } : {}
 						}
 					};
 					if (placement.step === void 0) pushMessage(placement.turn, laid);
@@ -7071,18 +8437,6 @@ window.__ModuleLoader__.load({
 					if (last !== void 0) index = last.cell.index;
 					prevAbsTime = finiteTime(node.time) ?? prevAbsTime;
 					lastAssistantTurn = node.turn;
-					continue;
-				}
-				if (node.kind === "context") {
-					pushMessage(enclosingUserTurn(followingAssistants[i], partial, lastAssistantTurn), {
-						absTime: finiteTime(node.time),
-						cell: {
-							index: ++index,
-							kind: "context",
-							...inputCellDetail(node, t)
-						}
-					});
-					prevAbsTime = finiteTime(node.time) ?? prevAbsTime;
 					continue;
 				}
 				if (node.kind === "compaction") {
@@ -7105,6 +8459,7 @@ window.__ModuleLoader__.load({
 								...node.call !== null ? summarizeCall(node.call.name, node.call.argsRaw) : resultAsText(resultPreview),
 								...node.call !== null ? { inputDetail: node.call.argsRaw } : {},
 								outputDetail: detailResult(node, t),
+								resultSeq: node.seq,
 								outputBlocks: node.content.map((block) => sourceBlock(block)),
 								...resultPreview,
 								callId: node.callId,
@@ -7349,6 +8704,7 @@ window.__ModuleLoader__.load({
 						callId: block.callId,
 						...result !== void 0 ? {
 							outputDetail: detailResult(result, t),
+							resultSeq: result.seq,
 							outputBlocks: result.content.map((block) => sourceBlock(block)),
 							...resultPreview,
 							isError: result.isError
@@ -7430,17 +8786,7 @@ window.__ModuleLoader__.load({
 		function stringifySourceValue(value) {
 			return JSON.stringify(value, null, 2) || String(value);
 		}
-		/**
-		* Turn that encloses a user/message: next assistant turn, else the
-		* in-flight partial, else the turn after the last finalized assistant (or 1).
-		*/
-		function enclosingUserTurn(followingAssistant, partial, lastAssistantTurn) {
-			if (followingAssistant !== void 0) return followingAssistant.turn;
-			if (partial !== null) return partial.turn;
-			if (lastAssistantTurn !== null) return lastAssistantTurn + 1;
-			return 1;
-		}
-		function steeringPlacement(followingAssistant, partial, lastAssistantTurn, location) {
+		function inputPlacement(followingAssistant, partial, location, fallbackTurn) {
 			if (location?.kind === "step") return {
 				turn: location.turn.turn,
 				step: location.step.step
@@ -7455,7 +8801,7 @@ window.__ModuleLoader__.load({
 				...partial.step > 0 ? { step: partial.step } : {}
 			};
 			if (locatedTurn !== void 0) return { turn: locatedTurn };
-			return { turn: lastAssistantTurn ?? 1 };
+			return { turn: fallbackTurn };
 		}
 		function indexFollowingAssistants(nodes) {
 			const following = new Array(nodes.length);
@@ -7546,6 +8892,7 @@ window.__ModuleLoader__.load({
 						...settled ? sub.call !== null ? { inputDetail: sub.call.argsRaw } : {} : { inputDetail: sub.argsRaw },
 						...settled ? {
 							outputDetail: detailResult(sub, t),
+							resultSeq: sub.seq,
 							outputBlocks: sub.content.map((block) => sourceBlock(block)),
 							...resultPreview,
 							isError: sub.isError
@@ -7570,11 +8917,11 @@ window.__ModuleLoader__.load({
 			};
 		}
 		function summarizeResult(node, t) {
-			if (node.isError) return { result: node.error?.code ?? "error" };
 			for (const block of node.content) if (block.type === "text" && typeof block.text === "string" && block.text !== "") return {
 				result: "",
 				resultPreviewMarkdown: block.text
 			};
+			if (node.isError) return { result: node.error?.code ?? "error" };
 			const images = imageBlockCount(node.content);
 			if (images > 0) return { result: t("layout.imageCount", { count: images }) };
 			return { result: t("record.noOutput") };
@@ -7586,9 +8933,9 @@ window.__ModuleLoader__.load({
 			};
 		}
 		function detailResult(node, t) {
-			if (node.isError) return node.error === void 0 ? "error" : `${node.error.name}: ${node.error.code}`;
 			const text = node.content.filter((block) => block.type === "text" && typeof block.text === "string").map((block) => block.type === "text" ? block.text : "").join("\n");
-			if (text !== "") return text;
+			if (text !== "" && (!node.isError || node.content.some((block) => block.type === "text" && typeof block.text === "string" && block.text !== ""))) return text;
+			if (node.isError) return node.error === void 0 ? "error" : `${node.error.name}: ${node.error.code}`;
 			const images = imageBlockCount(node.content);
 			if (images > 0) return t("layout.imageCount", { count: images });
 			if (node.content.length === 0 || node.content.every((block) => block.type === "text" && (typeof block.text !== "string" || block.text === ""))) return t("record.noOutput");
@@ -7705,7 +9052,7 @@ window.__ModuleLoader__.load({
 		};
 		//#endregion
 		//#region \0dsh-css:/home/runner/work/deepseek-harness/deepseek-harness/packages/client/ui-trajectory/src/client/views.module.css.mjs
-		const css = ".qBU-ya_root{--dsh-trajectory-toolbar-height:32px;box-sizing:border-box;width:100%;height:100%;min-height:0;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);flex-direction:column;display:flex;overflow:hidden}.qBU-ya_ledger{z-index:0;isolation:isolate;--dsh-trajectory-bottom-clearance:calc(var(--dsh-composer-height,152px) + 16px);flex:1;min-width:0;min-height:0;display:flex;position:relative;overflow:hidden}";
+		const css = ".qBU-ya_root{--dsh-trajectory-toolbar-height:32px;isolation:isolate;box-sizing:border-box;width:100%;height:100%;min-height:0;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);flex-direction:column;display:flex;overflow:hidden}.qBU-ya_ledger{z-index:0;isolation:isolate;--dsh-trajectory-bottom-clearance:calc(var(--dsh-composer-height,152px) + 16px);flex:1;min-width:0;min-height:0;display:flex;position:relative;overflow:hidden}";
 		const tagId = "@deepseek-ai/dsh-client-ui-trajectory/views.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
 			const tag = document.createElement("style");
@@ -7782,9 +9129,10 @@ window.__ModuleLoader__.load({
 				...total?.reasoning === void 0 && usage.reasoning === void 0 ? {} : { reasoning: (total?.reasoning ?? 0) + (usage.reasoning ?? 0) }
 			};
 		}
-		function TrajectoryView({ useSession, useTrajectory, useDuration, loadOlder, loadImage, setActualDuration, viewRequest, completeViewRequest, renderSlot, t, jsonStringWrapping }) {
+		function TrajectoryView({ useSession, useTrajectory, useDuration, watchToolResult, loadOlder, loadImage, setActualDuration, viewRequest, completeViewRequest, renderSlot, t, jsonStringWrapping }) {
 			const [collapsedTurns, setCollapsedTurns] = (0, react.useState)(EMPTY_TURN_IDS);
 			const [collapsedAssistants, setCollapsedAssistants] = (0, react.useState)(EMPTY_RECORD_IDS);
+			const [collapsedTools, setCollapsedTools] = (0, react.useState)(EMPTY_RECORD_IDS);
 			const [timelineSelection, setTimelineSelection] = (0, react.useState)(null);
 			const actualDuration = useDuration((value) => value);
 			const [actualTime, setActualTime] = (0, react.useState)(false);
@@ -8045,6 +9393,8 @@ window.__ModuleLoader__.load({
 				return ids;
 			}, [timelineTurns]);
 			const allAssistantsCollapsed = collapsibleAssistantIds.length > 0 && collapsibleAssistantIds.every((index) => collapsedAssistants.has(index));
+			const collapsibleToolIds = (0, react.useMemo)(() => timelineTurns.flatMap((turn) => turn.groups.flatMap((group) => group.cells.flatMap((cell, index) => cell.kind === "tool" && group.cells[index + 1]?.kind === "subtool" ? [trajectoryRecordId(cell)] : []))), [timelineTurns]);
+			const allSubCallsCollapsed = collapsibleToolIds.length > 0 && collapsibleToolIds.every((id) => collapsedTools.has(id));
 			const toggleTurn = (turn) => {
 				setCollapsedTurns((current) => {
 					const collapsed = new Set(current);
@@ -8077,6 +9427,22 @@ window.__ModuleLoader__.load({
 					return collapsed;
 				});
 			};
+			const toggleTool = (id) => {
+				setCollapsedTools((current) => {
+					const collapsed = new Set(current);
+					if (collapsed.has(id)) collapsed.delete(id);
+					else collapsed.add(id);
+					return collapsed;
+				});
+			};
+			const toggleAllSubCalls = () => {
+				setCollapsedTools((current) => {
+					const collapsed = new Set(current);
+					if (allSubCallsCollapsed) for (const id of collapsibleToolIds) collapsed.delete(id);
+					else for (const id of collapsibleToolIds) collapsed.add(id);
+					return collapsed;
+				});
+			};
 			const loadEarlierHistory = (0, react.useCallback)(async () => {
 				if (!hasResidentOlderHistory && !await loadOlder()) return false;
 				setHistoryNodeLimit((limit) => limit + HISTORY_PAGE_NODES);
@@ -8101,6 +9467,8 @@ window.__ModuleLoader__.load({
 						onToggleAllTurns: toggleAllTurns,
 						allAssistantsCollapsed,
 						onToggleAllAssistants: toggleAllAssistants,
+						allSubCallsCollapsed,
+						onToggleAllSubCalls: toggleAllSubCalls,
 						searchQuery,
 						onSearchQueryChange: setSearchQuery,
 						t
@@ -8122,6 +9490,7 @@ window.__ModuleLoader__.load({
 						className: views_module_css_default.ledger,
 						children: (0, react_jsx_runtime.jsx)(TrajectoryTable, {
 							t,
+							watchToolResult,
 							stringWrapping: jsonStringWrapping === void 0 ? void 0 : {
 								...jsonStringWrapping,
 								label: t("record.wrapLines")
@@ -8149,6 +9518,8 @@ window.__ModuleLoader__.load({
 							onToggleTurn: toggleTurn,
 							collapsedAssistants,
 							onToggleAssistant: toggleAssistant,
+							collapsedTools,
+							onToggleTool: toggleTool,
 							inspectCallId,
 							onInspectApplied: completeViewRequest
 						})
@@ -8164,7 +9535,9 @@ window.__ModuleLoader__.load({
 			"sessions",
 			"uiSession",
 			"uiConversation",
-			"locale"
+			"locale",
+			"remote",
+			"remote.toolResults"
 		];
 		/**
 		* Client plugin body: register the trajectory view tab. The registration
@@ -8187,7 +9560,13 @@ window.__ModuleLoader__.load({
 			};
 			ctx.effect(() => ctx.locale.register(NS, {
 				zh,
-				en
+				en,
+				ja,
+				es,
+				fr,
+				de,
+				ru,
+				pt
 			}), "ui-trajectory: dictionaries");
 			const t = ctx.locale.bind(NS);
 			const duration = createTrajectoryDurationStore();
@@ -8218,6 +9597,9 @@ window.__ModuleLoader__.load({
 					const trajectory = ctx.uiConversation.binding(sessionId).target("trajectory");
 					return {
 						hooks: { duration },
+						watchToolResult: createToolResultWatcher(ctx.remote, sessionId, (error) => {
+							ctx.logger.warn("live tool result unavailable: %s", error);
+						}),
 						jsonStringWrapping: {
 							getDefault: () => stringWrapping.getSnapshot(),
 							setDefault: (value) => {

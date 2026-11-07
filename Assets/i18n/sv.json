@@ -1353,5 +1353,14 @@
  "设置二级页": "Undersida i inställningar",
  "关闭图片预览": "Stäng bildförhandsvisningen",
  "已更新": "Uppdaterad",
- "附加内容块": "Bifogat innehållsblock"
+ "附加内容块": "Bifogat innehållsblock",
+ "实验性功能": "Experimentella funktioner",
+ "实验性功能由内核可选 bundle（插件层）提供，可在此逐项开关。开关增删内核 profile 的 bundle 清单，由内核热重载即时生效；关闭的 bundle 不参与加载，重新开启即恢复。": "Experimentella funktioner levereras av kärnan som valfria bundles (pluginlaget) och kan slås av och på en och en här. Brytaren lägger till eller tar bort bundle i kärnans profillista; kärnan läser in ändringen direkt. Ett avstängt bundle läses inte in alls, och slås det på igen återställs det.",
+ "跨会话搜索": "Sökning över sessioner",
+ "开启后每个 Agent 获得一组只读检索工具，可搜索并引用当前工作区更早的会话；内容索引在首次搜索时打开、全 Agent 共享，侧栏搜索行为不变。": "När den är påslagen får varje agent en uppsättning skrivskyddade sökverktyg för att hitta och referera till tidigare sessioner i den aktuella arbetsytan. Innehållsindexet öppnas vid den första sökningen och delas av alla agenter; sidofältets sökbeteende ändras inte.",
+ "多代理（Agent Teams）": "Agent teams (flera agenter)",
+ "开启后 Agent 可把任务委派给团队成员协作完成：成员名册、共享任务板与队友会话在会话内可见。注意：多代理启用期间普通 Subagent 委派按内核设计一并停用。": "När den är påslagen kan agenten delegera uppgifter till lagkamrater och samarbeta med dem: medlemslistan, den gemensamma uppgiftstavlan och lagkamraternas sessioner syns i sessionen. Observera: medan Agent teams är aktiverat är vanlig Subagent-delegering avstängd enligt kärnans design.",
+ "启用跨会话搜索": "Aktivera sökning över sessioner",
+ "启用多代理": "Aktivera Agent teams",
+ "回到底部": "Bläddra till slutet"
 }

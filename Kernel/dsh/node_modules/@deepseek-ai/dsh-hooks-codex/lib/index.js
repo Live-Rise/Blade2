@@ -101,7 +101,7 @@ function parseCodexConfig(raw) {
 const name = "hooks-codex";
 const inject = [
 	"shell",
-	"sessionProjections",
+	"agents",
 	"workingDirectory"
 ];
 const Config = z.object({
@@ -298,8 +298,7 @@ function apply(ctx, config) {
 }
 function lastTurn(ctx, agent) {
 	if (!agent) return 0;
-	/* v8 ignore next -- agent-present hook points run inside AgentLoop, which owns this projection. */
-	return ctx.sessionProjections.stateOf(agent.session, "turnBoundary")?.lastTurn ?? 0;
+	return ctx.agents.turnBoundaryOf(agent.session).lastTurn;
 }
 function blocksToText(content) {
 	return content.filter((b) => b.type === "text").map((b) => b.text).join("");

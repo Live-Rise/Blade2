@@ -1353,5 +1353,14 @@
  "设置二级页": "Ayarlar alt sayfası",
  "关闭图片预览": "Resim önizlemesini kapat",
  "已更新": "Güncellendi",
- "附加内容块": "Ekli içerik bloğu"
+ "附加内容块": "Ekli içerik bloğu",
+ "实验性功能": "Deneysel özellikler",
+ "实验性功能由内核可选 bundle（插件层）提供，可在此逐项开关。开关增删内核 profile 的 bundle 清单，由内核热重载即时生效；关闭的 bundle 不参与加载，重新开启即恢复。": "Deneysel özellikler, çekirdek tarafından isteğe bağlı bundle'lar (eklenti katmanı) olarak sağlanır ve burada tek tek açılıp kapatılabilir. Anahtar, çekirdek profilindeki bundle listesine bundle ekler veya çıkarır; çekirdek değişikliği anında yeniden yükler. Kapatılan bundle hiç yüklenmez; yeniden açmak onu geri getirir.",
+ "跨会话搜索": "Oturumlar arası arama",
+ "开启后每个 Agent 获得一组只读检索工具，可搜索并引用当前工作区更早的会话；内容索引在首次搜索时打开、全 Agent 共享，侧栏搜索行为不变。": "Açıldığında her Agent, yalnızca okunabilir bir arama araçları setiyle geçerli çalışma alanındaki daha eski oturumları arayıp kaynak gösterebilir. İçerik dizini ilk aramada açılır ve tüm Agent'lar tarafından paylaşılır; kenar çubuğundaki arama davranışı değişmez.",
+ "多代理（Agent Teams）": "Agent ekipleri (çoklu agent)",
+ "开启后 Agent 可把任务委派给团队成员协作完成：成员名册、共享任务板与队友会话在会话内可见。注意：多代理启用期间普通 Subagent 委派按内核设计一并停用。": "Açıldığında Agent, görevleri ekip üyelerine devredebilir ve onlarla iş birliği yapabilir: üye listesi, paylaşılan görev panosu ve ekip arkadaşlarının oturumları oturum içinde görünür. Not: Agent ekipleri etkinleştirildiği sürece sıradan Alt agent devretmesi de çekirdeğin tasarımı gereği devre dışı kalır.",
+ "启用跨会话搜索": "Oturumlar arası aramayı etkinleştir",
+ "启用多代理": "Agent ekiplerini etkinleştir",
+ "回到底部": "En alta kaydır"
 }

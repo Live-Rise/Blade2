@@ -1353,5 +1353,14 @@
  "设置二级页": "Subpágina de configuración",
  "关闭图片预览": "Cerrar la vista previa de la imagen",
  "已更新": "Actualizado",
- "附加内容块": "Bloque de contenido adjunto"
+ "附加内容块": "Bloque de contenido adjunto",
+ "实验性功能": "Funciones experimentales",
+ "实验性功能由内核可选 bundle（插件层）提供，可在此逐项开关。开关增删内核 profile 的 bundle 清单，由内核热重载即时生效；关闭的 bundle 不参与加载，重新开启即恢复。": "Las funciones experimentales son proporcionadas por bundles opcionales del kernel (capa de complementos) y aquí se pueden activar o desactivar una a una. Los interruptores agregan o eliminan entradas de la lista de bundles del perfil del kernel; cada cambio se aplica al instante con la recarga en caliente del kernel. Un bundle desactivado no se carga en absoluto; al volver a activarlo se restaura.",
+ "跨会话搜索": "Búsqueda entre sesiones",
+ "开启后每个 Agent 获得一组只读检索工具，可搜索并引用当前工作区更早的会话；内容索引在首次搜索时打开、全 Agent 共享，侧栏搜索行为不变。": "Si está activado, cada Agent obtiene un conjunto de herramientas de búsqueda de solo lectura para buscar y citar sesiones anteriores en el área de trabajo actual. El índice de contenido se abre en la primera búsqueda y lo comparten todos los Agent; el comportamiento de la búsqueda en la barra lateral no cambia.",
+ "多代理（Agent Teams）": "Equipos de Agent (multiagente)",
+ "开启后 Agent 可把任务委派给团队成员协作完成：成员名册、共享任务板与队友会话在会话内可见。注意：多代理启用期间普通 Subagent 委派按内核设计一并停用。": "Si está activado, el Agent puede delegar tareas en miembros del equipo y colaborar con ellos: la lista de miembros, el tablero de tareas compartido y las sesiones de los compañeros de equipo son visibles en la conversación. Nota: mientras los equipos de Agent estén activados, la delegación ordinaria a subagentes también está desactivada por diseño del kernel.",
+ "启用跨会话搜索": "Activar búsqueda entre sesiones",
+ "启用多代理": "Activar equipos de Agent",
+ "回到底部": "Ir al final"
 }

@@ -14,8 +14,19 @@ const _deepseek_ai_dsh_api_session_controller_fileReferences_list_result$schema 
 })))
 let _deepseek_ai_dsh_api_session_controller_session_attachment_parameter_0$schema$value
 const _deepseek_ai_dsh_api_session_controller_session_attachment_parameter_0$schema = () => (_deepseek_ai_dsh_api_session_controller_session_attachment_parameter_0$schema$value ??= z.object({
-  'sessionId': z.string().readonly(),
-  'attachmentId': z.string().readonly(),
+  'sessionId': z.string().readonly().describe('Gateway permission scope only; neither Session existence nor its image references are checked.'),
+  'attachment': z.object({
+  'attachmentId': z.string().describe('Opaque storage identifier; never a filesystem path or bearer URL.'),
+  'mediaType': z.union([z.literal("image/png"), z.literal("image/jpeg"), z.literal("image/webp"), z.literal("image/gif")]).describe('Media type verified from the stored bytes.'),
+  'bytes': z.number().describe('Exact encoded byte length.'),
+  'width': z.number().describe('Intrinsic encoded width in pixels.'),
+  'height': z.number().describe('Intrinsic encoded height in pixels.'),
+  'name': z.string().optional().describe('Optional display name stripped of local path information.'),
+  'originalDimensions': z.object({
+  'width': z.number(),
+  'height': z.number(),
+}).optional().describe('Input dimensions after applying EXIF orientation and before normalization scaling. Present only when normalization reduced the image.'),
+}).readonly(),
 }))
 let _deepseek_ai_dsh_api_session_controller_session_attachment_result$schema$value
 const _deepseek_ai_dsh_api_session_controller_session_attachment_result$schema = () => (_deepseek_ai_dsh_api_session_controller_session_attachment_result$schema$value ??= z.object({
@@ -30,7 +41,7 @@ const _deepseek_ai_dsh_api_session_controller_session_attachment_result$schema =
   'width': z.number(),
   'height': z.number(),
 }).optional().describe('Input dimensions after applying EXIF orientation and before normalization scaling. Present only when normalization reduced the image.'),
-}).readonly(),
+}).readonly().describe('Supplied reference after ID, format, byte length, and dimensions verification; display fields are preserved.'),
   'data': z.string().readonly(),
 }))
 let _deepseek_ai_dsh_api_session_controller_session_cancel_parameter_0$schema$value
@@ -54,13 +65,40 @@ const _deepseek_ai_dsh_api_session_controller_session_control_result$schema = ()
   'next-turn': z.array(z.json()).readonly(),
   'next-step': z.array(z.json()).readonly(),
 }).optional().describe('Pending agent input reconstructed from durable inbox splices.'),
-  'workingDirectory': z.union([z.literal(null), z.string()]).optional().describe('Recorded current directory for Session observations, or null when none is recorded.'),
+  'modelSelection': z.object({
+  'lastUsed': z.union([z.literal(null), z.object({
+  'provider': z.string().describe('Registered provider route.'),
+  'model': z.string().describe('Provider-owned model id.'),
+  'reasoningEffort': z.string().optional().describe('Adapter-owned reasoning effort, or provider/default behavior when absent.'),
+})]).readonly().describe('Selection used by the latest recorded model request.'),
+  'next': z.union([z.literal(null), z.object({
+  'provider': z.string().describe('Registered provider route.'),
+  'model': z.string().describe('Provider-owned model id.'),
+  'reasoningEffort': z.string().optional().describe('Adapter-owned reasoning effort, or provider/default behavior when absent.'),
+})]).readonly().describe('Selection the next model step uses; null while the Agent\'s initial options supply the route.'),
+}).optional().describe('Recorded model selection for the next model step and the latest request.'),
+  'actionCards': z.object({
+  'proposals': z.record(z.string(), z.object({
+  'callId': z.string().readonly().describe('Id of the logged tool call.'),
+  'turn': z.number().readonly().describe('Turn whose answer the card follows.'),
+  'action': z.string().readonly().describe('Registered action kind named by the call.'),
+  'title': z.string().readonly(),
+  'brief': z.string().readonly().describe('What the action does, in the user\'s language.'),
+  'details': z.record(z.string(), z.json()).readonly().readonly().describe('Fields the kind\'s skill asks for.'),
+})).readonly().readonly(),
+  'decisions': z.record(z.string(), z.object({
+  'callId': z.string().readonly(),
+  'action': z.string().readonly(),
+  'phase': z.string().readonly(),
+  'data': z.union([z.undefined(), z.record(z.string(), z.json()).readonly()]).readonly().optional().describe('Kind-defined fields such as a chosen location or a created package.'),
+})).readonly().readonly(),
+}).optional().describe('Action card proposals and decisions for the currently open Session.'),
   'agentPreset': z.union([z.literal(null), z.string()]).optional().describe('Preset the Session runs, or null when the deployment composes none.'),
   'title': z.union([z.literal(null), z.string()]).optional().describe('The session\'s current normalized title — the latest `session/title` event\'s text (last-wins), or `null` before the first title lands. A plain string: the shape the client list rows consume.'),
   'todos': z.union([z.literal(null), z.array(z.object({
   'content': z.string().describe('What this task is — a short imperative line shown in the UI.'),
   'status': z.union([z.literal("completed"), z.literal("pending"), z.literal("in_progress")]).describe('Lifecycle state. `in_progress` marks a task being worked now; parallel work may mark several.'),
-}))]).optional().describe('The agent\'s current whole todo list (the latest `todo/write` snapshot), or `null` before the first write. Whole-value rule: every `todo/write` carries the complete replacement list, so the fold is last-wins.'),
+}))]).optional().describe('The agent\'s current whole todo list (the latest `todo/write` snapshot), or `null` before the first write. Whole-value rule: every `todo/write` carries the complete replacement list, so the fold is last-wins. Excluded from Session summary payloads, with `null` kept outside the exclusion mark so the pre-first-write value stays expressible.'),
   'sessionListMetadata': z.object({
   'blank': z.boolean().readonly().describe('Whether the folded prefix contains no turn.'),
   'lastPromptAt': z.union([z.literal(null), z.number()]).readonly().describe('Latest human-authored prompt time in the folded prefix.'),
@@ -72,19 +110,8 @@ const _deepseek_ai_dsh_api_session_controller_session_control_result$schema = ()
   'maxImagePixels': z.number(),
   'maxImageDimension': z.number().describe('Maximum intrinsic width and maximum intrinsic height in pixels for one image.'),
   'mediaTypes': z.array(z.union([z.literal("image/png"), z.literal("image/jpeg"), z.literal("image/webp"), z.literal("image/gif")])),
-}).optional().describe('Image-intake limits enforced by the Session prompt endpoint.'),
-  'modelSelection': z.object({
-  'lastUsed': z.union([z.literal(null), z.object({
-  'provider': z.string().readonly(),
-  'model': z.string().readonly(),
-  'reasoningEffort': z.string().readonly().optional(),
-})]).readonly().describe('Selection consumed by the latest recorded model request.'),
-  'next': z.union([z.literal(null), z.object({
-  'provider': z.string().readonly(),
-  'model': z.string().readonly(),
-  'reasoningEffort': z.string().readonly().optional(),
-})]).readonly().describe('Selection the next request should use, falling back to {@link lastUsed}.'),
-}).optional().describe('Durable model selection already used and selected for the next request.'),
+}).optional().describe('Image-intake limits enforced by the Session prompt endpoint. Boot constant, excluded from Session summary payloads: every Session shares it, so a list row would repeat one host-wide fact.'),
+  'workingDirectory': z.union([z.literal(null), z.string()]).optional().describe('Recorded current directory for Session observations, or null when none is recorded.'),
   'permissions': z.object({
   'currentValue': z.string().describe('The effective current value: a configured preset key, `auto`, or `custom`.'),
 }).optional().describe('The session\'s current permission, folded from the three whole-value knob events (`permission/preset`, `sandbox/mode`, `approval/policy`) over the composition defaults. Selectable options come from the process-level catalog Remote. Key absence means no permission service is composed — clients hide the control.'),
@@ -142,6 +169,56 @@ const _deepseek_ai_dsh_api_session_controller_session_control_result$schema = ()
   'toolsTokens': z.number().describe('Heuristic tokens of the newest request envelope\'s tool schemas; 0 before any request.'),
   'messageTokens': z.number().describe('Heuristic tokens of every other visible surface node, including superseded system prompts.'),
 }).optional().describe('Heuristic system/tools/message composition of the next request.'),
+  'userQuestions': z.object({
+  'active': z.array(z.object({
+  'callId': z.string().readonly(),
+  'questions': z.array(z.object({
+  'id': z.string().describe('Stable caller-provided question id, echoed in the answer.'),
+  'question': z.string().describe('The question to display.'),
+  'detail': z.string().optional().describe('Optional supporting detail rendered with the question but kept out of option labels.'),
+  'header': z.string().optional().describe('Optional short heading/group label.'),
+  'options': z.array(z.object({
+  'label': z.string().describe('User-facing label.'),
+  'description': z.string().optional().describe('Optional extra context rendered by capable UIs.'),
+})).optional().describe('Optional choices the UI can render as a menu.'),
+  'multiSelect': z.boolean().optional().describe('Whether more than one option may be selected. Defaults to single-select.'),
+  'intent': z.union([z.object({
+  'kind': z.literal("plan-review").describe('A plan submitted for review: `detail` is the plan markdown `ask()` requires, and the decision approves or declines it.'),
+  'approve': z.string().describe('The option label that approves the plan; every other option declines it. Named rather than positional so no UI infers the verdict from option order. An `approve` naming no option of its own question is rejected at `ask()`.'),
+  'callId': z.string().optional().describe('Logged tool invocation whose arguments contain the reviewed plan.'),
+}), z.object({
+  'kind': z.literal("approval").describe('A blocking permission decision with fixed actions and no free-text answer.'),
+  'approve': z.string().describe('Option label granting the scope described by the caller.'),
+  'reject': z.string().describe('Option label refusing the requested access.'),
+  'always': z.string().optional().describe('Optional persistent grant offered only when the caller supports it.'),
+  'subject': z.object({
+  'name': z.string(),
+  'icon': z.string().optional(),
+}).optional().describe('Metadata for human recognition; the caller admits icon sources, which the UI may load as URLs. Never an authorization identity.'),
+  'display': z.object({
+  'question': z.intersection(z.object({
+  'en': z.string(),
+}), z.record(z.string(), z.string())),
+  'detail': z.intersection(z.object({
+  'en': z.string(),
+}), z.record(z.string(), z.string())).optional(),
+  'approve': z.intersection(z.object({
+  'en': z.string(),
+}), z.record(z.string(), z.string())).optional(),
+}).optional().describe('Localized question and limited-grant label; fixed cards own reject/always wording. Option labels remain answer values.'),
+})]).optional().describe('Optional presentation intent for capable UIs; absent asks for the generic option list.'),
+})).readonly(),
+  'state': z.union([z.literal("open"), z.literal("continued")]).readonly(),
+})).readonly().describe('Calls that can still take an answer, in ask order.'),
+  'settled': z.array(z.object({
+  'callId': z.string().readonly().describe('The settled call.'),
+  'answers': z.array(z.object({
+  'id': z.string().describe('The answered question id.'),
+  'selected': z.array(z.string()).describe('Selected option labels. May accompany custom text for a multi-select question.'),
+  'custom': z.string().optional().describe('Optional free-text "Other" answer.'),
+})).readonly().describe('The recorded batch, one entry per question; empty when the late reply carried none.'),
+})).readonly().describe('Calls an answer settled, in settlement order.'),
+}).optional().describe('Timed questions that remain answerable in this Session, and the ones a late reply settled.'),
   'agentTeam': z.object({
   'members': z.array(z.object({
   'id': z.string().readonly(),
@@ -164,36 +241,24 @@ const _deepseek_ai_dsh_api_session_controller_session_control_result$schema = ()
 })).readonly(),
   'failure': z.string().readonly().optional(),
 }).optional().describe('Durable roster and non-deleted task board of the Team rooted at the projected Session.'),
-  'userQuestions': z.object({
-  'active': z.array(z.object({
-  'callId': z.string().readonly(),
-  'questions': z.array(z.object({
-  'id': z.string().describe('Stable caller-provided question id, echoed in the answer.'),
-  'question': z.string().describe('The question to display.'),
-  'detail': z.string().optional().describe('Optional supporting detail rendered with the question but kept out of option labels.'),
-  'header': z.string().optional().describe('Optional short heading/group label.'),
-  'options': z.array(z.object({
-  'label': z.string().describe('User-facing label.'),
-  'description': z.string().optional().describe('Optional extra context rendered by capable UIs.'),
-})).optional().describe('Optional choices the UI can render as a menu.'),
-  'multiSelect': z.boolean().optional().describe('Whether more than one option may be selected. Defaults to single-select.'),
-  'intent': z.object({
-  'kind': z.literal("plan-review").describe('A plan submitted for review: `detail` is the plan markdown `ask()` requires, and the decision approves or declines it.'),
-  'approve': z.string().describe('The option label that approves the plan; every other option declines it. Named rather than positional so no UI infers the verdict from option order. An `approve` naming no option of its own question is rejected at `ask()`.'),
-  'callId': z.string().optional().describe('Logged tool invocation whose arguments contain the reviewed plan.'),
-}).optional().describe('Optional presentation intent for capable UIs; absent asks for the generic option list.'),
-})).readonly(),
-  'state': z.union([z.literal("open"), z.literal("continued")]).readonly(),
-})).readonly().describe('Calls that can still take an answer, in ask order.'),
-  'settled': z.array(z.object({
-  'callId': z.string().readonly().describe('The settled call.'),
-  'answers': z.array(z.object({
-  'id': z.string().describe('The answered question id.'),
-  'selected': z.array(z.string()).describe('Selected option labels. May accompany custom text for a multi-select question.'),
-  'custom': z.string().optional().describe('Optional free-text "Other" answer.'),
-})).readonly().describe('The recorded batch, one entry per question; empty when the late reply carried none.'),
-})).readonly().describe('Calls an answer settled, in settlement order.'),
-}).optional().describe('Timed questions that remain answerable in this Session, and the ones a late reply settled.'),
+  'forgeChangeRequests': z.array(z.object({
+  'url': z.string().readonly().describe('Web URL as first recorded.'),
+  'origin': z.union([z.literal("created"), z.literal("referenced"), z.literal("discovered"), z.literal("tracked")]).readonly().describe('How the change request became bound.'),
+  'dismissed': z.boolean().readonly().describe('Whether a dismissal hides the binding.'),
+})).optional().describe('Every change request bound to the Session, hidden ones included, in binding order.'),
+  'forgeWorktree': z.union([z.literal(null), z.object({
+  'path': z.string().readonly().describe('Canonical checkout directory.'),
+  'branch': z.string().readonly().describe('Branch created for the checkout.'),
+  'from': z.union([z.literal(null), z.string()]).readonly().describe('Requested base branch, or null when the checkout started from HEAD of the source checkout.'),
+  'baseCommit': z.string().readonly().describe('Commit object name the branch started from.'),
+  'repositoryRoot': z.string().readonly().describe('Canonical root of the source checkout.'),
+})]).optional().describe('The worktree the panel created for the Session while the Session works in it, else null.'),
+  'forkLineage': z.object({
+  'origin': z.literal("fork").readonly().describe('How the Session came to exist; only `fork` is published under this key.'),
+  'sourceSessionId': z.string().readonly().describe('Session the branch was cut from.'),
+  'authoredByViewer': z.boolean().readonly().describe('True when the reader created the branch it is reading.'),
+  'workspaceReadOnly': z.boolean().readonly().describe('True when the branch\'s workspace stays read-only for its reader.'),
+}).optional().describe('Branch facts one reader was given for a branch of a shared Session.'),
   'goal': z.union([z.literal(null), z.object({
   'goal': z.object({
   'objective': z.string().readonly().describe('Human-requested completion objective.'),
@@ -220,9 +285,11 @@ const _deepseek_ai_dsh_api_session_controller_session_control_result$schema = ()
 }), z.object({
   'type': z.literal("projection").readonly(),
   'sessionId': z.string().readonly(),
+  'seq': z.number().readonly().describe('Seq of the committed event that caused every listed change.'),
+  'changes': z.array(z.object({
   'key': z.string().readonly(),
-  'value': z.json().readonly(),
-  'seq': z.number().readonly(),
+  'val': z.json().readonly(),
+})).readonly().describe('One entry per client-visible key whose view the event changed, in registration order without duplicate keys, with the key\'s new value as `val`. A key absent from `changes` is unchanged; unlike a baseline, absence does not mean an absent capability.'),
 })]))
 let _deepseek_ai_dsh_api_session_controller_session_create_parameter_0$schema$value
 const _deepseek_ai_dsh_api_session_controller_session_create_parameter_0$schema = () => (_deepseek_ai_dsh_api_session_controller_session_create_parameter_0$schema$value ??= z.object({
@@ -236,6 +303,42 @@ const _deepseek_ai_dsh_api_session_controller_session_create_result$schema = () 
   'sessionId': z.string().readonly().describe('The created or reused Session, which may differ from the requested `sessionId`.'),
   'agentPreset': z.string().readonly().optional().describe('Preset the Session runs, when the deployment composes a preset roster.'),
 }))
+let _deepseek_ai_dsh_api_session_controller_session_events_parameter_0$schema$value
+const _deepseek_ai_dsh_api_session_controller_session_events_parameter_0$schema = () => (_deepseek_ai_dsh_api_session_controller_session_events_parameter_0$schema$value ??= z.object({
+  'address': z.union([z.object({
+  'kind': z.literal("session").readonly(),
+  'sessionId': z.string().readonly(),
+}), z.object({
+  'kind': z.literal("subagent").readonly(),
+  'parentSessionId': z.string().readonly(),
+  'childSessionId': z.string().readonly(),
+  'mode': z.union([z.literal("one-shot"), z.literal("continuable"), z.literal("unknown")]).readonly(),
+})]).readonly(),
+  'throughSeq': z.number().readonly().optional().describe('Inclusive log cut; omission selects the observed log end. A follow opening reports the cut it covered so a caller can pin the same point.'),
+  'beforeSeq': z.number().readonly().optional(),
+  'maxMessages': z.number().readonly().optional(),
+  'turnWindow': z.object({
+  'minMessages': z.number().readonly().describe('Minimum append-origin user/assistant messages; must not exceed maxMessages.'),
+  'minTurns': z.number().readonly().describe('Minimum Turn starts crossed, including the partial Turn at beforeSeq.'),
+}).readonly().optional().describe('Stop at a Turn start after both minima, unless maxMessages or history exhaustion wins.'),
+}))
+let _deepseek_ai_dsh_api_session_controller_session_events_result$schema$value
+const _deepseek_ai_dsh_api_session_controller_session_events_result$schema = () => (_deepseek_ai_dsh_api_session_controller_session_events_result$schema$value ??= z.object({
+  'cursor': z.number().readonly(),
+  'records': z.array(z.object({
+  'type': z.literal("event").readonly(),
+  'event': z.object({
+  'type': z.string().readonly(),
+  'seq': z.number().readonly(),
+  'time': z.number().readonly(),
+  'data': z.json().readonly(),
+  'ignorable': z.literal(true).readonly().optional(),
+  'sourceEventSeqs': z.json().readonly().optional().describe('Earlier sources on current surface events; opaque JSON on unknown ignorable events.'),
+  'surfaceOp': z.json().readonly().optional().describe('Canonical placement on current surface events; opaque JSON on unknown ignorable events.'),
+}).readonly(),
+})).readonly(),
+  'hasMore': z.boolean().readonly(),
+}))
 let _deepseek_ai_dsh_api_session_controller_session_follow_parameter_0$schema$value
 const _deepseek_ai_dsh_api_session_controller_session_follow_parameter_0$schema = () => (_deepseek_ai_dsh_api_session_controller_session_follow_parameter_0$schema$value ??= z.object({
   'address': z.union([z.object({
@@ -247,6 +350,7 @@ const _deepseek_ai_dsh_api_session_controller_session_follow_parameter_0$schema 
   'childSessionId': z.string().readonly(),
   'mode': z.union([z.literal("one-shot"), z.literal("continuable"), z.literal("unknown")]).readonly(),
 })]).readonly(),
+  'activate': z.boolean().readonly().optional().describe('Request background activation; omission leaves the read passive.'),
   'assistantStream': z.literal(true).readonly().optional().describe('Include process-local assistant presentation frames for the Web client.'),
   'maxMessages': z.number().readonly().optional(),
   'turnWindow': z.object({
@@ -300,13 +404,40 @@ const _deepseek_ai_dsh_api_session_controller_session_follow_result$schema = () 
   'next-turn': z.array(z.json()).readonly(),
   'next-step': z.array(z.json()).readonly(),
 }).optional().describe('Pending agent input reconstructed from durable inbox splices.'),
-  'workingDirectory': z.union([z.literal(null), z.string()]).optional().describe('Recorded current directory for Session observations, or null when none is recorded.'),
+  'modelSelection': z.object({
+  'lastUsed': z.union([z.literal(null), z.object({
+  'provider': z.string().describe('Registered provider route.'),
+  'model': z.string().describe('Provider-owned model id.'),
+  'reasoningEffort': z.string().optional().describe('Adapter-owned reasoning effort, or provider/default behavior when absent.'),
+})]).readonly().describe('Selection used by the latest recorded model request.'),
+  'next': z.union([z.literal(null), z.object({
+  'provider': z.string().describe('Registered provider route.'),
+  'model': z.string().describe('Provider-owned model id.'),
+  'reasoningEffort': z.string().optional().describe('Adapter-owned reasoning effort, or provider/default behavior when absent.'),
+})]).readonly().describe('Selection the next model step uses; null while the Agent\'s initial options supply the route.'),
+}).optional().describe('Recorded model selection for the next model step and the latest request.'),
+  'actionCards': z.object({
+  'proposals': z.record(z.string(), z.object({
+  'callId': z.string().readonly().describe('Id of the logged tool call.'),
+  'turn': z.number().readonly().describe('Turn whose answer the card follows.'),
+  'action': z.string().readonly().describe('Registered action kind named by the call.'),
+  'title': z.string().readonly(),
+  'brief': z.string().readonly().describe('What the action does, in the user\'s language.'),
+  'details': z.record(z.string(), z.json()).readonly().readonly().describe('Fields the kind\'s skill asks for.'),
+})).readonly().readonly(),
+  'decisions': z.record(z.string(), z.object({
+  'callId': z.string().readonly(),
+  'action': z.string().readonly(),
+  'phase': z.string().readonly(),
+  'data': z.union([z.undefined(), z.record(z.string(), z.json()).readonly()]).readonly().optional().describe('Kind-defined fields such as a chosen location or a created package.'),
+})).readonly().readonly(),
+}).optional().describe('Action card proposals and decisions for the currently open Session.'),
   'agentPreset': z.union([z.literal(null), z.string()]).optional().describe('Preset the Session runs, or null when the deployment composes none.'),
   'title': z.union([z.literal(null), z.string()]).optional().describe('The session\'s current normalized title — the latest `session/title` event\'s text (last-wins), or `null` before the first title lands. A plain string: the shape the client list rows consume.'),
   'todos': z.union([z.literal(null), z.array(z.object({
   'content': z.string().describe('What this task is — a short imperative line shown in the UI.'),
   'status': z.union([z.literal("completed"), z.literal("pending"), z.literal("in_progress")]).describe('Lifecycle state. `in_progress` marks a task being worked now; parallel work may mark several.'),
-}))]).optional().describe('The agent\'s current whole todo list (the latest `todo/write` snapshot), or `null` before the first write. Whole-value rule: every `todo/write` carries the complete replacement list, so the fold is last-wins.'),
+}))]).optional().describe('The agent\'s current whole todo list (the latest `todo/write` snapshot), or `null` before the first write. Whole-value rule: every `todo/write` carries the complete replacement list, so the fold is last-wins. Excluded from Session summary payloads, with `null` kept outside the exclusion mark so the pre-first-write value stays expressible.'),
   'sessionListMetadata': z.object({
   'blank': z.boolean().readonly().describe('Whether the folded prefix contains no turn.'),
   'lastPromptAt': z.union([z.literal(null), z.number()]).readonly().describe('Latest human-authored prompt time in the folded prefix.'),
@@ -318,19 +449,8 @@ const _deepseek_ai_dsh_api_session_controller_session_follow_result$schema = () 
   'maxImagePixels': z.number(),
   'maxImageDimension': z.number().describe('Maximum intrinsic width and maximum intrinsic height in pixels for one image.'),
   'mediaTypes': z.array(z.union([z.literal("image/png"), z.literal("image/jpeg"), z.literal("image/webp"), z.literal("image/gif")])),
-}).optional().describe('Image-intake limits enforced by the Session prompt endpoint.'),
-  'modelSelection': z.object({
-  'lastUsed': z.union([z.literal(null), z.object({
-  'provider': z.string().readonly(),
-  'model': z.string().readonly(),
-  'reasoningEffort': z.string().readonly().optional(),
-})]).readonly().describe('Selection consumed by the latest recorded model request.'),
-  'next': z.union([z.literal(null), z.object({
-  'provider': z.string().readonly(),
-  'model': z.string().readonly(),
-  'reasoningEffort': z.string().readonly().optional(),
-})]).readonly().describe('Selection the next request should use, falling back to {@link lastUsed}.'),
-}).optional().describe('Durable model selection already used and selected for the next request.'),
+}).optional().describe('Image-intake limits enforced by the Session prompt endpoint. Boot constant, excluded from Session summary payloads: every Session shares it, so a list row would repeat one host-wide fact.'),
+  'workingDirectory': z.union([z.literal(null), z.string()]).optional().describe('Recorded current directory for Session observations, or null when none is recorded.'),
   'permissions': z.object({
   'currentValue': z.string().describe('The effective current value: a configured preset key, `auto`, or `custom`.'),
 }).optional().describe('The session\'s current permission, folded from the three whole-value knob events (`permission/preset`, `sandbox/mode`, `approval/policy`) over the composition defaults. Selectable options come from the process-level catalog Remote. Key absence means no permission service is composed — clients hide the control.'),
@@ -388,6 +508,56 @@ const _deepseek_ai_dsh_api_session_controller_session_follow_result$schema = () 
   'toolsTokens': z.number().describe('Heuristic tokens of the newest request envelope\'s tool schemas; 0 before any request.'),
   'messageTokens': z.number().describe('Heuristic tokens of every other visible surface node, including superseded system prompts.'),
 }).optional().describe('Heuristic system/tools/message composition of the next request.'),
+  'userQuestions': z.object({
+  'active': z.array(z.object({
+  'callId': z.string().readonly(),
+  'questions': z.array(z.object({
+  'id': z.string().describe('Stable caller-provided question id, echoed in the answer.'),
+  'question': z.string().describe('The question to display.'),
+  'detail': z.string().optional().describe('Optional supporting detail rendered with the question but kept out of option labels.'),
+  'header': z.string().optional().describe('Optional short heading/group label.'),
+  'options': z.array(z.object({
+  'label': z.string().describe('User-facing label.'),
+  'description': z.string().optional().describe('Optional extra context rendered by capable UIs.'),
+})).optional().describe('Optional choices the UI can render as a menu.'),
+  'multiSelect': z.boolean().optional().describe('Whether more than one option may be selected. Defaults to single-select.'),
+  'intent': z.union([z.object({
+  'kind': z.literal("plan-review").describe('A plan submitted for review: `detail` is the plan markdown `ask()` requires, and the decision approves or declines it.'),
+  'approve': z.string().describe('The option label that approves the plan; every other option declines it. Named rather than positional so no UI infers the verdict from option order. An `approve` naming no option of its own question is rejected at `ask()`.'),
+  'callId': z.string().optional().describe('Logged tool invocation whose arguments contain the reviewed plan.'),
+}), z.object({
+  'kind': z.literal("approval").describe('A blocking permission decision with fixed actions and no free-text answer.'),
+  'approve': z.string().describe('Option label granting the scope described by the caller.'),
+  'reject': z.string().describe('Option label refusing the requested access.'),
+  'always': z.string().optional().describe('Optional persistent grant offered only when the caller supports it.'),
+  'subject': z.object({
+  'name': z.string(),
+  'icon': z.string().optional(),
+}).optional().describe('Metadata for human recognition; the caller admits icon sources, which the UI may load as URLs. Never an authorization identity.'),
+  'display': z.object({
+  'question': z.intersection(z.object({
+  'en': z.string(),
+}), z.record(z.string(), z.string())),
+  'detail': z.intersection(z.object({
+  'en': z.string(),
+}), z.record(z.string(), z.string())).optional(),
+  'approve': z.intersection(z.object({
+  'en': z.string(),
+}), z.record(z.string(), z.string())).optional(),
+}).optional().describe('Localized question and limited-grant label; fixed cards own reject/always wording. Option labels remain answer values.'),
+})]).optional().describe('Optional presentation intent for capable UIs; absent asks for the generic option list.'),
+})).readonly(),
+  'state': z.union([z.literal("open"), z.literal("continued")]).readonly(),
+})).readonly().describe('Calls that can still take an answer, in ask order.'),
+  'settled': z.array(z.object({
+  'callId': z.string().readonly().describe('The settled call.'),
+  'answers': z.array(z.object({
+  'id': z.string().describe('The answered question id.'),
+  'selected': z.array(z.string()).describe('Selected option labels. May accompany custom text for a multi-select question.'),
+  'custom': z.string().optional().describe('Optional free-text "Other" answer.'),
+})).readonly().describe('The recorded batch, one entry per question; empty when the late reply carried none.'),
+})).readonly().describe('Calls an answer settled, in settlement order.'),
+}).optional().describe('Timed questions that remain answerable in this Session, and the ones a late reply settled.'),
   'agentTeam': z.object({
   'members': z.array(z.object({
   'id': z.string().readonly(),
@@ -410,36 +580,24 @@ const _deepseek_ai_dsh_api_session_controller_session_follow_result$schema = () 
 })).readonly(),
   'failure': z.string().readonly().optional(),
 }).optional().describe('Durable roster and non-deleted task board of the Team rooted at the projected Session.'),
-  'userQuestions': z.object({
-  'active': z.array(z.object({
-  'callId': z.string().readonly(),
-  'questions': z.array(z.object({
-  'id': z.string().describe('Stable caller-provided question id, echoed in the answer.'),
-  'question': z.string().describe('The question to display.'),
-  'detail': z.string().optional().describe('Optional supporting detail rendered with the question but kept out of option labels.'),
-  'header': z.string().optional().describe('Optional short heading/group label.'),
-  'options': z.array(z.object({
-  'label': z.string().describe('User-facing label.'),
-  'description': z.string().optional().describe('Optional extra context rendered by capable UIs.'),
-})).optional().describe('Optional choices the UI can render as a menu.'),
-  'multiSelect': z.boolean().optional().describe('Whether more than one option may be selected. Defaults to single-select.'),
-  'intent': z.object({
-  'kind': z.literal("plan-review").describe('A plan submitted for review: `detail` is the plan markdown `ask()` requires, and the decision approves or declines it.'),
-  'approve': z.string().describe('The option label that approves the plan; every other option declines it. Named rather than positional so no UI infers the verdict from option order. An `approve` naming no option of its own question is rejected at `ask()`.'),
-  'callId': z.string().optional().describe('Logged tool invocation whose arguments contain the reviewed plan.'),
-}).optional().describe('Optional presentation intent for capable UIs; absent asks for the generic option list.'),
-})).readonly(),
-  'state': z.union([z.literal("open"), z.literal("continued")]).readonly(),
-})).readonly().describe('Calls that can still take an answer, in ask order.'),
-  'settled': z.array(z.object({
-  'callId': z.string().readonly().describe('The settled call.'),
-  'answers': z.array(z.object({
-  'id': z.string().describe('The answered question id.'),
-  'selected': z.array(z.string()).describe('Selected option labels. May accompany custom text for a multi-select question.'),
-  'custom': z.string().optional().describe('Optional free-text "Other" answer.'),
-})).readonly().describe('The recorded batch, one entry per question; empty when the late reply carried none.'),
-})).readonly().describe('Calls an answer settled, in settlement order.'),
-}).optional().describe('Timed questions that remain answerable in this Session, and the ones a late reply settled.'),
+  'forgeChangeRequests': z.array(z.object({
+  'url': z.string().readonly().describe('Web URL as first recorded.'),
+  'origin': z.union([z.literal("created"), z.literal("referenced"), z.literal("discovered"), z.literal("tracked")]).readonly().describe('How the change request became bound.'),
+  'dismissed': z.boolean().readonly().describe('Whether a dismissal hides the binding.'),
+})).optional().describe('Every change request bound to the Session, hidden ones included, in binding order.'),
+  'forgeWorktree': z.union([z.literal(null), z.object({
+  'path': z.string().readonly().describe('Canonical checkout directory.'),
+  'branch': z.string().readonly().describe('Branch created for the checkout.'),
+  'from': z.union([z.literal(null), z.string()]).readonly().describe('Requested base branch, or null when the checkout started from HEAD of the source checkout.'),
+  'baseCommit': z.string().readonly().describe('Commit object name the branch started from.'),
+  'repositoryRoot': z.string().readonly().describe('Canonical root of the source checkout.'),
+})]).optional().describe('The worktree the panel created for the Session while the Session works in it, else null.'),
+  'forkLineage': z.object({
+  'origin': z.literal("fork").readonly().describe('How the Session came to exist; only `fork` is published under this key.'),
+  'sourceSessionId': z.string().readonly().describe('Session the branch was cut from.'),
+  'authoredByViewer': z.boolean().readonly().describe('True when the reader created the branch it is reading.'),
+  'workspaceReadOnly': z.boolean().readonly().describe('True when the branch\'s workspace stays read-only for its reader.'),
+}).optional().describe('Branch facts one reader was given for a branch of a shared Session.'),
   'goal': z.union([z.literal(null), z.object({
   'goal': z.object({
   'objective': z.string().readonly().describe('Human-requested completion objective.'),
@@ -534,42 +692,39 @@ const _deepseek_ai_dsh_api_session_controller_session_list_result$schema = () =>
   'projections': z.object({
   'kind': z.union([z.literal("cached"), z.literal("sequenced")]).readonly().describe('`sequenced`: the Host\'s live registry produced the block for an attached Session, so `asOfSeq` is comparable with baselines and frames of the same connection. `cached`: a header-only listing viewed the block from the persisted projection cache, so `asOfSeq` is the stored record\'s own watermark and must not be compared with the connected Session\'s values.'),
   'asOfSeq': z.number().readonly().describe('Watermark of the block in the sequence space named by `kind`.'),
-  'values': z.intersection(z.object({
+  'values': z.object({
+  'subagent': z.union([z.literal(null), z.object({
+  'mode': z.literal("one-shot").describe('A terminal one-shot child.'),
+  'label': z.string().optional().describe('Optional durable creation label from the child\'s descriptor.'),
+  'seq': z.number().describe('Seq of the `subagent/descriptor` event this identity was folded from. `session.isOwnSeq(seq)` proves the identity comes from the child\'s OWN log suffix — where a descriptor is immutable once appended — and not from a fork seed\'s replayed ancestor descriptor.'),
+}), z.object({
+  'mode': z.literal("continuable").describe('A resumable conversation.'),
+  'label': z.string().describe('Durable creation label from the child\'s descriptor.'),
+  'seq': z.number().describe('Seq of the folded descriptor event; see the one-shot arm for the own-suffix proof.'),
+})]).optional().describe('Identity of a descriptor-backed subagent session. `null` ⟺ no valid descriptor (missing, malformed, or unrecognized-version — deliberately undistinguished). The sentinel is deliberately serializable: a value pushed over JSON transports must survive `JSON.stringify` losslessly, where an `undefined` field would be dropped and a stale identity would survive on the receiving side. The entry itself stays non-optional.'),
   'inbox': z.object({
   'next-turn': z.array(z.json()).readonly(),
   'next-step': z.array(z.json()).readonly(),
 }).optional().describe('Pending agent input reconstructed from durable inbox splices.'),
-  'workingDirectory': z.union([z.literal(null), z.string()]).optional().describe('Recorded current directory for Session observations, or null when none is recorded.'),
+  'modelSelection': z.object({
+  'lastUsed': z.union([z.literal(null), z.object({
+  'provider': z.string().describe('Registered provider route.'),
+  'model': z.string().describe('Provider-owned model id.'),
+  'reasoningEffort': z.string().optional().describe('Adapter-owned reasoning effort, or provider/default behavior when absent.'),
+})]).readonly().describe('Selection used by the latest recorded model request.'),
+  'next': z.union([z.literal(null), z.object({
+  'provider': z.string().describe('Registered provider route.'),
+  'model': z.string().describe('Provider-owned model id.'),
+  'reasoningEffort': z.string().optional().describe('Adapter-owned reasoning effort, or provider/default behavior when absent.'),
+})]).readonly().describe('Selection the next model step uses; null while the Agent\'s initial options supply the route.'),
+}).optional().describe('Recorded model selection for the next model step and the latest request.'),
   'agentPreset': z.union([z.literal(null), z.string()]).optional().describe('Preset the Session runs, or null when the deployment composes none.'),
   'title': z.union([z.literal(null), z.string()]).optional().describe('The session\'s current normalized title — the latest `session/title` event\'s text (last-wins), or `null` before the first title lands. A plain string: the shape the client list rows consume.'),
-  'todos': z.union([z.literal(null), z.array(z.object({
-  'content': z.string().describe('What this task is — a short imperative line shown in the UI.'),
-  'status': z.union([z.literal("completed"), z.literal("pending"), z.literal("in_progress")]).describe('Lifecycle state. `in_progress` marks a task being worked now; parallel work may mark several.'),
-}))]).optional().describe('The agent\'s current whole todo list (the latest `todo/write` snapshot), or `null` before the first write. Whole-value rule: every `todo/write` carries the complete replacement list, so the fold is last-wins.'),
   'sessionListMetadata': z.object({
   'blank': z.boolean().readonly().describe('Whether the folded prefix contains no turn.'),
   'lastPromptAt': z.union([z.literal(null), z.number()]).readonly().describe('Latest human-authored prompt time in the folded prefix.'),
 }).optional().describe('Persisted facts used to summarize a Session without activating it.'),
-  'imageLimits': z.object({
-  'maxImageBytes': z.number(),
-  'maxImagesPerMessage': z.number(),
-  'maxMessageImageBytes': z.number(),
-  'maxImagePixels': z.number(),
-  'maxImageDimension': z.number().describe('Maximum intrinsic width and maximum intrinsic height in pixels for one image.'),
-  'mediaTypes': z.array(z.union([z.literal("image/png"), z.literal("image/jpeg"), z.literal("image/webp"), z.literal("image/gif")])),
-}).optional().describe('Image-intake limits enforced by the Session prompt endpoint.'),
-  'modelSelection': z.object({
-  'lastUsed': z.union([z.literal(null), z.object({
-  'provider': z.string().readonly(),
-  'model': z.string().readonly(),
-  'reasoningEffort': z.string().readonly().optional(),
-})]).readonly().describe('Selection consumed by the latest recorded model request.'),
-  'next': z.union([z.literal(null), z.object({
-  'provider': z.string().readonly(),
-  'model': z.string().readonly(),
-  'reasoningEffort': z.string().readonly().optional(),
-})]).readonly().describe('Selection the next request should use, falling back to {@link lastUsed}.'),
-}).optional().describe('Durable model selection already used and selected for the next request.'),
+  'workingDirectory': z.union([z.literal(null), z.string()]).optional().describe('Recorded current directory for Session observations, or null when none is recorded.'),
   'permissions': z.object({
   'currentValue': z.string().describe('The effective current value: a configured preset key, `auto`, or `custom`.'),
 }).optional().describe('The session\'s current permission, folded from the three whole-value knob events (`permission/preset`, `sandbox/mode`, `approval/policy`) over the composition defaults. Selectable options come from the process-level catalog Remote. Key absence means no permission service is composed — clients hide the control.'),
@@ -602,31 +757,62 @@ const _deepseek_ai_dsh_api_session_controller_session_list_result$schema = () =>
 }).optional().describe('Same-cut bounds of the currently open turn, when one has not reached `turn/end`.'),
   'lastTurnCompleted': z.boolean().optional().describe('Whether the latest closed turn after the child\'s own descriptor completed normally; absent while a turn is open or before one closes.'),
 }).optional().describe('Active-turn duration and latest closed-turn completion for a descriptor-backed subagent session.'),
-  'subagent': z.union([z.literal(null), z.object({
-  'mode': z.literal("one-shot").describe('A terminal one-shot child.'),
-  'label': z.string().optional().describe('Optional durable creation label from the child\'s descriptor.'),
-  'seq': z.number().describe('Seq of the `subagent/descriptor` event this identity was folded from. `session.isOwnSeq(seq)` proves the identity comes from the child\'s OWN log suffix — where a descriptor is immutable once appended — and not from a fork seed\'s replayed ancestor descriptor.'),
-}), z.object({
-  'mode': z.literal("continuable").describe('A resumable conversation.'),
-  'label': z.string().describe('Durable creation label from the child\'s descriptor.'),
-  'seq': z.number().describe('Seq of the folded descriptor event; see the one-shot arm for the own-suffix proof.'),
-})]).optional().describe('Identity of a descriptor-backed subagent session. `null` ⟺ no valid descriptor (missing, malformed, or unrecognized-version — deliberately undistinguished). The sentinel is deliberately serializable: a value pushed over JSON transports must survive `JSON.stringify` losslessly, where an `undefined` field would be dropped and a stale identity would survive on the receiving side. The entry itself stays non-optional.'),
   'tokenUsage': z.object({
   'uncachedInputTokens': z.number(),
   'outputTokens': z.number(),
   'cacheReadTokens': z.number(),
   'cacheWriteTokens': z.number(),
 }).optional().describe('Provider-reported usage accumulated across the complete durable log.'),
-  'contextPressure': z.object({
-  'pressureTokens': z.number().optional().describe('Provider-reported prompt size of the most recent request: uncached input plus cache reads and writes. Response output is excluded, so this does not grow as the current turn streams. Absent until a provider reports usage.'),
-  'projectedTokens': z.number().optional().describe('What the NEXT request\'s prompt would cost: {@link pressureTokens} plus the heuristic repricing of everything the surface gained or lost since that sample. Only the delta is estimated, so the figure stays anchored to the provider while still reacting the moment a compaction shadows a span — which `pressureTokens` alone cannot do, since compaction reports no usage of its own. Absent until a provider reports usage.'),
-  'contextWindow': z.number().optional().describe('Newest recorded route capacity; absent when no adapter advertised one.'),
-}).optional().describe('Newest request pressure paired with the newest known route capacity.'),
-  'contextBreakdown': z.object({
-  'systemTokens': z.number().describe('Heuristic tokens of the last nonempty surviving system prompt in surface order; 0 when none exists.'),
-  'toolsTokens': z.number().describe('Heuristic tokens of the newest request envelope\'s tool schemas; 0 before any request.'),
-  'messageTokens': z.number().describe('Heuristic tokens of every other visible surface node, including superseded system prompts.'),
-}).optional().describe('Heuristic system/tools/message composition of the next request.'),
+  'userQuestions': z.object({
+  'active': z.array(z.object({
+  'callId': z.string().readonly(),
+  'questions': z.array(z.object({
+  'id': z.string().describe('Stable caller-provided question id, echoed in the answer.'),
+  'question': z.string().describe('The question to display.'),
+  'detail': z.string().optional().describe('Optional supporting detail rendered with the question but kept out of option labels.'),
+  'header': z.string().optional().describe('Optional short heading/group label.'),
+  'options': z.array(z.object({
+  'label': z.string().describe('User-facing label.'),
+  'description': z.string().optional().describe('Optional extra context rendered by capable UIs.'),
+})).optional().describe('Optional choices the UI can render as a menu.'),
+  'multiSelect': z.boolean().optional().describe('Whether more than one option may be selected. Defaults to single-select.'),
+  'intent': z.union([z.object({
+  'kind': z.literal("plan-review").describe('A plan submitted for review: `detail` is the plan markdown `ask()` requires, and the decision approves or declines it.'),
+  'approve': z.string().describe('The option label that approves the plan; every other option declines it. Named rather than positional so no UI infers the verdict from option order. An `approve` naming no option of its own question is rejected at `ask()`.'),
+  'callId': z.string().optional().describe('Logged tool invocation whose arguments contain the reviewed plan.'),
+}), z.object({
+  'kind': z.literal("approval").describe('A blocking permission decision with fixed actions and no free-text answer.'),
+  'approve': z.string().describe('Option label granting the scope described by the caller.'),
+  'reject': z.string().describe('Option label refusing the requested access.'),
+  'always': z.string().optional().describe('Optional persistent grant offered only when the caller supports it.'),
+  'subject': z.object({
+  'name': z.string(),
+  'icon': z.string().optional(),
+}).optional().describe('Metadata for human recognition; the caller admits icon sources, which the UI may load as URLs. Never an authorization identity.'),
+  'display': z.object({
+  'question': z.intersection(z.object({
+  'en': z.string(),
+}), z.record(z.string(), z.string())),
+  'detail': z.intersection(z.object({
+  'en': z.string(),
+}), z.record(z.string(), z.string())).optional(),
+  'approve': z.intersection(z.object({
+  'en': z.string(),
+}), z.record(z.string(), z.string())).optional(),
+}).optional().describe('Localized question and limited-grant label; fixed cards own reject/always wording. Option labels remain answer values.'),
+})]).optional().describe('Optional presentation intent for capable UIs; absent asks for the generic option list.'),
+})).readonly(),
+  'state': z.union([z.literal("open"), z.literal("continued")]).readonly(),
+})).readonly().describe('Calls that can still take an answer, in ask order.'),
+  'settled': z.array(z.object({
+  'callId': z.string().readonly().describe('The settled call.'),
+  'answers': z.array(z.object({
+  'id': z.string().describe('The answered question id.'),
+  'selected': z.array(z.string()).describe('Selected option labels. May accompany custom text for a multi-select question.'),
+  'custom': z.string().optional().describe('Optional free-text "Other" answer.'),
+})).readonly().describe('The recorded batch, one entry per question; empty when the late reply carried none.'),
+})).readonly().describe('Calls an answer settled, in settlement order.'),
+}).optional().describe('Timed questions that remain answerable in this Session, and the ones a late reply settled.'),
   'agentTeam': z.object({
   'members': z.array(z.object({
   'id': z.string().readonly(),
@@ -649,36 +835,24 @@ const _deepseek_ai_dsh_api_session_controller_session_list_result$schema = () =>
 })).readonly(),
   'failure': z.string().readonly().optional(),
 }).optional().describe('Durable roster and non-deleted task board of the Team rooted at the projected Session.'),
-  'userQuestions': z.object({
-  'active': z.array(z.object({
-  'callId': z.string().readonly(),
-  'questions': z.array(z.object({
-  'id': z.string().describe('Stable caller-provided question id, echoed in the answer.'),
-  'question': z.string().describe('The question to display.'),
-  'detail': z.string().optional().describe('Optional supporting detail rendered with the question but kept out of option labels.'),
-  'header': z.string().optional().describe('Optional short heading/group label.'),
-  'options': z.array(z.object({
-  'label': z.string().describe('User-facing label.'),
-  'description': z.string().optional().describe('Optional extra context rendered by capable UIs.'),
-})).optional().describe('Optional choices the UI can render as a menu.'),
-  'multiSelect': z.boolean().optional().describe('Whether more than one option may be selected. Defaults to single-select.'),
-  'intent': z.object({
-  'kind': z.literal("plan-review").describe('A plan submitted for review: `detail` is the plan markdown `ask()` requires, and the decision approves or declines it.'),
-  'approve': z.string().describe('The option label that approves the plan; every other option declines it. Named rather than positional so no UI infers the verdict from option order. An `approve` naming no option of its own question is rejected at `ask()`.'),
-  'callId': z.string().optional().describe('Logged tool invocation whose arguments contain the reviewed plan.'),
-}).optional().describe('Optional presentation intent for capable UIs; absent asks for the generic option list.'),
-})).readonly(),
-  'state': z.union([z.literal("open"), z.literal("continued")]).readonly(),
-})).readonly().describe('Calls that can still take an answer, in ask order.'),
-  'settled': z.array(z.object({
-  'callId': z.string().readonly().describe('The settled call.'),
-  'answers': z.array(z.object({
-  'id': z.string().describe('The answered question id.'),
-  'selected': z.array(z.string()).describe('Selected option labels. May accompany custom text for a multi-select question.'),
-  'custom': z.string().optional().describe('Optional free-text "Other" answer.'),
-})).readonly().describe('The recorded batch, one entry per question; empty when the late reply carried none.'),
-})).readonly().describe('Calls an answer settled, in settlement order.'),
-}).optional().describe('Timed questions that remain answerable in this Session, and the ones a late reply settled.'),
+  'forgeChangeRequests': z.array(z.object({
+  'url': z.string().readonly().describe('Web URL as first recorded.'),
+  'origin': z.union([z.literal("created"), z.literal("referenced"), z.literal("discovered"), z.literal("tracked")]).readonly().describe('How the change request became bound.'),
+  'dismissed': z.boolean().readonly().describe('Whether a dismissal hides the binding.'),
+})).optional().describe('Every change request bound to the Session, hidden ones included, in binding order.'),
+  'forgeWorktree': z.union([z.literal(null), z.object({
+  'path': z.string().readonly().describe('Canonical checkout directory.'),
+  'branch': z.string().readonly().describe('Branch created for the checkout.'),
+  'from': z.union([z.literal(null), z.string()]).readonly().describe('Requested base branch, or null when the checkout started from HEAD of the source checkout.'),
+  'baseCommit': z.string().readonly().describe('Commit object name the branch started from.'),
+  'repositoryRoot': z.string().readonly().describe('Canonical root of the source checkout.'),
+})]).optional().describe('The worktree the panel created for the Session while the Session works in it, else null.'),
+  'forkLineage': z.object({
+  'origin': z.literal("fork").readonly().describe('How the Session came to exist; only `fork` is published under this key.'),
+  'sourceSessionId': z.string().readonly().describe('Session the branch was cut from.'),
+  'authoredByViewer': z.boolean().readonly().describe('True when the reader created the branch it is reading.'),
+  'workspaceReadOnly': z.boolean().readonly().describe('True when the branch\'s workspace stays read-only for its reader.'),
+}).optional().describe('Branch facts one reader was given for a branch of a shared Session.'),
   'goal': z.union([z.literal(null), z.object({
   'goal': z.object({
   'objective': z.string().readonly().describe('Human-requested completion objective.'),
@@ -699,7 +873,7 @@ const _deepseek_ai_dsh_api_session_controller_session_list_result$schema = () =>
   'active': z.boolean(),
   'pending': z.boolean(),
 }).optional().describe('Plan collaboration state folded from the plan command lifecycle and `plan/mode` events.'),
-}), z.record(z.string(), z.json()).readonly()).readonly().describe('Provider-validated values present in the block; omitted keys remain unknown.'),
+}).readonly().describe('Provider-validated summary values present in the block; omitted keys remain unknown.'),
 }).readonly().optional(),
 })).readonly(),
 }))
@@ -726,6 +900,12 @@ const _deepseek_ai_dsh_api_session_controller_session_modelCatalog_result$schema
 })).readonly(),
   'defaultEffort': z.string().readonly().optional(),
 }).readonly().optional(),
+  'badge': z.object({
+  'text': z.union([z.string(), z.intersection(z.object({
+  'en': z.string().readonly(),
+}), z.record(z.string(), z.string()).readonly())]).describe('One literal, or translations keyed by lowercase language id with a required English entry.'),
+  'tone': z.union([z.literal("neutral"), z.literal("info"), z.literal("success"), z.literal("warning")]).describe('Emphasis of the label.'),
+}).readonly().optional().describe('Provider-authored label shown beside the name; display data only.'),
 })).readonly(),
 })).readonly(),
   'failures': z.array(z.object({
@@ -733,6 +913,65 @@ const _deepseek_ai_dsh_api_session_controller_session_modelCatalog_result$schema
   'name': z.string().readonly(),
   'message': z.string().readonly(),
 })).readonly(),
+}))
+let _deepseek_ai_dsh_api_session_controller_session_observeEvent_parameter_0$schema$value
+const _deepseek_ai_dsh_api_session_controller_session_observeEvent_parameter_0$schema = () => (_deepseek_ai_dsh_api_session_controller_session_observeEvent_parameter_0$schema$value ??= z.object({
+  'address': z.union([z.object({
+  'kind': z.literal("session").readonly(),
+  'sessionId': z.string().readonly(),
+}), z.object({
+  'kind': z.literal("subagent").readonly(),
+  'parentSessionId': z.string().readonly(),
+  'childSessionId': z.string().readonly(),
+  'mode': z.union([z.literal("one-shot"), z.literal("continuable"), z.literal("unknown")]).readonly(),
+})]).readonly(),
+}))
+let _deepseek_ai_dsh_api_session_controller_session_observeEvent_result$schema$value
+const _deepseek_ai_dsh_api_session_controller_session_observeEvent_result$schema = () => (_deepseek_ai_dsh_api_session_controller_session_observeEvent_result$schema$value ??= z.union([z.object({
+  'type': z.literal("event").readonly(),
+  'event': z.object({
+  'type': z.string().readonly(),
+  'seq': z.number().readonly(),
+  'time': z.number().readonly(),
+  'data': z.json().readonly(),
+  'ignorable': z.literal(true).readonly().optional(),
+  'sourceEventSeqs': z.json().readonly().optional().describe('Earlier sources on current surface events; opaque JSON on unknown ignorable events.'),
+  'surfaceOp': z.json().readonly().optional().describe('Canonical placement on current surface events; opaque JSON on unknown ignorable events.'),
+}).readonly(),
+}), z.object({
+  'type': z.literal("ready").readonly(),
+})]))
+let _deepseek_ai_dsh_api_session_controller_session_observeProjections_parameter_0$schema$value
+const _deepseek_ai_dsh_api_session_controller_session_observeProjections_parameter_0$schema = () => (_deepseek_ai_dsh_api_session_controller_session_observeProjections_parameter_0$schema$value ??= z.object({
+  'sessionId': z.string().readonly(),
+}))
+let _deepseek_ai_dsh_api_session_controller_session_observeProjections_result$schema$value
+const _deepseek_ai_dsh_api_session_controller_session_observeProjections_result$schema = () => (_deepseek_ai_dsh_api_session_controller_session_observeProjections_result$schema$value ??= z.union([z.object({
+  'type': z.literal("ready").readonly(),
+}), z.object({
+  'type': z.literal("projection").readonly(),
+  'seq': z.number().readonly().describe('Seq of the committed event that caused every listed change.'),
+  'changes': z.array(z.object({
+  'key': z.string().readonly(),
+  'val': z.json().readonly(),
+})).readonly().describe('One entry per client-visible key whose view the event changed, in registration order without duplicate keys, with the key\'s new value as `val`. A key absent from `changes` is unchanged; unlike a baseline, absence does not mean an absent capability.'),
+})]))
+let _deepseek_ai_dsh_api_session_controller_session_observeState_parameter_0$schema$value
+const _deepseek_ai_dsh_api_session_controller_session_observeState_parameter_0$schema = () => (_deepseek_ai_dsh_api_session_controller_session_observeState_parameter_0$schema$value ??= z.object({
+  'sessionId': z.string().readonly(),
+}))
+let _deepseek_ai_dsh_api_session_controller_session_observeState_result$schema$value
+const _deepseek_ai_dsh_api_session_controller_session_observeState_result$schema = () => (_deepseek_ai_dsh_api_session_controller_session_observeState_result$schema$value ??= z.object({
+  'cursor': z.number().readonly(),
+  'active': z.boolean().readonly(),
+  'running': z.boolean().readonly(),
+  'queue': z.union([z.literal(null), z.array(z.object({
+  'id': z.string().readonly(),
+  'placement': z.union([z.literal("queued"), z.literal("steering"), z.literal("context")]).readonly(),
+  'rpcId': z.string().readonly().optional(),
+  'content': z.array(z.json()).readonly(),
+}))]).readonly(),
+  'pendingInput': z.array(z.union([z.literal("approval"), z.literal("question"), z.literal("other")])).readonly().describe('Pending Remote requests sampled when this state was read. A pending change alone does not trigger `observeState`; `wait` refreshes on its own interval.'),
 }))
 let _deepseek_ai_dsh_api_session_controller_session_openWorkspacePath_parameter_0$schema$value
 const _deepseek_ai_dsh_api_session_controller_session_openWorkspacePath_parameter_0$schema = () => (_deepseek_ai_dsh_api_session_controller_session_openWorkspacePath_parameter_0$schema$value ??= z.object({
@@ -755,7 +994,7 @@ const _deepseek_ai_dsh_api_session_controller_session_page_parameter_0$schema = 
   'childSessionId': z.string().readonly(),
   'mode': z.union([z.literal("one-shot"), z.literal("continuable"), z.literal("unknown")]).readonly(),
 })]).readonly(),
-  'throughSeq': z.number().readonly().describe('Inclusive log cut obtained from the corresponding follow opening frame.'),
+  'throughSeq': z.number().readonly().optional().describe('Inclusive log cut; omission selects the observed log end. A follow opening reports the cut it covered so a caller can pin the same point.'),
   'beforeSeq': z.number().readonly().optional(),
   'maxMessages': z.number().readonly().optional(),
   'turnWindow': z.object({
@@ -765,6 +1004,7 @@ const _deepseek_ai_dsh_api_session_controller_session_page_parameter_0$schema = 
 }))
 let _deepseek_ai_dsh_api_session_controller_session_page_result$schema$value
 const _deepseek_ai_dsh_api_session_controller_session_page_result$schema = () => (_deepseek_ai_dsh_api_session_controller_session_page_result$schema$value ??= z.object({
+  'cursor': z.number().readonly(),
   'records': z.array(z.object({
   'type': z.literal("event").readonly(),
   'event': z.object({
@@ -791,13 +1031,40 @@ const _deepseek_ai_dsh_api_session_controller_session_projections_result$schema 
   'next-turn': z.array(z.json()).readonly(),
   'next-step': z.array(z.json()).readonly(),
 }).optional().describe('Pending agent input reconstructed from durable inbox splices.'),
-  'workingDirectory': z.union([z.literal(null), z.string()]).optional().describe('Recorded current directory for Session observations, or null when none is recorded.'),
+  'modelSelection': z.object({
+  'lastUsed': z.union([z.literal(null), z.object({
+  'provider': z.string().describe('Registered provider route.'),
+  'model': z.string().describe('Provider-owned model id.'),
+  'reasoningEffort': z.string().optional().describe('Adapter-owned reasoning effort, or provider/default behavior when absent.'),
+})]).readonly().describe('Selection used by the latest recorded model request.'),
+  'next': z.union([z.literal(null), z.object({
+  'provider': z.string().describe('Registered provider route.'),
+  'model': z.string().describe('Provider-owned model id.'),
+  'reasoningEffort': z.string().optional().describe('Adapter-owned reasoning effort, or provider/default behavior when absent.'),
+})]).readonly().describe('Selection the next model step uses; null while the Agent\'s initial options supply the route.'),
+}).optional().describe('Recorded model selection for the next model step and the latest request.'),
+  'actionCards': z.object({
+  'proposals': z.record(z.string(), z.object({
+  'callId': z.string().readonly().describe('Id of the logged tool call.'),
+  'turn': z.number().readonly().describe('Turn whose answer the card follows.'),
+  'action': z.string().readonly().describe('Registered action kind named by the call.'),
+  'title': z.string().readonly(),
+  'brief': z.string().readonly().describe('What the action does, in the user\'s language.'),
+  'details': z.record(z.string(), z.json()).readonly().readonly().describe('Fields the kind\'s skill asks for.'),
+})).readonly().readonly(),
+  'decisions': z.record(z.string(), z.object({
+  'callId': z.string().readonly(),
+  'action': z.string().readonly(),
+  'phase': z.string().readonly(),
+  'data': z.union([z.undefined(), z.record(z.string(), z.json()).readonly()]).readonly().optional().describe('Kind-defined fields such as a chosen location or a created package.'),
+})).readonly().readonly(),
+}).optional().describe('Action card proposals and decisions for the currently open Session.'),
   'agentPreset': z.union([z.literal(null), z.string()]).optional().describe('Preset the Session runs, or null when the deployment composes none.'),
   'title': z.union([z.literal(null), z.string()]).optional().describe('The session\'s current normalized title — the latest `session/title` event\'s text (last-wins), or `null` before the first title lands. A plain string: the shape the client list rows consume.'),
   'todos': z.union([z.literal(null), z.array(z.object({
   'content': z.string().describe('What this task is — a short imperative line shown in the UI.'),
   'status': z.union([z.literal("completed"), z.literal("pending"), z.literal("in_progress")]).describe('Lifecycle state. `in_progress` marks a task being worked now; parallel work may mark several.'),
-}))]).optional().describe('The agent\'s current whole todo list (the latest `todo/write` snapshot), or `null` before the first write. Whole-value rule: every `todo/write` carries the complete replacement list, so the fold is last-wins.'),
+}))]).optional().describe('The agent\'s current whole todo list (the latest `todo/write` snapshot), or `null` before the first write. Whole-value rule: every `todo/write` carries the complete replacement list, so the fold is last-wins. Excluded from Session summary payloads, with `null` kept outside the exclusion mark so the pre-first-write value stays expressible.'),
   'sessionListMetadata': z.object({
   'blank': z.boolean().readonly().describe('Whether the folded prefix contains no turn.'),
   'lastPromptAt': z.union([z.literal(null), z.number()]).readonly().describe('Latest human-authored prompt time in the folded prefix.'),
@@ -809,19 +1076,8 @@ const _deepseek_ai_dsh_api_session_controller_session_projections_result$schema 
   'maxImagePixels': z.number(),
   'maxImageDimension': z.number().describe('Maximum intrinsic width and maximum intrinsic height in pixels for one image.'),
   'mediaTypes': z.array(z.union([z.literal("image/png"), z.literal("image/jpeg"), z.literal("image/webp"), z.literal("image/gif")])),
-}).optional().describe('Image-intake limits enforced by the Session prompt endpoint.'),
-  'modelSelection': z.object({
-  'lastUsed': z.union([z.literal(null), z.object({
-  'provider': z.string().readonly(),
-  'model': z.string().readonly(),
-  'reasoningEffort': z.string().readonly().optional(),
-})]).readonly().describe('Selection consumed by the latest recorded model request.'),
-  'next': z.union([z.literal(null), z.object({
-  'provider': z.string().readonly(),
-  'model': z.string().readonly(),
-  'reasoningEffort': z.string().readonly().optional(),
-})]).readonly().describe('Selection the next request should use, falling back to {@link lastUsed}.'),
-}).optional().describe('Durable model selection already used and selected for the next request.'),
+}).optional().describe('Image-intake limits enforced by the Session prompt endpoint. Boot constant, excluded from Session summary payloads: every Session shares it, so a list row would repeat one host-wide fact.'),
+  'workingDirectory': z.union([z.literal(null), z.string()]).optional().describe('Recorded current directory for Session observations, or null when none is recorded.'),
   'permissions': z.object({
   'currentValue': z.string().describe('The effective current value: a configured preset key, `auto`, or `custom`.'),
 }).optional().describe('The session\'s current permission, folded from the three whole-value knob events (`permission/preset`, `sandbox/mode`, `approval/policy`) over the composition defaults. Selectable options come from the process-level catalog Remote. Key absence means no permission service is composed — clients hide the control.'),
@@ -879,6 +1135,56 @@ const _deepseek_ai_dsh_api_session_controller_session_projections_result$schema 
   'toolsTokens': z.number().describe('Heuristic tokens of the newest request envelope\'s tool schemas; 0 before any request.'),
   'messageTokens': z.number().describe('Heuristic tokens of every other visible surface node, including superseded system prompts.'),
 }).optional().describe('Heuristic system/tools/message composition of the next request.'),
+  'userQuestions': z.object({
+  'active': z.array(z.object({
+  'callId': z.string().readonly(),
+  'questions': z.array(z.object({
+  'id': z.string().describe('Stable caller-provided question id, echoed in the answer.'),
+  'question': z.string().describe('The question to display.'),
+  'detail': z.string().optional().describe('Optional supporting detail rendered with the question but kept out of option labels.'),
+  'header': z.string().optional().describe('Optional short heading/group label.'),
+  'options': z.array(z.object({
+  'label': z.string().describe('User-facing label.'),
+  'description': z.string().optional().describe('Optional extra context rendered by capable UIs.'),
+})).optional().describe('Optional choices the UI can render as a menu.'),
+  'multiSelect': z.boolean().optional().describe('Whether more than one option may be selected. Defaults to single-select.'),
+  'intent': z.union([z.object({
+  'kind': z.literal("plan-review").describe('A plan submitted for review: `detail` is the plan markdown `ask()` requires, and the decision approves or declines it.'),
+  'approve': z.string().describe('The option label that approves the plan; every other option declines it. Named rather than positional so no UI infers the verdict from option order. An `approve` naming no option of its own question is rejected at `ask()`.'),
+  'callId': z.string().optional().describe('Logged tool invocation whose arguments contain the reviewed plan.'),
+}), z.object({
+  'kind': z.literal("approval").describe('A blocking permission decision with fixed actions and no free-text answer.'),
+  'approve': z.string().describe('Option label granting the scope described by the caller.'),
+  'reject': z.string().describe('Option label refusing the requested access.'),
+  'always': z.string().optional().describe('Optional persistent grant offered only when the caller supports it.'),
+  'subject': z.object({
+  'name': z.string(),
+  'icon': z.string().optional(),
+}).optional().describe('Metadata for human recognition; the caller admits icon sources, which the UI may load as URLs. Never an authorization identity.'),
+  'display': z.object({
+  'question': z.intersection(z.object({
+  'en': z.string(),
+}), z.record(z.string(), z.string())),
+  'detail': z.intersection(z.object({
+  'en': z.string(),
+}), z.record(z.string(), z.string())).optional(),
+  'approve': z.intersection(z.object({
+  'en': z.string(),
+}), z.record(z.string(), z.string())).optional(),
+}).optional().describe('Localized question and limited-grant label; fixed cards own reject/always wording. Option labels remain answer values.'),
+})]).optional().describe('Optional presentation intent for capable UIs; absent asks for the generic option list.'),
+})).readonly(),
+  'state': z.union([z.literal("open"), z.literal("continued")]).readonly(),
+})).readonly().describe('Calls that can still take an answer, in ask order.'),
+  'settled': z.array(z.object({
+  'callId': z.string().readonly().describe('The settled call.'),
+  'answers': z.array(z.object({
+  'id': z.string().describe('The answered question id.'),
+  'selected': z.array(z.string()).describe('Selected option labels. May accompany custom text for a multi-select question.'),
+  'custom': z.string().optional().describe('Optional free-text "Other" answer.'),
+})).readonly().describe('The recorded batch, one entry per question; empty when the late reply carried none.'),
+})).readonly().describe('Calls an answer settled, in settlement order.'),
+}).optional().describe('Timed questions that remain answerable in this Session, and the ones a late reply settled.'),
   'agentTeam': z.object({
   'members': z.array(z.object({
   'id': z.string().readonly(),
@@ -901,36 +1207,24 @@ const _deepseek_ai_dsh_api_session_controller_session_projections_result$schema 
 })).readonly(),
   'failure': z.string().readonly().optional(),
 }).optional().describe('Durable roster and non-deleted task board of the Team rooted at the projected Session.'),
-  'userQuestions': z.object({
-  'active': z.array(z.object({
-  'callId': z.string().readonly(),
-  'questions': z.array(z.object({
-  'id': z.string().describe('Stable caller-provided question id, echoed in the answer.'),
-  'question': z.string().describe('The question to display.'),
-  'detail': z.string().optional().describe('Optional supporting detail rendered with the question but kept out of option labels.'),
-  'header': z.string().optional().describe('Optional short heading/group label.'),
-  'options': z.array(z.object({
-  'label': z.string().describe('User-facing label.'),
-  'description': z.string().optional().describe('Optional extra context rendered by capable UIs.'),
-})).optional().describe('Optional choices the UI can render as a menu.'),
-  'multiSelect': z.boolean().optional().describe('Whether more than one option may be selected. Defaults to single-select.'),
-  'intent': z.object({
-  'kind': z.literal("plan-review").describe('A plan submitted for review: `detail` is the plan markdown `ask()` requires, and the decision approves or declines it.'),
-  'approve': z.string().describe('The option label that approves the plan; every other option declines it. Named rather than positional so no UI infers the verdict from option order. An `approve` naming no option of its own question is rejected at `ask()`.'),
-  'callId': z.string().optional().describe('Logged tool invocation whose arguments contain the reviewed plan.'),
-}).optional().describe('Optional presentation intent for capable UIs; absent asks for the generic option list.'),
-})).readonly(),
-  'state': z.union([z.literal("open"), z.literal("continued")]).readonly(),
-})).readonly().describe('Calls that can still take an answer, in ask order.'),
-  'settled': z.array(z.object({
-  'callId': z.string().readonly().describe('The settled call.'),
-  'answers': z.array(z.object({
-  'id': z.string().describe('The answered question id.'),
-  'selected': z.array(z.string()).describe('Selected option labels. May accompany custom text for a multi-select question.'),
-  'custom': z.string().optional().describe('Optional free-text "Other" answer.'),
-})).readonly().describe('The recorded batch, one entry per question; empty when the late reply carried none.'),
-})).readonly().describe('Calls an answer settled, in settlement order.'),
-}).optional().describe('Timed questions that remain answerable in this Session, and the ones a late reply settled.'),
+  'forgeChangeRequests': z.array(z.object({
+  'url': z.string().readonly().describe('Web URL as first recorded.'),
+  'origin': z.union([z.literal("created"), z.literal("referenced"), z.literal("discovered"), z.literal("tracked")]).readonly().describe('How the change request became bound.'),
+  'dismissed': z.boolean().readonly().describe('Whether a dismissal hides the binding.'),
+})).optional().describe('Every change request bound to the Session, hidden ones included, in binding order.'),
+  'forgeWorktree': z.union([z.literal(null), z.object({
+  'path': z.string().readonly().describe('Canonical checkout directory.'),
+  'branch': z.string().readonly().describe('Branch created for the checkout.'),
+  'from': z.union([z.literal(null), z.string()]).readonly().describe('Requested base branch, or null when the checkout started from HEAD of the source checkout.'),
+  'baseCommit': z.string().readonly().describe('Commit object name the branch started from.'),
+  'repositoryRoot': z.string().readonly().describe('Canonical root of the source checkout.'),
+})]).optional().describe('The worktree the panel created for the Session while the Session works in it, else null.'),
+  'forkLineage': z.object({
+  'origin': z.literal("fork").readonly().describe('How the Session came to exist; only `fork` is published under this key.'),
+  'sourceSessionId': z.string().readonly().describe('Session the branch was cut from.'),
+  'authoredByViewer': z.boolean().readonly().describe('True when the reader created the branch it is reading.'),
+  'workspaceReadOnly': z.boolean().readonly().describe('True when the branch\'s workspace stays read-only for its reader.'),
+}).optional().describe('Branch facts one reader was given for a branch of a shared Session.'),
   'goal': z.union([z.literal(null), z.object({
   'goal': z.object({
   'objective': z.string().readonly().describe('Human-requested completion objective.'),
@@ -960,13 +1254,40 @@ const _deepseek_ai_dsh_api_session_controller_session_projections_result$schema 
   'next-turn': z.array(z.json()).readonly(),
   'next-step': z.array(z.json()).readonly(),
 }).optional().describe('Pending agent input reconstructed from durable inbox splices.'),
-  'workingDirectory': z.union([z.literal(null), z.string()]).optional().describe('Recorded current directory for Session observations, or null when none is recorded.'),
+  'modelSelection': z.object({
+  'lastUsed': z.union([z.literal(null), z.object({
+  'provider': z.string().describe('Registered provider route.'),
+  'model': z.string().describe('Provider-owned model id.'),
+  'reasoningEffort': z.string().optional().describe('Adapter-owned reasoning effort, or provider/default behavior when absent.'),
+})]).readonly().describe('Selection used by the latest recorded model request.'),
+  'next': z.union([z.literal(null), z.object({
+  'provider': z.string().describe('Registered provider route.'),
+  'model': z.string().describe('Provider-owned model id.'),
+  'reasoningEffort': z.string().optional().describe('Adapter-owned reasoning effort, or provider/default behavior when absent.'),
+})]).readonly().describe('Selection the next model step uses; null while the Agent\'s initial options supply the route.'),
+}).optional().describe('Recorded model selection for the next model step and the latest request.'),
+  'actionCards': z.object({
+  'proposals': z.record(z.string(), z.object({
+  'callId': z.string().readonly().describe('Id of the logged tool call.'),
+  'turn': z.number().readonly().describe('Turn whose answer the card follows.'),
+  'action': z.string().readonly().describe('Registered action kind named by the call.'),
+  'title': z.string().readonly(),
+  'brief': z.string().readonly().describe('What the action does, in the user\'s language.'),
+  'details': z.record(z.string(), z.json()).readonly().readonly().describe('Fields the kind\'s skill asks for.'),
+})).readonly().readonly(),
+  'decisions': z.record(z.string(), z.object({
+  'callId': z.string().readonly(),
+  'action': z.string().readonly(),
+  'phase': z.string().readonly(),
+  'data': z.union([z.undefined(), z.record(z.string(), z.json()).readonly()]).readonly().optional().describe('Kind-defined fields such as a chosen location or a created package.'),
+})).readonly().readonly(),
+}).optional().describe('Action card proposals and decisions for the currently open Session.'),
   'agentPreset': z.union([z.literal(null), z.string()]).optional().describe('Preset the Session runs, or null when the deployment composes none.'),
   'title': z.union([z.literal(null), z.string()]).optional().describe('The session\'s current normalized title — the latest `session/title` event\'s text (last-wins), or `null` before the first title lands. A plain string: the shape the client list rows consume.'),
   'todos': z.union([z.literal(null), z.array(z.object({
   'content': z.string().describe('What this task is — a short imperative line shown in the UI.'),
   'status': z.union([z.literal("completed"), z.literal("pending"), z.literal("in_progress")]).describe('Lifecycle state. `in_progress` marks a task being worked now; parallel work may mark several.'),
-}))]).optional().describe('The agent\'s current whole todo list (the latest `todo/write` snapshot), or `null` before the first write. Whole-value rule: every `todo/write` carries the complete replacement list, so the fold is last-wins.'),
+}))]).optional().describe('The agent\'s current whole todo list (the latest `todo/write` snapshot), or `null` before the first write. Whole-value rule: every `todo/write` carries the complete replacement list, so the fold is last-wins. Excluded from Session summary payloads, with `null` kept outside the exclusion mark so the pre-first-write value stays expressible.'),
   'sessionListMetadata': z.object({
   'blank': z.boolean().readonly().describe('Whether the folded prefix contains no turn.'),
   'lastPromptAt': z.union([z.literal(null), z.number()]).readonly().describe('Latest human-authored prompt time in the folded prefix.'),
@@ -978,19 +1299,8 @@ const _deepseek_ai_dsh_api_session_controller_session_projections_result$schema 
   'maxImagePixels': z.number(),
   'maxImageDimension': z.number().describe('Maximum intrinsic width and maximum intrinsic height in pixels for one image.'),
   'mediaTypes': z.array(z.union([z.literal("image/png"), z.literal("image/jpeg"), z.literal("image/webp"), z.literal("image/gif")])),
-}).optional().describe('Image-intake limits enforced by the Session prompt endpoint.'),
-  'modelSelection': z.object({
-  'lastUsed': z.union([z.literal(null), z.object({
-  'provider': z.string().readonly(),
-  'model': z.string().readonly(),
-  'reasoningEffort': z.string().readonly().optional(),
-})]).readonly().describe('Selection consumed by the latest recorded model request.'),
-  'next': z.union([z.literal(null), z.object({
-  'provider': z.string().readonly(),
-  'model': z.string().readonly(),
-  'reasoningEffort': z.string().readonly().optional(),
-})]).readonly().describe('Selection the next request should use, falling back to {@link lastUsed}.'),
-}).optional().describe('Durable model selection already used and selected for the next request.'),
+}).optional().describe('Image-intake limits enforced by the Session prompt endpoint. Boot constant, excluded from Session summary payloads: every Session shares it, so a list row would repeat one host-wide fact.'),
+  'workingDirectory': z.union([z.literal(null), z.string()]).optional().describe('Recorded current directory for Session observations, or null when none is recorded.'),
   'permissions': z.object({
   'currentValue': z.string().describe('The effective current value: a configured preset key, `auto`, or `custom`.'),
 }).optional().describe('The session\'s current permission, folded from the three whole-value knob events (`permission/preset`, `sandbox/mode`, `approval/policy`) over the composition defaults. Selectable options come from the process-level catalog Remote. Key absence means no permission service is composed — clients hide the control.'),
@@ -1048,6 +1358,56 @@ const _deepseek_ai_dsh_api_session_controller_session_projections_result$schema 
   'toolsTokens': z.number().describe('Heuristic tokens of the newest request envelope\'s tool schemas; 0 before any request.'),
   'messageTokens': z.number().describe('Heuristic tokens of every other visible surface node, including superseded system prompts.'),
 }).optional().describe('Heuristic system/tools/message composition of the next request.'),
+  'userQuestions': z.object({
+  'active': z.array(z.object({
+  'callId': z.string().readonly(),
+  'questions': z.array(z.object({
+  'id': z.string().describe('Stable caller-provided question id, echoed in the answer.'),
+  'question': z.string().describe('The question to display.'),
+  'detail': z.string().optional().describe('Optional supporting detail rendered with the question but kept out of option labels.'),
+  'header': z.string().optional().describe('Optional short heading/group label.'),
+  'options': z.array(z.object({
+  'label': z.string().describe('User-facing label.'),
+  'description': z.string().optional().describe('Optional extra context rendered by capable UIs.'),
+})).optional().describe('Optional choices the UI can render as a menu.'),
+  'multiSelect': z.boolean().optional().describe('Whether more than one option may be selected. Defaults to single-select.'),
+  'intent': z.union([z.object({
+  'kind': z.literal("plan-review").describe('A plan submitted for review: `detail` is the plan markdown `ask()` requires, and the decision approves or declines it.'),
+  'approve': z.string().describe('The option label that approves the plan; every other option declines it. Named rather than positional so no UI infers the verdict from option order. An `approve` naming no option of its own question is rejected at `ask()`.'),
+  'callId': z.string().optional().describe('Logged tool invocation whose arguments contain the reviewed plan.'),
+}), z.object({
+  'kind': z.literal("approval").describe('A blocking permission decision with fixed actions and no free-text answer.'),
+  'approve': z.string().describe('Option label granting the scope described by the caller.'),
+  'reject': z.string().describe('Option label refusing the requested access.'),
+  'always': z.string().optional().describe('Optional persistent grant offered only when the caller supports it.'),
+  'subject': z.object({
+  'name': z.string(),
+  'icon': z.string().optional(),
+}).optional().describe('Metadata for human recognition; the caller admits icon sources, which the UI may load as URLs. Never an authorization identity.'),
+  'display': z.object({
+  'question': z.intersection(z.object({
+  'en': z.string(),
+}), z.record(z.string(), z.string())),
+  'detail': z.intersection(z.object({
+  'en': z.string(),
+}), z.record(z.string(), z.string())).optional(),
+  'approve': z.intersection(z.object({
+  'en': z.string(),
+}), z.record(z.string(), z.string())).optional(),
+}).optional().describe('Localized question and limited-grant label; fixed cards own reject/always wording. Option labels remain answer values.'),
+})]).optional().describe('Optional presentation intent for capable UIs; absent asks for the generic option list.'),
+})).readonly(),
+  'state': z.union([z.literal("open"), z.literal("continued")]).readonly(),
+})).readonly().describe('Calls that can still take an answer, in ask order.'),
+  'settled': z.array(z.object({
+  'callId': z.string().readonly().describe('The settled call.'),
+  'answers': z.array(z.object({
+  'id': z.string().describe('The answered question id.'),
+  'selected': z.array(z.string()).describe('Selected option labels. May accompany custom text for a multi-select question.'),
+  'custom': z.string().optional().describe('Optional free-text "Other" answer.'),
+})).readonly().describe('The recorded batch, one entry per question; empty when the late reply carried none.'),
+})).readonly().describe('Calls an answer settled, in settlement order.'),
+}).optional().describe('Timed questions that remain answerable in this Session, and the ones a late reply settled.'),
   'agentTeam': z.object({
   'members': z.array(z.object({
   'id': z.string().readonly(),
@@ -1070,36 +1430,24 @@ const _deepseek_ai_dsh_api_session_controller_session_projections_result$schema 
 })).readonly(),
   'failure': z.string().readonly().optional(),
 }).optional().describe('Durable roster and non-deleted task board of the Team rooted at the projected Session.'),
-  'userQuestions': z.object({
-  'active': z.array(z.object({
-  'callId': z.string().readonly(),
-  'questions': z.array(z.object({
-  'id': z.string().describe('Stable caller-provided question id, echoed in the answer.'),
-  'question': z.string().describe('The question to display.'),
-  'detail': z.string().optional().describe('Optional supporting detail rendered with the question but kept out of option labels.'),
-  'header': z.string().optional().describe('Optional short heading/group label.'),
-  'options': z.array(z.object({
-  'label': z.string().describe('User-facing label.'),
-  'description': z.string().optional().describe('Optional extra context rendered by capable UIs.'),
-})).optional().describe('Optional choices the UI can render as a menu.'),
-  'multiSelect': z.boolean().optional().describe('Whether more than one option may be selected. Defaults to single-select.'),
-  'intent': z.object({
-  'kind': z.literal("plan-review").describe('A plan submitted for review: `detail` is the plan markdown `ask()` requires, and the decision approves or declines it.'),
-  'approve': z.string().describe('The option label that approves the plan; every other option declines it. Named rather than positional so no UI infers the verdict from option order. An `approve` naming no option of its own question is rejected at `ask()`.'),
-  'callId': z.string().optional().describe('Logged tool invocation whose arguments contain the reviewed plan.'),
-}).optional().describe('Optional presentation intent for capable UIs; absent asks for the generic option list.'),
-})).readonly(),
-  'state': z.union([z.literal("open"), z.literal("continued")]).readonly(),
-})).readonly().describe('Calls that can still take an answer, in ask order.'),
-  'settled': z.array(z.object({
-  'callId': z.string().readonly().describe('The settled call.'),
-  'answers': z.array(z.object({
-  'id': z.string().describe('The answered question id.'),
-  'selected': z.array(z.string()).describe('Selected option labels. May accompany custom text for a multi-select question.'),
-  'custom': z.string().optional().describe('Optional free-text "Other" answer.'),
-})).readonly().describe('The recorded batch, one entry per question; empty when the late reply carried none.'),
-})).readonly().describe('Calls an answer settled, in settlement order.'),
-}).optional().describe('Timed questions that remain answerable in this Session, and the ones a late reply settled.'),
+  'forgeChangeRequests': z.array(z.object({
+  'url': z.string().readonly().describe('Web URL as first recorded.'),
+  'origin': z.union([z.literal("created"), z.literal("referenced"), z.literal("discovered"), z.literal("tracked")]).readonly().describe('How the change request became bound.'),
+  'dismissed': z.boolean().readonly().describe('Whether a dismissal hides the binding.'),
+})).optional().describe('Every change request bound to the Session, hidden ones included, in binding order.'),
+  'forgeWorktree': z.union([z.literal(null), z.object({
+  'path': z.string().readonly().describe('Canonical checkout directory.'),
+  'branch': z.string().readonly().describe('Branch created for the checkout.'),
+  'from': z.union([z.literal(null), z.string()]).readonly().describe('Requested base branch, or null when the checkout started from HEAD of the source checkout.'),
+  'baseCommit': z.string().readonly().describe('Commit object name the branch started from.'),
+  'repositoryRoot': z.string().readonly().describe('Canonical root of the source checkout.'),
+})]).optional().describe('The worktree the panel created for the Session while the Session works in it, else null.'),
+  'forkLineage': z.object({
+  'origin': z.literal("fork").readonly().describe('How the Session came to exist; only `fork` is published under this key.'),
+  'sourceSessionId': z.string().readonly().describe('Session the branch was cut from.'),
+  'authoredByViewer': z.boolean().readonly().describe('True when the reader created the branch it is reading.'),
+  'workspaceReadOnly': z.boolean().readonly().describe('True when the branch\'s workspace stays read-only for its reader.'),
+}).optional().describe('Branch facts one reader was given for a branch of a shared Session.'),
   'goal': z.union([z.literal(null), z.object({
   'goal': z.object({
   'objective': z.string().readonly().describe('Human-requested completion objective.'),
@@ -1182,6 +1530,23 @@ const _deepseek_ai_dsh_api_session_controller_session_selectModel_result$schema 
   'reasoningEffort': z.string().readonly().optional(),
 }).readonly(),
 }))
+let _deepseek_ai_dsh_api_session_controller_session_state_parameter_0$schema$value
+const _deepseek_ai_dsh_api_session_controller_session_state_parameter_0$schema = () => (_deepseek_ai_dsh_api_session_controller_session_state_parameter_0$schema$value ??= z.object({
+  'sessionId': z.string().readonly(),
+}))
+let _deepseek_ai_dsh_api_session_controller_session_state_result$schema$value
+const _deepseek_ai_dsh_api_session_controller_session_state_result$schema = () => (_deepseek_ai_dsh_api_session_controller_session_state_result$schema$value ??= z.object({
+  'cursor': z.number().readonly(),
+  'active': z.boolean().readonly(),
+  'running': z.boolean().readonly(),
+  'queue': z.union([z.literal(null), z.array(z.object({
+  'id': z.string().readonly(),
+  'placement': z.union([z.literal("queued"), z.literal("steering"), z.literal("context")]).readonly(),
+  'rpcId': z.string().readonly().optional(),
+  'content': z.array(z.json()).readonly(),
+}))]).readonly(),
+  'pendingInput': z.array(z.union([z.literal("approval"), z.literal("question"), z.literal("other")])).readonly().describe('Pending Remote requests sampled when this state was read. A pending change alone does not trigger `observeState`; `wait` refreshes on its own interval.'),
+}))
 let _deepseek_ai_dsh_api_session_controller_session_updateQueue_parameter_0$schema$value
 const _deepseek_ai_dsh_api_session_controller_session_updateQueue_parameter_0$schema = () => (_deepseek_ai_dsh_api_session_controller_session_updateQueue_parameter_0$schema$value ??= z.object({
   'sessionId': z.string().readonly(),
@@ -1201,6 +1566,44 @@ const _deepseek_ai_dsh_api_session_controller_session_updateQueue_parameter_0$sc
 let _deepseek_ai_dsh_api_session_controller_session_updateQueue_result$schema$value
 const _deepseek_ai_dsh_api_session_controller_session_updateQueue_result$schema = () => (_deepseek_ai_dsh_api_session_controller_session_updateQueue_result$schema$value ??= z.object({
   'accepted': z.literal(true).readonly(),
+}))
+let _deepseek_ai_dsh_api_session_controller_session_wait_parameter_0$schema$value
+const _deepseek_ai_dsh_api_session_controller_session_wait_parameter_0$schema = () => (_deepseek_ai_dsh_api_session_controller_session_wait_parameter_0$schema$value ??= z.object({
+  'timeoutMs': z.number().readonly().optional(),
+  'afterSeq': z.number().readonly().optional().describe('Exclusive output cursor; omission includes all available assistant records.'),
+  'maxMessages': z.number().readonly().optional().describe('Positive assistant-record limit; omission uses the history message budget.'),
+  'sessionId': z.string().readonly(),
+}))
+let _deepseek_ai_dsh_api_session_controller_session_wait_result$schema$value
+const _deepseek_ai_dsh_api_session_controller_session_wait_result$schema = () => (_deepseek_ai_dsh_api_session_controller_session_wait_result$schema$value ??= z.object({
+  'reason': z.union([z.literal("idle"), z.literal("input-required"), z.literal("timeout")]).readonly(),
+  'state': z.object({
+  'cursor': z.number().readonly(),
+  'active': z.boolean().readonly(),
+  'running': z.boolean().readonly(),
+  'queue': z.union([z.literal(null), z.array(z.object({
+  'id': z.string().readonly(),
+  'placement': z.union([z.literal("queued"), z.literal("steering"), z.literal("context")]).readonly(),
+  'rpcId': z.string().readonly().optional(),
+  'content': z.array(z.json()).readonly(),
+}))]).readonly(),
+  'pendingInput': z.array(z.union([z.literal("approval"), z.literal("question"), z.literal("other")])).readonly().describe('Pending Remote requests sampled when this state was read. A pending change alone does not trigger `observeState`; `wait` refreshes on its own interval.'),
+}).readonly(),
+  'output': z.object({
+  'records': z.array(z.object({
+  'type': z.literal("event").readonly(),
+  'event': z.object({
+  'type': z.string().readonly(),
+  'seq': z.number().readonly(),
+  'time': z.number().readonly(),
+  'data': z.json().readonly(),
+  'ignorable': z.literal(true).readonly().optional(),
+  'sourceEventSeqs': z.json().readonly().optional().describe('Earlier sources on current surface events; opaque JSON on unknown ignorable events.'),
+  'surfaceOp': z.json().readonly().optional().describe('Canonical placement on current surface events; opaque JSON on unknown ignorable events.'),
+}).readonly(),
+})).readonly(),
+  'truncated': z.boolean().readonly().describe('More eligible assistant messages exist in the selected interval.'),
+}).readonly(),
 }))
 let _deepseek_ai_dsh_api_session_controller_session_workspacePathApplications_parameter_0$schema$value
 const _deepseek_ai_dsh_api_session_controller_session_workspacePathApplications_parameter_0$schema = () => (_deepseek_ai_dsh_api_session_controller_session_workspacePathApplications_parameter_0$schema$value ??= z.object({
@@ -1233,8 +1636,19 @@ let _deepseek_ai_dsh_api_session_controller_fileReferences_list_parameter_1_stri
 const _deepseek_ai_dsh_api_session_controller_fileReferences_list_parameter_1_strict$schema = () => (_deepseek_ai_dsh_api_session_controller_fileReferences_list_parameter_1_strict$schema$value ??= z.string())
 let _deepseek_ai_dsh_api_session_controller_session_attachment_parameter_0_strict$schema$value
 const _deepseek_ai_dsh_api_session_controller_session_attachment_parameter_0_strict$schema = () => (_deepseek_ai_dsh_api_session_controller_session_attachment_parameter_0_strict$schema$value ??= z.strictObject({
-  'sessionId': z.string().readonly(),
-  'attachmentId': z.string().readonly(),
+  'sessionId': z.string().readonly().describe('Gateway permission scope only; neither Session existence nor its image references are checked.'),
+  'attachment': z.strictObject({
+  'attachmentId': z.string().describe('Opaque storage identifier; never a filesystem path or bearer URL.'),
+  'mediaType': z.union([z.literal("image/png"), z.literal("image/jpeg"), z.literal("image/webp"), z.literal("image/gif")]).describe('Media type verified from the stored bytes.'),
+  'bytes': z.number().describe('Exact encoded byte length.'),
+  'width': z.number().describe('Intrinsic encoded width in pixels.'),
+  'height': z.number().describe('Intrinsic encoded height in pixels.'),
+  'name': z.string().optional().describe('Optional display name stripped of local path information.'),
+  'originalDimensions': z.strictObject({
+  'width': z.number(),
+  'height': z.number(),
+}).optional().describe('Input dimensions after applying EXIF orientation and before normalization scaling. Present only when normalization reduced the image.'),
+}).readonly(),
 }))
 let _deepseek_ai_dsh_api_session_controller_session_cancel_parameter_0_strict$schema$value
 const _deepseek_ai_dsh_api_session_controller_session_cancel_parameter_0_strict$schema = () => (_deepseek_ai_dsh_api_session_controller_session_cancel_parameter_0_strict$schema$value ??= z.strictObject({
@@ -1247,6 +1661,25 @@ const _deepseek_ai_dsh_api_session_controller_session_create_parameter_0_strict$
   'sessionId': z.string().readonly().optional().describe('Blank Session to reuse while it is reusable, or the identity of a new Session when none is stored under it.'),
   'agentPreset': z.string().readonly().optional().describe('Preset the Session runs, replacing a reused Session\'s recorded preset; the configured default when omitted.'),
 }))
+let _deepseek_ai_dsh_api_session_controller_session_events_parameter_0_strict$schema$value
+const _deepseek_ai_dsh_api_session_controller_session_events_parameter_0_strict$schema = () => (_deepseek_ai_dsh_api_session_controller_session_events_parameter_0_strict$schema$value ??= z.strictObject({
+  'address': z.union([z.strictObject({
+  'kind': z.literal("session").readonly(),
+  'sessionId': z.string().readonly(),
+}), z.strictObject({
+  'kind': z.literal("subagent").readonly(),
+  'parentSessionId': z.string().readonly(),
+  'childSessionId': z.string().readonly(),
+  'mode': z.union([z.literal("one-shot"), z.literal("continuable"), z.literal("unknown")]).readonly(),
+})]).readonly(),
+  'throughSeq': z.number().readonly().optional().describe('Inclusive log cut; omission selects the observed log end. A follow opening reports the cut it covered so a caller can pin the same point.'),
+  'beforeSeq': z.number().readonly().optional(),
+  'maxMessages': z.number().readonly().optional(),
+  'turnWindow': z.strictObject({
+  'minMessages': z.number().readonly().describe('Minimum append-origin user/assistant messages; must not exceed maxMessages.'),
+  'minTurns': z.number().readonly().describe('Minimum Turn starts crossed, including the partial Turn at beforeSeq.'),
+}).readonly().optional().describe('Stop at a Turn start after both minima, unless maxMessages or history exhaustion wins.'),
+}))
 let _deepseek_ai_dsh_api_session_controller_session_follow_parameter_0_strict$schema$value
 const _deepseek_ai_dsh_api_session_controller_session_follow_parameter_0_strict$schema = () => (_deepseek_ai_dsh_api_session_controller_session_follow_parameter_0_strict$schema$value ??= z.strictObject({
   'address': z.union([z.strictObject({
@@ -1258,6 +1691,7 @@ const _deepseek_ai_dsh_api_session_controller_session_follow_parameter_0_strict$
   'childSessionId': z.string().readonly(),
   'mode': z.union([z.literal("one-shot"), z.literal("continuable"), z.literal("unknown")]).readonly(),
 })]).readonly(),
+  'activate': z.boolean().readonly().optional().describe('Request background activation; omission leaves the read passive.'),
   'assistantStream': z.literal(true).readonly().optional().describe('Include process-local assistant presentation frames for the Web client.'),
   'maxMessages': z.number().readonly().optional(),
   'turnWindow': z.strictObject({
@@ -1274,6 +1708,26 @@ const _deepseek_ai_dsh_api_session_controller_session_fork_parameter_0_strict$sc
 let _deepseek_ai_dsh_api_session_controller_session_list_parameter_0_strict$schema$value
 const _deepseek_ai_dsh_api_session_controller_session_list_parameter_0_strict$schema = () => (_deepseek_ai_dsh_api_session_controller_session_list_parameter_0_strict$schema$value ??= z.strictObject({
   'cursor': z.string().readonly().optional(),
+}))
+let _deepseek_ai_dsh_api_session_controller_session_observeEvent_parameter_0_strict$schema$value
+const _deepseek_ai_dsh_api_session_controller_session_observeEvent_parameter_0_strict$schema = () => (_deepseek_ai_dsh_api_session_controller_session_observeEvent_parameter_0_strict$schema$value ??= z.strictObject({
+  'address': z.union([z.strictObject({
+  'kind': z.literal("session").readonly(),
+  'sessionId': z.string().readonly(),
+}), z.strictObject({
+  'kind': z.literal("subagent").readonly(),
+  'parentSessionId': z.string().readonly(),
+  'childSessionId': z.string().readonly(),
+  'mode': z.union([z.literal("one-shot"), z.literal("continuable"), z.literal("unknown")]).readonly(),
+})]).readonly(),
+}))
+let _deepseek_ai_dsh_api_session_controller_session_observeProjections_parameter_0_strict$schema$value
+const _deepseek_ai_dsh_api_session_controller_session_observeProjections_parameter_0_strict$schema = () => (_deepseek_ai_dsh_api_session_controller_session_observeProjections_parameter_0_strict$schema$value ??= z.strictObject({
+  'sessionId': z.string().readonly(),
+}))
+let _deepseek_ai_dsh_api_session_controller_session_observeState_parameter_0_strict$schema$value
+const _deepseek_ai_dsh_api_session_controller_session_observeState_parameter_0_strict$schema = () => (_deepseek_ai_dsh_api_session_controller_session_observeState_parameter_0_strict$schema$value ??= z.strictObject({
+  'sessionId': z.string().readonly(),
 }))
 let _deepseek_ai_dsh_api_session_controller_session_openWorkspacePath_parameter_0_strict$schema$value
 const _deepseek_ai_dsh_api_session_controller_session_openWorkspacePath_parameter_0_strict$schema = () => (_deepseek_ai_dsh_api_session_controller_session_openWorkspacePath_parameter_0_strict$schema$value ??= z.strictObject({
@@ -1292,7 +1746,7 @@ const _deepseek_ai_dsh_api_session_controller_session_page_parameter_0_strict$sc
   'childSessionId': z.string().readonly(),
   'mode': z.union([z.literal("one-shot"), z.literal("continuable"), z.literal("unknown")]).readonly(),
 })]).readonly(),
-  'throughSeq': z.number().readonly().describe('Inclusive log cut obtained from the corresponding follow opening frame.'),
+  'throughSeq': z.number().readonly().optional().describe('Inclusive log cut; omission selects the observed log end. A follow opening reports the cut it covered so a caller can pin the same point.'),
   'beforeSeq': z.number().readonly().optional(),
   'maxMessages': z.number().readonly().optional(),
   'turnWindow': z.strictObject({
@@ -1339,6 +1793,10 @@ const _deepseek_ai_dsh_api_session_controller_session_selectModel_parameter_0_st
   'model': z.string().readonly(),
   'reasoningEffort': z.string().readonly().optional(),
 }))
+let _deepseek_ai_dsh_api_session_controller_session_state_parameter_0_strict$schema$value
+const _deepseek_ai_dsh_api_session_controller_session_state_parameter_0_strict$schema = () => (_deepseek_ai_dsh_api_session_controller_session_state_parameter_0_strict$schema$value ??= z.strictObject({
+  'sessionId': z.string().readonly(),
+}))
 let _deepseek_ai_dsh_api_session_controller_session_updateQueue_parameter_0_strict$schema$value
 const _deepseek_ai_dsh_api_session_controller_session_updateQueue_parameter_0_strict$schema = () => (_deepseek_ai_dsh_api_session_controller_session_updateQueue_parameter_0_strict$schema$value ??= z.strictObject({
   'sessionId': z.string().readonly(),
@@ -1354,6 +1812,13 @@ const _deepseek_ai_dsh_api_session_controller_session_updateQueue_parameter_0_st
 }), z.strictObject({
   'kind': z.literal("steer").readonly(),
 })]).readonly(),
+}))
+let _deepseek_ai_dsh_api_session_controller_session_wait_parameter_0_strict$schema$value
+const _deepseek_ai_dsh_api_session_controller_session_wait_parameter_0_strict$schema = () => (_deepseek_ai_dsh_api_session_controller_session_wait_parameter_0_strict$schema$value ??= z.strictObject({
+  'timeoutMs': z.number().readonly().optional(),
+  'afterSeq': z.number().readonly().optional().describe('Exclusive output cursor; omission includes all available assistant records.'),
+  'maxMessages': z.number().readonly().optional().describe('Positive assistant-record limit; omission uses the history message budget.'),
+  'sessionId': z.string().readonly(),
 }))
 let _deepseek_ai_dsh_api_session_controller_session_workspacePathApplications_parameter_0_strict$schema$value
 const _deepseek_ai_dsh_api_session_controller_session_workspacePathApplications_parameter_0_strict$schema = () => (_deepseek_ai_dsh_api_session_controller_session_workspacePathApplications_parameter_0_strict$schema$value ??= z.strictObject({
@@ -1425,24 +1890,24 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
     },
     'session/attachment': {
       service: 'sessionController',
-      description: 'Read one image proven reachable from the addressed Session log.',
+      description: 'Read one image from the attachment store after gateway authorization.',
       invocation: { kind: 'direct' },
       parameters: [
         {
           name: 'request',
-          description: 'Session and attachment identities used for authorization.',
+          description: 'image reference and gateway permission scope; Session existence is not checked.',
           source: 'json',
           codec: {
             mode: 'strict',
             typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionAttachmentRequest',
             create: _deepseek_ai_dsh_api_session_controller_session_attachment_parameter_0$schema,
-            jsonSchema: {"type":"object","properties":{"sessionId":{"type":"string"},"attachmentId":{"type":"string"}},"required":["sessionId","attachmentId"],"additionalProperties":true},
+            jsonSchema: {"type":"object","properties":{"sessionId":{"type":"string","description":"Gateway permission scope only; neither Session existence nor its image references are checked."},"attachment":{"type":"object","properties":{"attachmentId":{"type":"string","description":"Opaque storage identifier; never a filesystem path or bearer URL."},"mediaType":{"type":"string","enum":["image/png","image/jpeg","image/webp","image/gif"],"description":"Media type verified from the stored bytes."},"bytes":{"type":"number","description":"Exact encoded byte length."},"width":{"type":"number","description":"Intrinsic encoded width in pixels."},"height":{"type":"number","description":"Intrinsic encoded height in pixels."},"name":{"type":"string","description":"Optional display name stripped of local path information."},"originalDimensions":{"type":"object","properties":{"width":{"type":"number"},"height":{"type":"number"}},"required":["width","height"],"additionalProperties":true,"description":"Input dimensions after applying EXIF orientation and before normalization scaling. Present only when normalization reduced the image."}},"required":["attachmentId","mediaType","bytes","width","height"],"additionalProperties":true}},"required":["sessionId","attachment"],"additionalProperties":true},
           },
           strictCodec: {
             mode: 'strict',
             typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionAttachmentRequest',
             create: _deepseek_ai_dsh_api_session_controller_session_attachment_parameter_0_strict$schema,
-            jsonSchema: {"type":"object","properties":{"sessionId":{"type":"string"},"attachmentId":{"type":"string"}},"required":["sessionId","attachmentId"],"additionalProperties":false},
+            jsonSchema: {"type":"object","properties":{"sessionId":{"type":"string","description":"Gateway permission scope only; neither Session existence nor its image references are checked."},"attachment":{"type":"object","properties":{"attachmentId":{"type":"string","description":"Opaque storage identifier; never a filesystem path or bearer URL."},"mediaType":{"type":"string","enum":["image/png","image/jpeg","image/webp","image/gif"],"description":"Media type verified from the stored bytes."},"bytes":{"type":"number","description":"Exact encoded byte length."},"width":{"type":"number","description":"Intrinsic encoded width in pixels."},"height":{"type":"number","description":"Intrinsic encoded height in pixels."},"name":{"type":"string","description":"Optional display name stripped of local path information."},"originalDimensions":{"type":"object","properties":{"width":{"type":"number"},"height":{"type":"number"}},"required":["width","height"],"additionalProperties":false,"description":"Input dimensions after applying EXIF orientation and before normalization scaling. Present only when normalization reduced the image."}},"required":["attachmentId","mediaType","bytes","width","height"],"additionalProperties":false}},"required":["sessionId","attachment"],"additionalProperties":false},
           },
         },
       ],
@@ -1451,9 +1916,9 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionAttachmentValue',
         create: _deepseek_ai_dsh_api_session_controller_session_attachment_result$schema,
         description: 'the durable attachment reference and base64-encoded bytes.',
-        jsonSchema: {"type":"object","properties":{"attachment":{"type":"object","properties":{"attachmentId":{"type":"string","description":"Opaque storage identifier; never a filesystem path or bearer URL."},"mediaType":{"type":"string","enum":["image/png","image/jpeg","image/webp","image/gif"],"description":"Media type verified from the stored bytes."},"bytes":{"type":"number","description":"Exact encoded byte length."},"width":{"type":"number","description":"Intrinsic encoded width in pixels."},"height":{"type":"number","description":"Intrinsic encoded height in pixels."},"name":{"type":"string","description":"Optional display name stripped of local path information."},"originalDimensions":{"type":"object","properties":{"width":{"type":"number"},"height":{"type":"number"}},"required":["width","height"],"additionalProperties":true,"description":"Input dimensions after applying EXIF orientation and before normalization scaling. Present only when normalization reduced the image."}},"required":["attachmentId","mediaType","bytes","width","height"],"additionalProperties":true},"data":{"type":"string"}},"required":["attachment","data"],"additionalProperties":true},
+        jsonSchema: {"type":"object","properties":{"attachment":{"type":"object","properties":{"attachmentId":{"type":"string","description":"Opaque storage identifier; never a filesystem path or bearer URL."},"mediaType":{"type":"string","enum":["image/png","image/jpeg","image/webp","image/gif"],"description":"Media type verified from the stored bytes."},"bytes":{"type":"number","description":"Exact encoded byte length."},"width":{"type":"number","description":"Intrinsic encoded width in pixels."},"height":{"type":"number","description":"Intrinsic encoded height in pixels."},"name":{"type":"string","description":"Optional display name stripped of local path information."},"originalDimensions":{"type":"object","properties":{"width":{"type":"number"},"height":{"type":"number"}},"required":["width","height"],"additionalProperties":true,"description":"Input dimensions after applying EXIF orientation and before normalization scaling. Present only when normalization reduced the image."}},"required":["attachmentId","mediaType","bytes","width","height"],"additionalProperties":true,"description":"Supplied reference after ID, format, byte length, and dimensions verification; display fields are preserved."},"data":{"type":"string"}},"required":["attachment","data"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":494,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":497,"column":3},
     },
     'session/cancel': {
       service: 'sessionController',
@@ -1485,7 +1950,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'acknowledgement that cancellation was requested.',
         jsonSchema: {"type":"object","properties":{"accepted":{"type":"boolean","const":true}},"required":["accepted"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":514,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":517,"column":3},
     },
     'session/canOpenWorkspacePath': {
       service: 'sessionController',
@@ -1500,7 +1965,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'true when the matching open operation is available.',
         jsonSchema: {"type":"boolean"},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":347,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":350,"column":3},
     },
     'session/control': {
       service: 'sessionController',
@@ -1517,7 +1982,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'one complete baseline followed by live replacement frames.',
         jsonSchemaError: 'typert tool schema: selected dictionaries require string keys and unconstrained JSON values',
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":599,"column":10},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":628,"column":10},
     },
     'session/create': {
       service: 'sessionController',
@@ -1549,7 +2014,40 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'the created or reused Session identity and its preset when configured.',
         jsonSchema: {"type":"object","properties":{"sessionId":{"type":"string","description":"The created or reused Session, which may differ from the requested `sessionId`."},"agentPreset":{"type":"string","description":"Preset the Session runs, when the deployment composes a preset roster."}},"required":["sessionId"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":301,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":304,"column":3},
+    },
+    'session/events': {
+      service: 'sessionController',
+      description: 'Read one cold-safe, message-aligned Session history page.',
+      invocation: { kind: 'direct' },
+      parameters: [
+        {
+          name: 'request',
+          description: 'durable address, optional fixed cut, backward cursor, and page budget.',
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionPageRequest',
+            create: _deepseek_ai_dsh_api_session_controller_session_events_parameter_0$schema,
+            jsonSchema: {"type":"object","properties":{"address":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"session"},"sessionId":{"type":"string"}},"required":["kind","sessionId"],"additionalProperties":true},{"type":"object","properties":{"kind":{"type":"string","const":"subagent"},"parentSessionId":{"type":"string"},"childSessionId":{"type":"string"},"mode":{"type":"string","enum":["one-shot","continuable","unknown"]}},"required":["kind","parentSessionId","childSessionId","mode"],"additionalProperties":true}]},"throughSeq":{"type":"number","description":"Inclusive log cut; omission selects the observed log end. A follow opening reports the cut it covered so a caller can pin the same point."},"beforeSeq":{"type":"number"},"maxMessages":{"type":"number"},"turnWindow":{"type":"object","properties":{"minMessages":{"type":"number","description":"Minimum append-origin user/assistant messages; must not exceed maxMessages."},"minTurns":{"type":"number","description":"Minimum Turn starts crossed, including the partial Turn at beforeSeq."}},"required":["minMessages","minTurns"],"additionalProperties":true,"description":"Stop at a Turn start after both minima, unless maxMessages or history exhaustion wins."}},"required":["address"],"additionalProperties":true},
+          },
+          strictCodec: {
+            mode: 'strict',
+            typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionPageRequest',
+            create: _deepseek_ai_dsh_api_session_controller_session_events_parameter_0_strict$schema,
+            jsonSchema: {"type":"object","properties":{"address":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"session"},"sessionId":{"type":"string"}},"required":["kind","sessionId"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"subagent"},"parentSessionId":{"type":"string"},"childSessionId":{"type":"string"},"mode":{"type":"string","enum":["one-shot","continuable","unknown"]}},"required":["kind","parentSessionId","childSessionId","mode"],"additionalProperties":false}]},"throughSeq":{"type":"number","description":"Inclusive log cut; omission selects the observed log end. A follow opening reports the cut it covered so a caller can pin the same point."},"beforeSeq":{"type":"number"},"maxMessages":{"type":"number"},"turnWindow":{"type":"object","properties":{"minMessages":{"type":"number","description":"Minimum append-origin user/assistant messages; must not exceed maxMessages."},"minTurns":{"type":"number","description":"Minimum Turn starts crossed, including the partial Turn at beforeSeq."}},"required":["minMessages","minTurns"],"additionalProperties":false,"description":"Stop at a Turn start after both minima, unless maxMessages or history exhaustion wins."}},"required":["address"],"additionalProperties":false},
+          },
+        },
+      ],
+      cancellation: { parameter: 'signal' },
+      result: {
+        mode: 'strict',
+        typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionEventsPage',
+        create: _deepseek_ai_dsh_api_session_controller_session_events_result$schema,
+        description: 'one chronological page with its inclusive cursor.',
+        jsonSchema: {"type":"object","properties":{"cursor":{"type":"number"},"records":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string","const":"event"},"event":{"type":"object","properties":{"type":{"type":"string"},"seq":{"type":"number"},"time":{"type":"number"},"data":{},"ignorable":{"type":"boolean","const":true},"sourceEventSeqs":{"description":"Earlier sources on current surface events; opaque JSON on unknown ignorable events."},"surfaceOp":{"description":"Canonical placement on current surface events; opaque JSON on unknown ignorable events."}},"required":["type","seq","time","data"],"additionalProperties":true}},"required":["type","event"],"additionalProperties":true}},"hasMore":{"type":"boolean"}},"required":["cursor","records","hasMore"],"additionalProperties":true},
+      },
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":540,"column":3},
     },
     'session/follow': {
       service: 'sessionController',
@@ -1565,13 +2063,13 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
             mode: 'strict',
             typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionFollowRequest',
             create: _deepseek_ai_dsh_api_session_controller_session_follow_parameter_0$schema,
-            jsonSchema: {"type":"object","properties":{"address":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"session"},"sessionId":{"type":"string"}},"required":["kind","sessionId"],"additionalProperties":true},{"type":"object","properties":{"kind":{"type":"string","const":"subagent"},"parentSessionId":{"type":"string"},"childSessionId":{"type":"string"},"mode":{"type":"string","enum":["one-shot","continuable","unknown"]}},"required":["kind","parentSessionId","childSessionId","mode"],"additionalProperties":true}]},"assistantStream":{"type":"boolean","const":true,"description":"Include process-local assistant presentation frames for the Web client."},"maxMessages":{"type":"number"},"turnWindow":{"type":"object","properties":{"minMessages":{"type":"number","description":"Minimum append-origin user/assistant messages; must not exceed maxMessages."},"minTurns":{"type":"number","description":"Minimum Turn starts crossed, including the partial Turn at beforeSeq."}},"required":["minMessages","minTurns"],"additionalProperties":true,"description":"Stop at a Turn start after both minima, unless maxMessages or history exhaustion wins."}},"required":["address"],"additionalProperties":true},
+            jsonSchema: {"type":"object","properties":{"address":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"session"},"sessionId":{"type":"string"}},"required":["kind","sessionId"],"additionalProperties":true},{"type":"object","properties":{"kind":{"type":"string","const":"subagent"},"parentSessionId":{"type":"string"},"childSessionId":{"type":"string"},"mode":{"type":"string","enum":["one-shot","continuable","unknown"]}},"required":["kind","parentSessionId","childSessionId","mode"],"additionalProperties":true}]},"activate":{"type":"boolean","description":"Request background activation; omission leaves the read passive."},"assistantStream":{"type":"boolean","const":true,"description":"Include process-local assistant presentation frames for the Web client."},"maxMessages":{"type":"number"},"turnWindow":{"type":"object","properties":{"minMessages":{"type":"number","description":"Minimum append-origin user/assistant messages; must not exceed maxMessages."},"minTurns":{"type":"number","description":"Minimum Turn starts crossed, including the partial Turn at beforeSeq."}},"required":["minMessages","minTurns"],"additionalProperties":true,"description":"Stop at a Turn start after both minima, unless maxMessages or history exhaustion wins."}},"required":["address"],"additionalProperties":true},
           },
           strictCodec: {
             mode: 'strict',
             typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionFollowRequest',
             create: _deepseek_ai_dsh_api_session_controller_session_follow_parameter_0_strict$schema,
-            jsonSchema: {"type":"object","properties":{"address":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"session"},"sessionId":{"type":"string"}},"required":["kind","sessionId"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"subagent"},"parentSessionId":{"type":"string"},"childSessionId":{"type":"string"},"mode":{"type":"string","enum":["one-shot","continuable","unknown"]}},"required":["kind","parentSessionId","childSessionId","mode"],"additionalProperties":false}]},"assistantStream":{"type":"boolean","const":true,"description":"Include process-local assistant presentation frames for the Web client."},"maxMessages":{"type":"number"},"turnWindow":{"type":"object","properties":{"minMessages":{"type":"number","description":"Minimum append-origin user/assistant messages; must not exceed maxMessages."},"minTurns":{"type":"number","description":"Minimum Turn starts crossed, including the partial Turn at beforeSeq."}},"required":["minMessages","minTurns"],"additionalProperties":false,"description":"Stop at a Turn start after both minima, unless maxMessages or history exhaustion wins."}},"required":["address"],"additionalProperties":false},
+            jsonSchema: {"type":"object","properties":{"address":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"session"},"sessionId":{"type":"string"}},"required":["kind","sessionId"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"subagent"},"parentSessionId":{"type":"string"},"childSessionId":{"type":"string"},"mode":{"type":"string","enum":["one-shot","continuable","unknown"]}},"required":["kind","parentSessionId","childSessionId","mode"],"additionalProperties":false}]},"activate":{"type":"boolean","description":"Request background activation; omission leaves the read passive."},"assistantStream":{"type":"boolean","const":true,"description":"Include process-local assistant presentation frames for the Web client."},"maxMessages":{"type":"number"},"turnWindow":{"type":"object","properties":{"minMessages":{"type":"number","description":"Minimum append-origin user/assistant messages; must not exceed maxMessages."},"minTurns":{"type":"number","description":"Minimum Turn starts crossed, including the partial Turn at beforeSeq."}},"required":["minMessages","minTurns"],"additionalProperties":false,"description":"Stop at a Turn start after both minima, unless maxMessages or history exhaustion wins."}},"required":["address"],"additionalProperties":false},
           },
         },
       ],
@@ -1581,9 +2079,9 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionFollowFrame',
         create: _deepseek_ai_dsh_api_session_controller_session_follow_result$schema,
         description: 'a complete opening snapshot followed by gap-free durable event frames and optional cursorless assistant-stream frames.',
-        jsonSchema: {"oneOf":[{"type":"object","properties":{"type":{"type":"string","const":"event"},"event":{"type":"object","properties":{"type":{"type":"string"},"seq":{"type":"number"},"time":{"type":"number"},"data":{},"ignorable":{"type":"boolean","const":true},"sourceEventSeqs":{"description":"Earlier sources on current surface events; opaque JSON on unknown ignorable events."},"surfaceOp":{"description":"Canonical placement on current surface events; opaque JSON on unknown ignorable events."}},"required":["type","seq","time","data"],"additionalProperties":true}},"required":["type","event"],"additionalProperties":true},{"type":"object","properties":{"type":{"type":"string","const":"snapshot"},"header":{"type":"object","properties":{"version":{"type":"number"},"id":{"type":"string"},"createdAt":{"type":"number"},"cwd":{"type":"string"},"parentSession":{"type":"string"},"isSeeded":{"type":"boolean","description":"Whether the Session contains a fork-inherited prefix."},"origin":{"type":"string","const":"subagent"},"delegationDepth":{"type":"number"},"agentPreset":{"type":"string"}},"required":["version","id","createdAt","isSeeded"],"additionalProperties":true},"cursor":{"type":"number"},"records":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string","const":"event"},"event":{"type":"object","properties":{"type":{"type":"string"},"seq":{"type":"number"},"time":{"type":"number"},"data":{},"ignorable":{"type":"boolean","const":true},"sourceEventSeqs":{"description":"Earlier sources on current surface events; opaque JSON on unknown ignorable events."},"surfaceOp":{"description":"Canonical placement on current surface events; opaque JSON on unknown ignorable events."}},"required":["type","seq","time","data"],"additionalProperties":true}},"required":["type","event"],"additionalProperties":true}},"hasMore":{"type":"boolean"},"projections":{"type":"object","properties":{"asOfSeq":{"type":"number"},"values":{"type":"object","properties":{"inbox":{"type":"object","properties":{"next-turn":{"type":"array","items":{}},"next-step":{"type":"array","items":{}}},"required":["next-turn","next-step"],"additionalProperties":true,"description":"Pending agent input reconstructed from durable inbox splices."},"workingDirectory":{"oneOf":[{"type":"null","const":null},{"type":"string"}],"description":"Recorded current directory for Session observations, or null when none is recorded."},"agentPreset":{"oneOf":[{"type":"null","const":null},{"type":"string"}],"description":"Preset the Session runs, or null when the deployment composes none."},"title":{"oneOf":[{"type":"null","const":null},{"type":"string"}],"description":"The session's current normalized title — the latest `session/title` event's text (last-wins), or `null` before the first title lands. A plain string: the shape the client list rows consume."},"todos":{"oneOf":[{"type":"null","const":null},{"type":"array","items":{"type":"object","properties":{"content":{"type":"string","description":"What this task is — a short imperative line shown in the UI."},"status":{"type":"string","enum":["completed","pending","in_progress"],"description":"Lifecycle state. `in_progress` marks a task being worked now; parallel work may mark several."}},"required":["content","status"],"additionalProperties":true}}],"description":"The agent's current whole todo list (the latest `todo/write` snapshot), or `null` before the first write. Whole-value rule: every `todo/write` carries the complete replacement list, so the fold is last-wins."},"sessionListMetadata":{"type":"object","properties":{"blank":{"type":"boolean","description":"Whether the folded prefix contains no turn."},"lastPromptAt":{"oneOf":[{"type":"null","const":null},{"type":"number"}],"description":"Latest human-authored prompt time in the folded prefix."}},"required":["blank","lastPromptAt"],"additionalProperties":true,"description":"Persisted facts used to summarize a Session without activating it."},"imageLimits":{"type":"object","properties":{"maxImageBytes":{"type":"number"},"maxImagesPerMessage":{"type":"number"},"maxMessageImageBytes":{"type":"number"},"maxImagePixels":{"type":"number"},"maxImageDimension":{"type":"number","description":"Maximum intrinsic width and maximum intrinsic height in pixels for one image."},"mediaTypes":{"type":"array","items":{"type":"string","enum":["image/png","image/jpeg","image/webp","image/gif"]}}},"required":["maxImageBytes","maxImagesPerMessage","maxMessageImageBytes","maxImagePixels","maxImageDimension","mediaTypes"],"additionalProperties":true,"description":"Image-intake limits enforced by the Session prompt endpoint."},"modelSelection":{"type":"object","properties":{"lastUsed":{"oneOf":[{"type":"null","const":null},{"type":"object","properties":{"provider":{"type":"string"},"model":{"type":"string"},"reasoningEffort":{"type":"string"}},"required":["provider","model"],"additionalProperties":true}],"description":"Selection consumed by the latest recorded model request."},"next":{"oneOf":[{"type":"null","const":null},{"type":"object","properties":{"provider":{"type":"string"},"model":{"type":"string"},"reasoningEffort":{"type":"string"}},"required":["provider","model"],"additionalProperties":true}],"description":"Selection the next request should use, falling back to {@link lastUsed}."}},"required":["lastUsed","next"],"additionalProperties":true,"description":"Durable model selection already used and selected for the next request."},"permissions":{"type":"object","properties":{"currentValue":{"type":"string","description":"The effective current value: a configured preset key, `auto`, or `custom`."}},"required":["currentValue"],"additionalProperties":true,"description":"The session's current permission, folded from the three whole-value knob events (`permission/preset`, `sandbox/mode`, `approval/policy`) over the composition defaults. Selectable options come from the process-level catalog Remote. Key absence means no permission service is composed — clients hide the control."},"subagentCatalog":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"id":{"type":"string"},"createdAt":{"type":"number"},"mode":{"type":"string","const":"one-shot"},"label":{"type":"string"}},"required":["id","createdAt","mode"],"additionalProperties":true},{"type":"object","properties":{"id":{"type":"string"},"createdAt":{"type":"number"},"mode":{"type":"string","const":"external"},"label":{"type":"string"}},"required":["id","createdAt","mode"],"additionalProperties":true},{"type":"object","properties":{"id":{"type":"string"},"createdAt":{"type":"number"},"mode":{"type":"string","const":"continuable"},"label":{"type":"string"}},"required":["id","createdAt","mode","label"],"additionalProperties":true},{"type":"object","properties":{"id":{"type":"string"},"createdAt":{"type":"number"},"mode":{"type":"string","const":"unknown"},"label":{"type":"string"}},"required":["id","createdAt","mode"],"additionalProperties":true}]},"description":"Direct children in parent catalog event order, excluding fork-inherited facts."},"subagentTiming":{"type":"object","properties":{"settledMs":{"type":"number","description":"Milliseconds accumulated across completed turns after the child's own descriptor."},"active":{"type":"object","properties":{"since":{"type":"number","description":"Start of the open turn."},"through":{"type":"number","description":"Latest event time folded into this projection cut."}},"required":["since","through"],"additionalProperties":true,"description":"Same-cut bounds of the currently open turn, when one has not reached `turn/end`."},"lastTurnCompleted":{"type":"boolean","description":"Whether the latest closed turn after the child's own descriptor completed normally; absent while a turn is open or before one closes."}},"required":["settledMs"],"additionalProperties":true,"description":"Active-turn duration and latest closed-turn completion for a descriptor-backed subagent session."},"subagent":{"oneOf":[{"type":"null","const":null},{"type":"object","properties":{"mode":{"type":"string","const":"one-shot","description":"A terminal one-shot child."},"label":{"type":"string","description":"Optional durable creation label from the child's descriptor."},"seq":{"type":"number","description":"Seq of the `subagent/descriptor` event this identity was folded from. `session.isOwnSeq(seq)` proves the identity comes from the child's OWN log suffix — where a descriptor is immutable once appended — and not from a fork seed's replayed ancestor descriptor."}},"required":["mode","seq"],"additionalProperties":true},{"type":"object","properties":{"mode":{"type":"string","const":"continuable","description":"A resumable conversation."},"label":{"type":"string","description":"Durable creation label from the child's descriptor."},"seq":{"type":"number","description":"Seq of the folded descriptor event; see the one-shot arm for the own-suffix proof."}},"required":["mode","label","seq"],"additionalProperties":true}],"description":"Identity of a descriptor-backed subagent session. `null` ⟺ no valid descriptor (missing, malformed, or unrecognized-version — deliberately undistinguished). The sentinel is deliberately serializable: a value pushed over JSON transports must survive `JSON.stringify` losslessly, where an `undefined` field would be dropped and a stale identity would survive on the receiving side. The entry itself stays non-optional."},"tokenUsage":{"type":"object","properties":{"uncachedInputTokens":{"type":"number"},"outputTokens":{"type":"number"},"cacheReadTokens":{"type":"number"},"cacheWriteTokens":{"type":"number"}},"required":["uncachedInputTokens","outputTokens","cacheReadTokens","cacheWriteTokens"],"additionalProperties":true,"description":"Provider-reported usage accumulated across the complete durable log."},"contextPressure":{"type":"object","properties":{"pressureTokens":{"type":"number","description":"Provider-reported prompt size of the most recent request: uncached input plus cache reads and writes. Response output is excluded, so this does not grow as the current turn streams. Absent until a provider reports usage."},"projectedTokens":{"type":"number","description":"What the NEXT request's prompt would cost: {@link pressureTokens} plus the heuristic repricing of everything the surface gained or lost since that sample. Only the delta is estimated, so the figure stays anchored to the provider while still reacting the moment a compaction shadows a span — which `pressureTokens` alone cannot do, since compaction reports no usage of its own. Absent until a provider reports usage."},"contextWindow":{"type":"number","description":"Newest recorded route capacity; absent when no adapter advertised one."}},"required":[],"additionalProperties":true,"description":"Newest request pressure paired with the newest known route capacity."},"contextBreakdown":{"type":"object","properties":{"systemTokens":{"type":"number","description":"Heuristic tokens of the last nonempty surviving system prompt in surface order; 0 when none exists."},"toolsTokens":{"type":"number","description":"Heuristic tokens of the newest request envelope's tool schemas; 0 before any request."},"messageTokens":{"type":"number","description":"Heuristic tokens of every other visible surface node, including superseded system prompts."}},"required":["systemTokens","toolsTokens","messageTokens"],"additionalProperties":true,"description":"Heuristic system/tools/message composition of the next request."},"agentTeam":{"type":"object","properties":{"members":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"name":{"type":"string"},"role":{"type":"string","enum":["lead","teammate"]},"phase":{"type":"string","enum":["failed","provisioning","active"],"description":"Durable lifecycle; the Lead row is always `active`. Turn activity comes from Session status."},"error":{"type":"string"}},"required":["id","name","role","phase"],"additionalProperties":true}},"tasks":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"revision":{"type":"number"},"subject":{"type":"string"},"description":{"type":"string"},"status":{"type":"string","enum":["completed","pending","in_progress","deleted"]},"blockedBy":{"type":"array","items":{"type":"string"}},"writeScopes":{"type":"array","items":{"type":"string"}},"ownerName":{"type":"string"},"ready":{"type":"boolean"},"writeScopeWarnings":{"type":"array","items":{"type":"string"}}},"required":["id","revision","subject","description","status","blockedBy","writeScopes","ready","writeScopeWarnings"],"additionalProperties":true}},"failure":{"type":"string"}},"required":["members","tasks"],"additionalProperties":true,"description":"Durable roster and non-deleted task board of the Team rooted at the projected Session."},"userQuestions":{"type":"object","properties":{"active":{"type":"array","items":{"type":"object","properties":{"callId":{"type":"string"},"questions":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","description":"Stable caller-provided question id, echoed in the answer."},"question":{"type":"string","description":"The question to display."},"detail":{"type":"string","description":"Optional supporting detail rendered with the question but kept out of option labels."},"header":{"type":"string","description":"Optional short heading/group label."},"options":{"type":"array","items":{"type":"object","properties":{"label":{"type":"string","description":"User-facing label."},"description":{"type":"string","description":"Optional extra context rendered by capable UIs."}},"required":["label"],"additionalProperties":true},"description":"Optional choices the UI can render as a menu."},"multiSelect":{"type":"boolean","description":"Whether more than one option may be selected. Defaults to single-select."},"intent":{"type":"object","properties":{"kind":{"type":"string","const":"plan-review","description":"A plan submitted for review: `detail` is the plan markdown `ask()` requires, and the decision approves or declines it."},"approve":{"type":"string","description":"The option label that approves the plan; every other option declines it. Named rather than positional so no UI infers the verdict from option order. An `approve` naming no option of its own question is rejected at `ask()`."},"callId":{"type":"string","description":"Logged tool invocation whose arguments contain the reviewed plan."}},"required":["kind","approve"],"additionalProperties":true,"description":"Optional presentation intent for capable UIs; absent asks for the generic option list."}},"required":["id","question"],"additionalProperties":true}},"state":{"type":"string","enum":["open","continued"]}},"required":["callId","questions","state"],"additionalProperties":true},"description":"Calls that can still take an answer, in ask order."},"settled":{"type":"array","items":{"type":"object","properties":{"callId":{"type":"string","description":"The settled call."},"answers":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","description":"The answered question id."},"selected":{"type":"array","items":{"type":"string"},"description":"Selected option labels. May accompany custom text for a multi-select question."},"custom":{"type":"string","description":"Optional free-text \"Other\" answer."}},"required":["id","selected"],"additionalProperties":true},"description":"The recorded batch, one entry per question; empty when the late reply carried none."}},"required":["callId","answers"],"additionalProperties":true},"description":"Calls an answer settled, in settlement order."}},"required":["active","settled"],"additionalProperties":true,"description":"Timed questions that remain answerable in this Session, and the ones a late reply settled."},"goal":{"oneOf":[{"type":"null","const":null},{"type":"object","properties":{"goal":{"type":"object","properties":{"objective":{"type":"string","description":"Human-requested completion objective."},"phase":{"type":"string","enum":["active","paused","blocked","complete"],"description":"Durable lifecycle phase."},"blockedReason":{"type":"object","properties":{"code":{"type":"string","description":"Stable lower-kebab-case classification chosen by the blocking policy."},"message":{"type":"string","description":"Non-empty explanation shown to humans and models."}},"required":["code","message"],"additionalProperties":true,"description":"Present exactly while `phase` is `blocked`."},"maxGoalRounds":{"type":"number","description":"Total admitted goal-round cap."},"id":{"type":"string","description":"Stable goal identity."},"revision":{"type":"number","description":"Positive revision; every durable mutation increments it."}},"required":["objective","phase","maxGoalRounds","id","revision"],"additionalProperties":true,"description":"Current durable goal snapshot (the CAS ref for mutations rides on it)."},"roundsStarted":{"type":"number","description":"Highest admitted round number for this goal."},"createdAt":{"type":"number","description":"Epoch milliseconds of the create mutation."},"updatedAt":{"type":"number","description":"Epoch milliseconds of the latest mutation."}},"required":["goal","roundsStarted","createdAt","updatedAt"],"additionalProperties":true}],"description":"The session's current goal and admitted-round count, or `null` before the first create and after a clear tombstone. `goal/change` supplies the whole lifecycle value; matching admitted `user/message` events advance `roundsStarted`."},"plan":{"type":"object","properties":{"active":{"type":"boolean"},"pending":{"type":"boolean"}},"required":["active","pending"],"additionalProperties":true,"description":"Plan collaboration state folded from the plan command lifecycle and `plan/mode` events."}},"required":[],"additionalProperties":true,"description":"Provider-validated values; omitted keys are absent capabilities at this cut."}},"required":["asOfSeq","values"],"additionalProperties":true},"assistantStream":{"type":"object","properties":{"revision":{"type":"number"},"activeAttempt":{"type":"object","properties":{"attemptId":{"type":"string"},"startedAfterSeq":{"type":"number","description":"Last durable Session seq observed when this attempt started."},"turn":{"type":"number"},"step":{"type":"number"},"nextIndex":{"type":"number","description":"Dense position expected for the next live chunk frame."},"stream":{"type":"array","items":{},"description":"Compact detached stream accumulated at this opening revision."}},"required":["attemptId","startedAfterSeq","turn","step","nextIndex","stream"],"additionalProperties":true}},"required":["revision"],"additionalProperties":true}},"required":["type","header","cursor","records","hasMore","projections"],"additionalProperties":true},{"type":"object","properties":{"type":{"type":"string","const":"assistant-stream"},"frame":{"oneOf":[{"type":"object","properties":{"type":{"type":"string","const":"start"},"attemptId":{"type":"string"},"revision":{"type":"number"},"startedAfterSeq":{"type":"number"},"turn":{"type":"number"},"step":{"type":"number"}},"required":["type","attemptId","revision","startedAfterSeq","turn","step"],"additionalProperties":true},{"type":"object","properties":{"type":{"type":"string","const":"chunk"},"attemptId":{"type":"string"},"revision":{"type":"number"},"index":{"type":"number"},"time":{"type":"number"},"chunk":{}},"required":["type","attemptId","revision","index","time","chunk"],"additionalProperties":true},{"type":"object","properties":{"type":{"type":"string","const":"end"},"attemptId":{"type":"string"},"revision":{"type":"number"},"index":{"type":"number","description":"Number of chunk frames represented by this terminal marker."},"outcome":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"committed"},"eventType":{"type":"string","enum":["assistant/message","assistant/attempt"]},"seq":{"type":"number"}},"required":["kind","eventType","seq"],"additionalProperties":true},{"type":"object","properties":{"kind":{"type":"string","const":"abandoned"}},"required":["kind"],"additionalProperties":true}]}},"required":["type","attemptId","revision","index","outcome"],"additionalProperties":true}]}},"required":["type","frame"],"additionalProperties":true}]},
+        jsonSchemaError: 'typert tool schema: selected dictionaries require string keys and unconstrained JSON values',
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":537,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":607,"column":3},
     },
     'session/fork': {
       service: 'sessionController',
@@ -1615,7 +2113,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'the new Session identity.',
         jsonSchema: {"type":"object","properties":{"sessionId":{"type":"string"}},"required":["sessionId"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":443,"column":9},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":446,"column":9},
     },
     'session/initializeDefaultModel': {
       service: 'sessionController',
@@ -1630,7 +2128,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'after saving the first available model or retaining the existing default.',
         jsonSchemaError: 'typert tool schema: unsupported void value',
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":320,"column":9},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":323,"column":9},
     },
     'session/list': {
       service: 'sessionController',
@@ -1661,9 +2159,9 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionListValue',
         create: _deepseek_ai_dsh_api_session_controller_session_list_result$schema,
         description: 'visible Session summaries ordered by activity.',
-        jsonSchema: {"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"agentAvailable":{"type":"boolean","description":"Whether this Session currently owns a live Agent."},"formatStatus":{"type":"string","enum":["current","migration-required"],"description":"Current for attached Sessions; otherwise the persistence format status when reported."},"sessionId":{"type":"string"},"updatedAt":{"type":"number"},"running":{"type":"boolean"},"blank":{"type":"boolean"},"parentSessionId":{"type":"string"},"origin":{"type":"string","const":"subagent"},"cwd":{"type":"string"},"projections":{"type":"object","properties":{"kind":{"type":"string","enum":["cached","sequenced"],"description":"`sequenced`: the Host's live registry produced the block for an attached Session, so `asOfSeq` is comparable with baselines and frames of the same connection. `cached`: a header-only listing viewed the block from the persisted projection cache, so `asOfSeq` is the stored record's own watermark and must not be compared with the connected Session's values."},"asOfSeq":{"type":"number","description":"Watermark of the block in the sequence space named by `kind`."},"values":{"type":"object","properties":{"inbox":{"type":"object","properties":{"next-turn":{"type":"array","items":{}},"next-step":{"type":"array","items":{}}},"required":["next-turn","next-step"],"additionalProperties":true,"description":"Pending agent input reconstructed from durable inbox splices."},"workingDirectory":{"oneOf":[{"type":"null","const":null},{"type":"string"}],"description":"Recorded current directory for Session observations, or null when none is recorded."},"agentPreset":{"oneOf":[{"type":"null","const":null},{"type":"string"}],"description":"Preset the Session runs, or null when the deployment composes none."},"title":{"oneOf":[{"type":"null","const":null},{"type":"string"}],"description":"The session's current normalized title — the latest `session/title` event's text (last-wins), or `null` before the first title lands. A plain string: the shape the client list rows consume."},"todos":{"oneOf":[{"type":"null","const":null},{"type":"array","items":{"type":"object","properties":{"content":{"type":"string","description":"What this task is — a short imperative line shown in the UI."},"status":{"type":"string","enum":["completed","pending","in_progress"],"description":"Lifecycle state. `in_progress` marks a task being worked now; parallel work may mark several."}},"required":["content","status"],"additionalProperties":true}}],"description":"The agent's current whole todo list (the latest `todo/write` snapshot), or `null` before the first write. Whole-value rule: every `todo/write` carries the complete replacement list, so the fold is last-wins."},"sessionListMetadata":{"type":"object","properties":{"blank":{"type":"boolean","description":"Whether the folded prefix contains no turn."},"lastPromptAt":{"oneOf":[{"type":"null","const":null},{"type":"number"}],"description":"Latest human-authored prompt time in the folded prefix."}},"required":["blank","lastPromptAt"],"additionalProperties":true,"description":"Persisted facts used to summarize a Session without activating it."},"imageLimits":{"type":"object","properties":{"maxImageBytes":{"type":"number"},"maxImagesPerMessage":{"type":"number"},"maxMessageImageBytes":{"type":"number"},"maxImagePixels":{"type":"number"},"maxImageDimension":{"type":"number","description":"Maximum intrinsic width and maximum intrinsic height in pixels for one image."},"mediaTypes":{"type":"array","items":{"type":"string","enum":["image/png","image/jpeg","image/webp","image/gif"]}}},"required":["maxImageBytes","maxImagesPerMessage","maxMessageImageBytes","maxImagePixels","maxImageDimension","mediaTypes"],"additionalProperties":true,"description":"Image-intake limits enforced by the Session prompt endpoint."},"modelSelection":{"type":"object","properties":{"lastUsed":{"oneOf":[{"type":"null","const":null},{"type":"object","properties":{"provider":{"type":"string"},"model":{"type":"string"},"reasoningEffort":{"type":"string"}},"required":["provider","model"],"additionalProperties":true}],"description":"Selection consumed by the latest recorded model request."},"next":{"oneOf":[{"type":"null","const":null},{"type":"object","properties":{"provider":{"type":"string"},"model":{"type":"string"},"reasoningEffort":{"type":"string"}},"required":["provider","model"],"additionalProperties":true}],"description":"Selection the next request should use, falling back to {@link lastUsed}."}},"required":["lastUsed","next"],"additionalProperties":true,"description":"Durable model selection already used and selected for the next request."},"permissions":{"type":"object","properties":{"currentValue":{"type":"string","description":"The effective current value: a configured preset key, `auto`, or `custom`."}},"required":["currentValue"],"additionalProperties":true,"description":"The session's current permission, folded from the three whole-value knob events (`permission/preset`, `sandbox/mode`, `approval/policy`) over the composition defaults. Selectable options come from the process-level catalog Remote. Key absence means no permission service is composed — clients hide the control."},"subagentCatalog":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"id":{"type":"string"},"createdAt":{"type":"number"},"mode":{"type":"string","const":"one-shot"},"label":{"type":"string"}},"required":["id","createdAt","mode"],"additionalProperties":true},{"type":"object","properties":{"id":{"type":"string"},"createdAt":{"type":"number"},"mode":{"type":"string","const":"external"},"label":{"type":"string"}},"required":["id","createdAt","mode"],"additionalProperties":true},{"type":"object","properties":{"id":{"type":"string"},"createdAt":{"type":"number"},"mode":{"type":"string","const":"continuable"},"label":{"type":"string"}},"required":["id","createdAt","mode","label"],"additionalProperties":true},{"type":"object","properties":{"id":{"type":"string"},"createdAt":{"type":"number"},"mode":{"type":"string","const":"unknown"},"label":{"type":"string"}},"required":["id","createdAt","mode"],"additionalProperties":true}]},"description":"Direct children in parent catalog event order, excluding fork-inherited facts."},"subagentTiming":{"type":"object","properties":{"settledMs":{"type":"number","description":"Milliseconds accumulated across completed turns after the child's own descriptor."},"active":{"type":"object","properties":{"since":{"type":"number","description":"Start of the open turn."},"through":{"type":"number","description":"Latest event time folded into this projection cut."}},"required":["since","through"],"additionalProperties":true,"description":"Same-cut bounds of the currently open turn, when one has not reached `turn/end`."},"lastTurnCompleted":{"type":"boolean","description":"Whether the latest closed turn after the child's own descriptor completed normally; absent while a turn is open or before one closes."}},"required":["settledMs"],"additionalProperties":true,"description":"Active-turn duration and latest closed-turn completion for a descriptor-backed subagent session."},"subagent":{"oneOf":[{"type":"null","const":null},{"type":"object","properties":{"mode":{"type":"string","const":"one-shot","description":"A terminal one-shot child."},"label":{"type":"string","description":"Optional durable creation label from the child's descriptor."},"seq":{"type":"number","description":"Seq of the `subagent/descriptor` event this identity was folded from. `session.isOwnSeq(seq)` proves the identity comes from the child's OWN log suffix — where a descriptor is immutable once appended — and not from a fork seed's replayed ancestor descriptor."}},"required":["mode","seq"],"additionalProperties":true},{"type":"object","properties":{"mode":{"type":"string","const":"continuable","description":"A resumable conversation."},"label":{"type":"string","description":"Durable creation label from the child's descriptor."},"seq":{"type":"number","description":"Seq of the folded descriptor event; see the one-shot arm for the own-suffix proof."}},"required":["mode","label","seq"],"additionalProperties":true}],"description":"Identity of a descriptor-backed subagent session. `null` ⟺ no valid descriptor (missing, malformed, or unrecognized-version — deliberately undistinguished). The sentinel is deliberately serializable: a value pushed over JSON transports must survive `JSON.stringify` losslessly, where an `undefined` field would be dropped and a stale identity would survive on the receiving side. The entry itself stays non-optional."},"tokenUsage":{"type":"object","properties":{"uncachedInputTokens":{"type":"number"},"outputTokens":{"type":"number"},"cacheReadTokens":{"type":"number"},"cacheWriteTokens":{"type":"number"}},"required":["uncachedInputTokens","outputTokens","cacheReadTokens","cacheWriteTokens"],"additionalProperties":true,"description":"Provider-reported usage accumulated across the complete durable log."},"contextPressure":{"type":"object","properties":{"pressureTokens":{"type":"number","description":"Provider-reported prompt size of the most recent request: uncached input plus cache reads and writes. Response output is excluded, so this does not grow as the current turn streams. Absent until a provider reports usage."},"projectedTokens":{"type":"number","description":"What the NEXT request's prompt would cost: {@link pressureTokens} plus the heuristic repricing of everything the surface gained or lost since that sample. Only the delta is estimated, so the figure stays anchored to the provider while still reacting the moment a compaction shadows a span — which `pressureTokens` alone cannot do, since compaction reports no usage of its own. Absent until a provider reports usage."},"contextWindow":{"type":"number","description":"Newest recorded route capacity; absent when no adapter advertised one."}},"required":[],"additionalProperties":true,"description":"Newest request pressure paired with the newest known route capacity."},"contextBreakdown":{"type":"object","properties":{"systemTokens":{"type":"number","description":"Heuristic tokens of the last nonempty surviving system prompt in surface order; 0 when none exists."},"toolsTokens":{"type":"number","description":"Heuristic tokens of the newest request envelope's tool schemas; 0 before any request."},"messageTokens":{"type":"number","description":"Heuristic tokens of every other visible surface node, including superseded system prompts."}},"required":["systemTokens","toolsTokens","messageTokens"],"additionalProperties":true,"description":"Heuristic system/tools/message composition of the next request."},"agentTeam":{"type":"object","properties":{"members":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"name":{"type":"string"},"role":{"type":"string","enum":["lead","teammate"]},"phase":{"type":"string","enum":["failed","provisioning","active"],"description":"Durable lifecycle; the Lead row is always `active`. Turn activity comes from Session status."},"error":{"type":"string"}},"required":["id","name","role","phase"],"additionalProperties":true}},"tasks":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"revision":{"type":"number"},"subject":{"type":"string"},"description":{"type":"string"},"status":{"type":"string","enum":["completed","pending","in_progress","deleted"]},"blockedBy":{"type":"array","items":{"type":"string"}},"writeScopes":{"type":"array","items":{"type":"string"}},"ownerName":{"type":"string"},"ready":{"type":"boolean"},"writeScopeWarnings":{"type":"array","items":{"type":"string"}}},"required":["id","revision","subject","description","status","blockedBy","writeScopes","ready","writeScopeWarnings"],"additionalProperties":true}},"failure":{"type":"string"}},"required":["members","tasks"],"additionalProperties":true,"description":"Durable roster and non-deleted task board of the Team rooted at the projected Session."},"userQuestions":{"type":"object","properties":{"active":{"type":"array","items":{"type":"object","properties":{"callId":{"type":"string"},"questions":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","description":"Stable caller-provided question id, echoed in the answer."},"question":{"type":"string","description":"The question to display."},"detail":{"type":"string","description":"Optional supporting detail rendered with the question but kept out of option labels."},"header":{"type":"string","description":"Optional short heading/group label."},"options":{"type":"array","items":{"type":"object","properties":{"label":{"type":"string","description":"User-facing label."},"description":{"type":"string","description":"Optional extra context rendered by capable UIs."}},"required":["label"],"additionalProperties":true},"description":"Optional choices the UI can render as a menu."},"multiSelect":{"type":"boolean","description":"Whether more than one option may be selected. Defaults to single-select."},"intent":{"type":"object","properties":{"kind":{"type":"string","const":"plan-review","description":"A plan submitted for review: `detail` is the plan markdown `ask()` requires, and the decision approves or declines it."},"approve":{"type":"string","description":"The option label that approves the plan; every other option declines it. Named rather than positional so no UI infers the verdict from option order. An `approve` naming no option of its own question is rejected at `ask()`."},"callId":{"type":"string","description":"Logged tool invocation whose arguments contain the reviewed plan."}},"required":["kind","approve"],"additionalProperties":true,"description":"Optional presentation intent for capable UIs; absent asks for the generic option list."}},"required":["id","question"],"additionalProperties":true}},"state":{"type":"string","enum":["open","continued"]}},"required":["callId","questions","state"],"additionalProperties":true},"description":"Calls that can still take an answer, in ask order."},"settled":{"type":"array","items":{"type":"object","properties":{"callId":{"type":"string","description":"The settled call."},"answers":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","description":"The answered question id."},"selected":{"type":"array","items":{"type":"string"},"description":"Selected option labels. May accompany custom text for a multi-select question."},"custom":{"type":"string","description":"Optional free-text \"Other\" answer."}},"required":["id","selected"],"additionalProperties":true},"description":"The recorded batch, one entry per question; empty when the late reply carried none."}},"required":["callId","answers"],"additionalProperties":true},"description":"Calls an answer settled, in settlement order."}},"required":["active","settled"],"additionalProperties":true,"description":"Timed questions that remain answerable in this Session, and the ones a late reply settled."},"goal":{"oneOf":[{"type":"null","const":null},{"type":"object","properties":{"goal":{"type":"object","properties":{"objective":{"type":"string","description":"Human-requested completion objective."},"phase":{"type":"string","enum":["active","paused","blocked","complete"],"description":"Durable lifecycle phase."},"blockedReason":{"type":"object","properties":{"code":{"type":"string","description":"Stable lower-kebab-case classification chosen by the blocking policy."},"message":{"type":"string","description":"Non-empty explanation shown to humans and models."}},"required":["code","message"],"additionalProperties":true,"description":"Present exactly while `phase` is `blocked`."},"maxGoalRounds":{"type":"number","description":"Total admitted goal-round cap."},"id":{"type":"string","description":"Stable goal identity."},"revision":{"type":"number","description":"Positive revision; every durable mutation increments it."}},"required":["objective","phase","maxGoalRounds","id","revision"],"additionalProperties":true,"description":"Current durable goal snapshot (the CAS ref for mutations rides on it)."},"roundsStarted":{"type":"number","description":"Highest admitted round number for this goal."},"createdAt":{"type":"number","description":"Epoch milliseconds of the create mutation."},"updatedAt":{"type":"number","description":"Epoch milliseconds of the latest mutation."}},"required":["goal","roundsStarted","createdAt","updatedAt"],"additionalProperties":true}],"description":"The session's current goal and admitted-round count, or `null` before the first create and after a clear tombstone. `goal/change` supplies the whole lifecycle value; matching admitted `user/message` events advance `roundsStarted`."},"plan":{"type":"object","properties":{"active":{"type":"boolean"},"pending":{"type":"boolean"}},"required":["active","pending"],"additionalProperties":true,"description":"Plan collaboration state folded from the plan command lifecycle and `plan/mode` events."}},"required":[],"additionalProperties":true,"description":"Provider-validated values present in the block; omitted keys remain unknown."}},"required":["kind","asOfSeq","values"],"additionalProperties":true}},"required":["agentAvailable","sessionId","updatedAt","running","blank"],"additionalProperties":true}}},"required":["items"],"additionalProperties":true},
+        jsonSchemaError: 'typert tool schema: selected dictionaries require string keys and unconstrained JSON values',
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":276,"column":9},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":279,"column":9},
     },
     'session/modelCatalog': {
       service: 'sessionController',
@@ -1676,9 +2174,111 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#ModelCatalog',
         create: _deepseek_ai_dsh_api_session_controller_session_modelCatalog_result$schema,
         description: 'provider-grouped models, the deployment default, and isolated provider failures.',
-        jsonSchema: {"type":"object","properties":{"default":{"type":"object","properties":{"provider":{"type":"string"},"model":{"type":"string"},"reasoningEffort":{"type":"string"}},"required":["provider","model"],"additionalProperties":true},"routableProviders":{"type":"array","items":{"type":"string"},"description":"Provider routes with at least one currently available catalog model."},"groups":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"name":{"type":"string"},"models":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"name":{"type":"string"},"description":{"type":"string"},"reasoning":{"type":"object","properties":{"efforts":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"name":{"type":"string"},"description":{"type":"string"}},"required":["id","name"],"additionalProperties":true}},"defaultEffort":{"type":"string"}},"required":["efforts"],"additionalProperties":true}},"required":["id","name"],"additionalProperties":true}}},"required":["id","name","models"],"additionalProperties":true}},"failures":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"name":{"type":"string"},"message":{"type":"string"}},"required":["id","name","message"],"additionalProperties":true}}},"required":["default","routableProviders","groups","failures"],"additionalProperties":true},
+        jsonSchemaError: 'typert tool schema: selected dictionaries require string keys and unconstrained JSON values',
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":338,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":341,"column":3},
+    },
+    'session/observeEvent': {
+      service: 'sessionController',
+      description: 'Subscribe to Session events without reading a snapshot.',
+      mode: 'stream',
+      invocation: { kind: 'direct' },
+      parameters: [
+        {
+          name: 'request',
+          description: 'Session address.',
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionObserveEventRequest',
+            create: _deepseek_ai_dsh_api_session_controller_session_observeEvent_parameter_0$schema,
+            jsonSchema: {"type":"object","properties":{"address":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"session"},"sessionId":{"type":"string"}},"required":["kind","sessionId"],"additionalProperties":true},{"type":"object","properties":{"kind":{"type":"string","const":"subagent"},"parentSessionId":{"type":"string"},"childSessionId":{"type":"string"},"mode":{"type":"string","enum":["one-shot","continuable","unknown"]}},"required":["kind","parentSessionId","childSessionId","mode"],"additionalProperties":true}]}},"required":["address"],"additionalProperties":true},
+          },
+          strictCodec: {
+            mode: 'strict',
+            typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionObserveEventRequest',
+            create: _deepseek_ai_dsh_api_session_controller_session_observeEvent_parameter_0_strict$schema,
+            jsonSchema: {"type":"object","properties":{"address":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"session"},"sessionId":{"type":"string"}},"required":["kind","sessionId"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"subagent"},"parentSessionId":{"type":"string"},"childSessionId":{"type":"string"},"mode":{"type":"string","enum":["one-shot","continuable","unknown"]}},"required":["kind","parentSessionId","childSessionId","mode"],"additionalProperties":false}]}},"required":["address"],"additionalProperties":false},
+          },
+        },
+      ],
+      cancellation: { parameter: 'signal' },
+      result: {
+        mode: 'strict',
+        typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionEventFrame',
+        create: _deepseek_ai_dsh_api_session_controller_session_observeEvent_result$schema,
+        description: 'readiness and subsequent events, without a snapshot.',
+        jsonSchema: {"oneOf":[{"type":"object","properties":{"type":{"type":"string","const":"event"},"event":{"type":"object","properties":{"type":{"type":"string"},"seq":{"type":"number"},"time":{"type":"number"},"data":{},"ignorable":{"type":"boolean","const":true},"sourceEventSeqs":{"description":"Earlier sources on current surface events; opaque JSON on unknown ignorable events."},"surfaceOp":{"description":"Canonical placement on current surface events; opaque JSON on unknown ignorable events."}},"required":["type","seq","time","data"],"additionalProperties":true}},"required":["type","event"],"additionalProperties":true},{"type":"object","properties":{"type":{"type":"string","const":"ready"}},"required":["type"],"additionalProperties":true}]},
+      },
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":551,"column":3},
+    },
+    'session/observeProjections': {
+      service: 'sessionController',
+      description: 'Subscribe to Session projection changes.',
+      mode: 'stream',
+      invocation: { kind: 'direct' },
+      parameters: [
+        {
+          name: 'request',
+          description: 'target Session.',
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionProjectionsRequest',
+            create: _deepseek_ai_dsh_api_session_controller_session_observeProjections_parameter_0$schema,
+            jsonSchema: {"type":"object","properties":{"sessionId":{"type":"string"}},"required":["sessionId"],"additionalProperties":true},
+          },
+          strictCodec: {
+            mode: 'strict',
+            typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionProjectionsRequest',
+            create: _deepseek_ai_dsh_api_session_controller_session_observeProjections_parameter_0_strict$schema,
+            jsonSchema: {"type":"object","properties":{"sessionId":{"type":"string"}},"required":["sessionId"],"additionalProperties":false},
+          },
+        },
+      ],
+      cancellation: { parameter: 'signal' },
+      result: {
+        mode: 'strict',
+        typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionProjectionFrame',
+        create: _deepseek_ai_dsh_api_session_controller_session_observeProjections_result$schema,
+        description: 'readiness followed by one projection change frame per committed event.',
+        jsonSchema: {"oneOf":[{"type":"object","properties":{"type":{"type":"string","const":"ready"}},"required":["type"],"additionalProperties":true},{"type":"object","properties":{"type":{"type":"string","const":"projection"},"seq":{"type":"number","description":"Seq of the committed event that caused every listed change."},"changes":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string"},"val":{}},"required":["key","val"],"additionalProperties":true},"description":"One entry per client-visible key whose view the event changed, in registration order without duplicate keys, with the key's new value as `val`. A key absent from `changes` is unchanged; unlike a baseline, absence does not mean an absent capability."}},"required":["type","seq","changes"],"additionalProperties":true}]},
+      },
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":562,"column":3},
+    },
+    'session/observeState': {
+      service: 'sessionController',
+      description: 'Subscribe to complete Session state replacements.',
+      mode: 'stream',
+      invocation: { kind: 'direct' },
+      parameters: [
+        {
+          name: 'request',
+          description: 'target Session.',
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionStateRequest',
+            create: _deepseek_ai_dsh_api_session_controller_session_observeState_parameter_0$schema,
+            jsonSchema: {"type":"object","properties":{"sessionId":{"type":"string"}},"required":["sessionId"],"additionalProperties":true},
+          },
+          strictCodec: {
+            mode: 'strict',
+            typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionStateRequest',
+            create: _deepseek_ai_dsh_api_session_controller_session_observeState_parameter_0_strict$schema,
+            jsonSchema: {"type":"object","properties":{"sessionId":{"type":"string"}},"required":["sessionId"],"additionalProperties":false},
+          },
+        },
+      ],
+      cancellation: { parameter: 'signal' },
+      result: {
+        mode: 'strict',
+        typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionState',
+        create: _deepseek_ai_dsh_api_session_controller_session_observeState_result$schema,
+        description: 'complete passive state replacements.',
+        jsonSchema: {"type":"object","properties":{"cursor":{"type":"number"},"active":{"type":"boolean"},"running":{"type":"boolean"},"queue":{"oneOf":[{"type":"null","const":null},{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"placement":{"type":"string","enum":["queued","steering","context"]},"rpcId":{"type":"string"},"content":{"type":"array","items":{}}},"required":["id","placement","content"],"additionalProperties":true}}]},"pendingInput":{"type":"array","items":{"type":"string","enum":["approval","question","other"]},"description":"Pending Remote requests sampled when this state was read. A pending change alone does not trigger `observeState`; `wait` refreshes on its own interval."}},"required":["cursor","active","running","queue","pendingInput"],"additionalProperties":true},
+      },
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":584,"column":3},
     },
     'session/openWorkspacePath': {
       service: 'sessionController',
@@ -1711,7 +2311,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'confirmation after the native opener accepts the path.',
         jsonSchema: {"type":"object","properties":{"opened":{"type":"boolean","const":true}},"required":["opened"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":368,"column":9},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":371,"column":9},
     },
     'session/page': {
       service: 'sessionController',
@@ -1720,31 +2320,31 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
       parameters: [
         {
           name: 'request',
-          description: 'durable address, backward cursor, and page budget.',
+          description: 'durable address, optional fixed cut, backward cursor, and page budget.',
           source: 'json',
           codec: {
             mode: 'strict',
             typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionPageRequest',
             create: _deepseek_ai_dsh_api_session_controller_session_page_parameter_0$schema,
-            jsonSchema: {"type":"object","properties":{"address":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"session"},"sessionId":{"type":"string"}},"required":["kind","sessionId"],"additionalProperties":true},{"type":"object","properties":{"kind":{"type":"string","const":"subagent"},"parentSessionId":{"type":"string"},"childSessionId":{"type":"string"},"mode":{"type":"string","enum":["one-shot","continuable","unknown"]}},"required":["kind","parentSessionId","childSessionId","mode"],"additionalProperties":true}]},"throughSeq":{"type":"number","description":"Inclusive log cut obtained from the corresponding follow opening frame."},"beforeSeq":{"type":"number"},"maxMessages":{"type":"number"},"turnWindow":{"type":"object","properties":{"minMessages":{"type":"number","description":"Minimum append-origin user/assistant messages; must not exceed maxMessages."},"minTurns":{"type":"number","description":"Minimum Turn starts crossed, including the partial Turn at beforeSeq."}},"required":["minMessages","minTurns"],"additionalProperties":true,"description":"Stop at a Turn start after both minima, unless maxMessages or history exhaustion wins."}},"required":["address","throughSeq"],"additionalProperties":true},
+            jsonSchema: {"type":"object","properties":{"address":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"session"},"sessionId":{"type":"string"}},"required":["kind","sessionId"],"additionalProperties":true},{"type":"object","properties":{"kind":{"type":"string","const":"subagent"},"parentSessionId":{"type":"string"},"childSessionId":{"type":"string"},"mode":{"type":"string","enum":["one-shot","continuable","unknown"]}},"required":["kind","parentSessionId","childSessionId","mode"],"additionalProperties":true}]},"throughSeq":{"type":"number","description":"Inclusive log cut; omission selects the observed log end. A follow opening reports the cut it covered so a caller can pin the same point."},"beforeSeq":{"type":"number"},"maxMessages":{"type":"number"},"turnWindow":{"type":"object","properties":{"minMessages":{"type":"number","description":"Minimum append-origin user/assistant messages; must not exceed maxMessages."},"minTurns":{"type":"number","description":"Minimum Turn starts crossed, including the partial Turn at beforeSeq."}},"required":["minMessages","minTurns"],"additionalProperties":true,"description":"Stop at a Turn start after both minima, unless maxMessages or history exhaustion wins."}},"required":["address"],"additionalProperties":true},
           },
           strictCodec: {
             mode: 'strict',
             typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionPageRequest',
             create: _deepseek_ai_dsh_api_session_controller_session_page_parameter_0_strict$schema,
-            jsonSchema: {"type":"object","properties":{"address":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"session"},"sessionId":{"type":"string"}},"required":["kind","sessionId"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"subagent"},"parentSessionId":{"type":"string"},"childSessionId":{"type":"string"},"mode":{"type":"string","enum":["one-shot","continuable","unknown"]}},"required":["kind","parentSessionId","childSessionId","mode"],"additionalProperties":false}]},"throughSeq":{"type":"number","description":"Inclusive log cut obtained from the corresponding follow opening frame."},"beforeSeq":{"type":"number"},"maxMessages":{"type":"number"},"turnWindow":{"type":"object","properties":{"minMessages":{"type":"number","description":"Minimum append-origin user/assistant messages; must not exceed maxMessages."},"minTurns":{"type":"number","description":"Minimum Turn starts crossed, including the partial Turn at beforeSeq."}},"required":["minMessages","minTurns"],"additionalProperties":false,"description":"Stop at a Turn start after both minima, unless maxMessages or history exhaustion wins."}},"required":["address","throughSeq"],"additionalProperties":false},
+            jsonSchema: {"type":"object","properties":{"address":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"session"},"sessionId":{"type":"string"}},"required":["kind","sessionId"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"subagent"},"parentSessionId":{"type":"string"},"childSessionId":{"type":"string"},"mode":{"type":"string","enum":["one-shot","continuable","unknown"]}},"required":["kind","parentSessionId","childSessionId","mode"],"additionalProperties":false}]},"throughSeq":{"type":"number","description":"Inclusive log cut; omission selects the observed log end. A follow opening reports the cut it covered so a caller can pin the same point."},"beforeSeq":{"type":"number"},"maxMessages":{"type":"number"},"turnWindow":{"type":"object","properties":{"minMessages":{"type":"number","description":"Minimum append-origin user/assistant messages; must not exceed maxMessages."},"minTurns":{"type":"number","description":"Minimum Turn starts crossed, including the partial Turn at beforeSeq."}},"required":["minMessages","minTurns"],"additionalProperties":false,"description":"Stop at a Turn start after both minima, unless maxMessages or history exhaustion wins."}},"required":["address"],"additionalProperties":false},
           },
         },
       ],
       cancellation: { parameter: 'signal' },
       result: {
         mode: 'strict',
-        typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionPage',
+        typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionEventsPage',
         create: _deepseek_ai_dsh_api_session_controller_session_page_result$schema,
-        description: 'one chronological page.',
-        jsonSchema: {"type":"object","properties":{"records":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string","const":"event"},"event":{"type":"object","properties":{"type":{"type":"string"},"seq":{"type":"number"},"time":{"type":"number"},"data":{},"ignorable":{"type":"boolean","const":true},"sourceEventSeqs":{"description":"Earlier sources on current surface events; opaque JSON on unknown ignorable events."},"surfaceOp":{"description":"Canonical placement on current surface events; opaque JSON on unknown ignorable events."}},"required":["type","seq","time","data"],"additionalProperties":true}},"required":["type","event"],"additionalProperties":true}},"hasMore":{"type":"boolean"}},"required":["records","hasMore"],"additionalProperties":true},
+        description: 'one chronological page with its inclusive cursor; an omitted `throughSeq` selects the observed log end.',
+        jsonSchema: {"type":"object","properties":{"cursor":{"type":"number"},"records":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string","const":"event"},"event":{"type":"object","properties":{"type":{"type":"string"},"seq":{"type":"number"},"time":{"type":"number"},"data":{},"ignorable":{"type":"boolean","const":true},"sourceEventSeqs":{"description":"Earlier sources on current surface events; opaque JSON on unknown ignorable events."},"surfaceOp":{"description":"Canonical placement on current surface events; opaque JSON on unknown ignorable events."}},"required":["type","seq","time","data"],"additionalProperties":true}},"required":["type","event"],"additionalProperties":true}},"hasMore":{"type":"boolean"}},"required":["cursor","records","hasMore"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":525,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":529,"column":3},
     },
     'session/projections': {
       service: 'sessionController',
@@ -1775,9 +2375,9 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionProjectionsValue',
         create: _deepseek_ai_dsh_api_session_controller_session_projections_result$schema,
         description: 'a sequenced baseline, cached hints when migration is deferred, or null when absent.',
-        jsonSchema: {"oneOf":[{"type":"null","const":null},{"type":"object","properties":{"asOfSeq":{"type":"number"},"values":{"type":"object","properties":{"inbox":{"type":"object","properties":{"next-turn":{"type":"array","items":{}},"next-step":{"type":"array","items":{}}},"required":["next-turn","next-step"],"additionalProperties":true,"description":"Pending agent input reconstructed from durable inbox splices."},"workingDirectory":{"oneOf":[{"type":"null","const":null},{"type":"string"}],"description":"Recorded current directory for Session observations, or null when none is recorded."},"agentPreset":{"oneOf":[{"type":"null","const":null},{"type":"string"}],"description":"Preset the Session runs, or null when the deployment composes none."},"title":{"oneOf":[{"type":"null","const":null},{"type":"string"}],"description":"The session's current normalized title — the latest `session/title` event's text (last-wins), or `null` before the first title lands. A plain string: the shape the client list rows consume."},"todos":{"oneOf":[{"type":"null","const":null},{"type":"array","items":{"type":"object","properties":{"content":{"type":"string","description":"What this task is — a short imperative line shown in the UI."},"status":{"type":"string","enum":["completed","pending","in_progress"],"description":"Lifecycle state. `in_progress` marks a task being worked now; parallel work may mark several."}},"required":["content","status"],"additionalProperties":true}}],"description":"The agent's current whole todo list (the latest `todo/write` snapshot), or `null` before the first write. Whole-value rule: every `todo/write` carries the complete replacement list, so the fold is last-wins."},"sessionListMetadata":{"type":"object","properties":{"blank":{"type":"boolean","description":"Whether the folded prefix contains no turn."},"lastPromptAt":{"oneOf":[{"type":"null","const":null},{"type":"number"}],"description":"Latest human-authored prompt time in the folded prefix."}},"required":["blank","lastPromptAt"],"additionalProperties":true,"description":"Persisted facts used to summarize a Session without activating it."},"imageLimits":{"type":"object","properties":{"maxImageBytes":{"type":"number"},"maxImagesPerMessage":{"type":"number"},"maxMessageImageBytes":{"type":"number"},"maxImagePixels":{"type":"number"},"maxImageDimension":{"type":"number","description":"Maximum intrinsic width and maximum intrinsic height in pixels for one image."},"mediaTypes":{"type":"array","items":{"type":"string","enum":["image/png","image/jpeg","image/webp","image/gif"]}}},"required":["maxImageBytes","maxImagesPerMessage","maxMessageImageBytes","maxImagePixels","maxImageDimension","mediaTypes"],"additionalProperties":true,"description":"Image-intake limits enforced by the Session prompt endpoint."},"modelSelection":{"type":"object","properties":{"lastUsed":{"oneOf":[{"type":"null","const":null},{"type":"object","properties":{"provider":{"type":"string"},"model":{"type":"string"},"reasoningEffort":{"type":"string"}},"required":["provider","model"],"additionalProperties":true}],"description":"Selection consumed by the latest recorded model request."},"next":{"oneOf":[{"type":"null","const":null},{"type":"object","properties":{"provider":{"type":"string"},"model":{"type":"string"},"reasoningEffort":{"type":"string"}},"required":["provider","model"],"additionalProperties":true}],"description":"Selection the next request should use, falling back to {@link lastUsed}."}},"required":["lastUsed","next"],"additionalProperties":true,"description":"Durable model selection already used and selected for the next request."},"permissions":{"type":"object","properties":{"currentValue":{"type":"string","description":"The effective current value: a configured preset key, `auto`, or `custom`."}},"required":["currentValue"],"additionalProperties":true,"description":"The session's current permission, folded from the three whole-value knob events (`permission/preset`, `sandbox/mode`, `approval/policy`) over the composition defaults. Selectable options come from the process-level catalog Remote. Key absence means no permission service is composed — clients hide the control."},"subagentCatalog":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"id":{"type":"string"},"createdAt":{"type":"number"},"mode":{"type":"string","const":"one-shot"},"label":{"type":"string"}},"required":["id","createdAt","mode"],"additionalProperties":true},{"type":"object","properties":{"id":{"type":"string"},"createdAt":{"type":"number"},"mode":{"type":"string","const":"external"},"label":{"type":"string"}},"required":["id","createdAt","mode"],"additionalProperties":true},{"type":"object","properties":{"id":{"type":"string"},"createdAt":{"type":"number"},"mode":{"type":"string","const":"continuable"},"label":{"type":"string"}},"required":["id","createdAt","mode","label"],"additionalProperties":true},{"type":"object","properties":{"id":{"type":"string"},"createdAt":{"type":"number"},"mode":{"type":"string","const":"unknown"},"label":{"type":"string"}},"required":["id","createdAt","mode"],"additionalProperties":true}]},"description":"Direct children in parent catalog event order, excluding fork-inherited facts."},"subagentTiming":{"type":"object","properties":{"settledMs":{"type":"number","description":"Milliseconds accumulated across completed turns after the child's own descriptor."},"active":{"type":"object","properties":{"since":{"type":"number","description":"Start of the open turn."},"through":{"type":"number","description":"Latest event time folded into this projection cut."}},"required":["since","through"],"additionalProperties":true,"description":"Same-cut bounds of the currently open turn, when one has not reached `turn/end`."},"lastTurnCompleted":{"type":"boolean","description":"Whether the latest closed turn after the child's own descriptor completed normally; absent while a turn is open or before one closes."}},"required":["settledMs"],"additionalProperties":true,"description":"Active-turn duration and latest closed-turn completion for a descriptor-backed subagent session."},"subagent":{"oneOf":[{"type":"null","const":null},{"type":"object","properties":{"mode":{"type":"string","const":"one-shot","description":"A terminal one-shot child."},"label":{"type":"string","description":"Optional durable creation label from the child's descriptor."},"seq":{"type":"number","description":"Seq of the `subagent/descriptor` event this identity was folded from. `session.isOwnSeq(seq)` proves the identity comes from the child's OWN log suffix — where a descriptor is immutable once appended — and not from a fork seed's replayed ancestor descriptor."}},"required":["mode","seq"],"additionalProperties":true},{"type":"object","properties":{"mode":{"type":"string","const":"continuable","description":"A resumable conversation."},"label":{"type":"string","description":"Durable creation label from the child's descriptor."},"seq":{"type":"number","description":"Seq of the folded descriptor event; see the one-shot arm for the own-suffix proof."}},"required":["mode","label","seq"],"additionalProperties":true}],"description":"Identity of a descriptor-backed subagent session. `null` ⟺ no valid descriptor (missing, malformed, or unrecognized-version — deliberately undistinguished). The sentinel is deliberately serializable: a value pushed over JSON transports must survive `JSON.stringify` losslessly, where an `undefined` field would be dropped and a stale identity would survive on the receiving side. The entry itself stays non-optional."},"tokenUsage":{"type":"object","properties":{"uncachedInputTokens":{"type":"number"},"outputTokens":{"type":"number"},"cacheReadTokens":{"type":"number"},"cacheWriteTokens":{"type":"number"}},"required":["uncachedInputTokens","outputTokens","cacheReadTokens","cacheWriteTokens"],"additionalProperties":true,"description":"Provider-reported usage accumulated across the complete durable log."},"contextPressure":{"type":"object","properties":{"pressureTokens":{"type":"number","description":"Provider-reported prompt size of the most recent request: uncached input plus cache reads and writes. Response output is excluded, so this does not grow as the current turn streams. Absent until a provider reports usage."},"projectedTokens":{"type":"number","description":"What the NEXT request's prompt would cost: {@link pressureTokens} plus the heuristic repricing of everything the surface gained or lost since that sample. Only the delta is estimated, so the figure stays anchored to the provider while still reacting the moment a compaction shadows a span — which `pressureTokens` alone cannot do, since compaction reports no usage of its own. Absent until a provider reports usage."},"contextWindow":{"type":"number","description":"Newest recorded route capacity; absent when no adapter advertised one."}},"required":[],"additionalProperties":true,"description":"Newest request pressure paired with the newest known route capacity."},"contextBreakdown":{"type":"object","properties":{"systemTokens":{"type":"number","description":"Heuristic tokens of the last nonempty surviving system prompt in surface order; 0 when none exists."},"toolsTokens":{"type":"number","description":"Heuristic tokens of the newest request envelope's tool schemas; 0 before any request."},"messageTokens":{"type":"number","description":"Heuristic tokens of every other visible surface node, including superseded system prompts."}},"required":["systemTokens","toolsTokens","messageTokens"],"additionalProperties":true,"description":"Heuristic system/tools/message composition of the next request."},"agentTeam":{"type":"object","properties":{"members":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"name":{"type":"string"},"role":{"type":"string","enum":["lead","teammate"]},"phase":{"type":"string","enum":["failed","provisioning","active"],"description":"Durable lifecycle; the Lead row is always `active`. Turn activity comes from Session status."},"error":{"type":"string"}},"required":["id","name","role","phase"],"additionalProperties":true}},"tasks":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"revision":{"type":"number"},"subject":{"type":"string"},"description":{"type":"string"},"status":{"type":"string","enum":["completed","pending","in_progress","deleted"]},"blockedBy":{"type":"array","items":{"type":"string"}},"writeScopes":{"type":"array","items":{"type":"string"}},"ownerName":{"type":"string"},"ready":{"type":"boolean"},"writeScopeWarnings":{"type":"array","items":{"type":"string"}}},"required":["id","revision","subject","description","status","blockedBy","writeScopes","ready","writeScopeWarnings"],"additionalProperties":true}},"failure":{"type":"string"}},"required":["members","tasks"],"additionalProperties":true,"description":"Durable roster and non-deleted task board of the Team rooted at the projected Session."},"userQuestions":{"type":"object","properties":{"active":{"type":"array","items":{"type":"object","properties":{"callId":{"type":"string"},"questions":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","description":"Stable caller-provided question id, echoed in the answer."},"question":{"type":"string","description":"The question to display."},"detail":{"type":"string","description":"Optional supporting detail rendered with the question but kept out of option labels."},"header":{"type":"string","description":"Optional short heading/group label."},"options":{"type":"array","items":{"type":"object","properties":{"label":{"type":"string","description":"User-facing label."},"description":{"type":"string","description":"Optional extra context rendered by capable UIs."}},"required":["label"],"additionalProperties":true},"description":"Optional choices the UI can render as a menu."},"multiSelect":{"type":"boolean","description":"Whether more than one option may be selected. Defaults to single-select."},"intent":{"type":"object","properties":{"kind":{"type":"string","const":"plan-review","description":"A plan submitted for review: `detail` is the plan markdown `ask()` requires, and the decision approves or declines it."},"approve":{"type":"string","description":"The option label that approves the plan; every other option declines it. Named rather than positional so no UI infers the verdict from option order. An `approve` naming no option of its own question is rejected at `ask()`."},"callId":{"type":"string","description":"Logged tool invocation whose arguments contain the reviewed plan."}},"required":["kind","approve"],"additionalProperties":true,"description":"Optional presentation intent for capable UIs; absent asks for the generic option list."}},"required":["id","question"],"additionalProperties":true}},"state":{"type":"string","enum":["open","continued"]}},"required":["callId","questions","state"],"additionalProperties":true},"description":"Calls that can still take an answer, in ask order."},"settled":{"type":"array","items":{"type":"object","properties":{"callId":{"type":"string","description":"The settled call."},"answers":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","description":"The answered question id."},"selected":{"type":"array","items":{"type":"string"},"description":"Selected option labels. May accompany custom text for a multi-select question."},"custom":{"type":"string","description":"Optional free-text \"Other\" answer."}},"required":["id","selected"],"additionalProperties":true},"description":"The recorded batch, one entry per question; empty when the late reply carried none."}},"required":["callId","answers"],"additionalProperties":true},"description":"Calls an answer settled, in settlement order."}},"required":["active","settled"],"additionalProperties":true,"description":"Timed questions that remain answerable in this Session, and the ones a late reply settled."},"goal":{"oneOf":[{"type":"null","const":null},{"type":"object","properties":{"goal":{"type":"object","properties":{"objective":{"type":"string","description":"Human-requested completion objective."},"phase":{"type":"string","enum":["active","paused","blocked","complete"],"description":"Durable lifecycle phase."},"blockedReason":{"type":"object","properties":{"code":{"type":"string","description":"Stable lower-kebab-case classification chosen by the blocking policy."},"message":{"type":"string","description":"Non-empty explanation shown to humans and models."}},"required":["code","message"],"additionalProperties":true,"description":"Present exactly while `phase` is `blocked`."},"maxGoalRounds":{"type":"number","description":"Total admitted goal-round cap."},"id":{"type":"string","description":"Stable goal identity."},"revision":{"type":"number","description":"Positive revision; every durable mutation increments it."}},"required":["objective","phase","maxGoalRounds","id","revision"],"additionalProperties":true,"description":"Current durable goal snapshot (the CAS ref for mutations rides on it)."},"roundsStarted":{"type":"number","description":"Highest admitted round number for this goal."},"createdAt":{"type":"number","description":"Epoch milliseconds of the create mutation."},"updatedAt":{"type":"number","description":"Epoch milliseconds of the latest mutation."}},"required":["goal","roundsStarted","createdAt","updatedAt"],"additionalProperties":true}],"description":"The session's current goal and admitted-round count, or `null` before the first create and after a clear tombstone. `goal/change` supplies the whole lifecycle value; matching admitted `user/message` events advance `roundsStarted`."},"plan":{"type":"object","properties":{"active":{"type":"boolean"},"pending":{"type":"boolean"}},"required":["active","pending"],"additionalProperties":true,"description":"Plan collaboration state folded from the plan command lifecycle and `plan/mode` events."}},"required":[],"additionalProperties":true,"description":"Provider-validated values; omitted keys are absent capabilities at this cut."},"kind":{"type":"string","const":"sequenced"}},"required":["asOfSeq","values","kind"],"additionalProperties":true},{"type":"object","properties":{"kind":{"type":"string","const":"migration-required"},"values":{"type":"object","properties":{"inbox":{"type":"object","properties":{"next-turn":{"type":"array","items":{}},"next-step":{"type":"array","items":{}}},"required":["next-turn","next-step"],"additionalProperties":true,"description":"Pending agent input reconstructed from durable inbox splices."},"workingDirectory":{"oneOf":[{"type":"null","const":null},{"type":"string"}],"description":"Recorded current directory for Session observations, or null when none is recorded."},"agentPreset":{"oneOf":[{"type":"null","const":null},{"type":"string"}],"description":"Preset the Session runs, or null when the deployment composes none."},"title":{"oneOf":[{"type":"null","const":null},{"type":"string"}],"description":"The session's current normalized title — the latest `session/title` event's text (last-wins), or `null` before the first title lands. A plain string: the shape the client list rows consume."},"todos":{"oneOf":[{"type":"null","const":null},{"type":"array","items":{"type":"object","properties":{"content":{"type":"string","description":"What this task is — a short imperative line shown in the UI."},"status":{"type":"string","enum":["completed","pending","in_progress"],"description":"Lifecycle state. `in_progress` marks a task being worked now; parallel work may mark several."}},"required":["content","status"],"additionalProperties":true}}],"description":"The agent's current whole todo list (the latest `todo/write` snapshot), or `null` before the first write. Whole-value rule: every `todo/write` carries the complete replacement list, so the fold is last-wins."},"sessionListMetadata":{"type":"object","properties":{"blank":{"type":"boolean","description":"Whether the folded prefix contains no turn."},"lastPromptAt":{"oneOf":[{"type":"null","const":null},{"type":"number"}],"description":"Latest human-authored prompt time in the folded prefix."}},"required":["blank","lastPromptAt"],"additionalProperties":true,"description":"Persisted facts used to summarize a Session without activating it."},"imageLimits":{"type":"object","properties":{"maxImageBytes":{"type":"number"},"maxImagesPerMessage":{"type":"number"},"maxMessageImageBytes":{"type":"number"},"maxImagePixels":{"type":"number"},"maxImageDimension":{"type":"number","description":"Maximum intrinsic width and maximum intrinsic height in pixels for one image."},"mediaTypes":{"type":"array","items":{"type":"string","enum":["image/png","image/jpeg","image/webp","image/gif"]}}},"required":["maxImageBytes","maxImagesPerMessage","maxMessageImageBytes","maxImagePixels","maxImageDimension","mediaTypes"],"additionalProperties":true,"description":"Image-intake limits enforced by the Session prompt endpoint."},"modelSelection":{"type":"object","properties":{"lastUsed":{"oneOf":[{"type":"null","const":null},{"type":"object","properties":{"provider":{"type":"string"},"model":{"type":"string"},"reasoningEffort":{"type":"string"}},"required":["provider","model"],"additionalProperties":true}],"description":"Selection consumed by the latest recorded model request."},"next":{"oneOf":[{"type":"null","const":null},{"type":"object","properties":{"provider":{"type":"string"},"model":{"type":"string"},"reasoningEffort":{"type":"string"}},"required":["provider","model"],"additionalProperties":true}],"description":"Selection the next request should use, falling back to {@link lastUsed}."}},"required":["lastUsed","next"],"additionalProperties":true,"description":"Durable model selection already used and selected for the next request."},"permissions":{"type":"object","properties":{"currentValue":{"type":"string","description":"The effective current value: a configured preset key, `auto`, or `custom`."}},"required":["currentValue"],"additionalProperties":true,"description":"The session's current permission, folded from the three whole-value knob events (`permission/preset`, `sandbox/mode`, `approval/policy`) over the composition defaults. Selectable options come from the process-level catalog Remote. Key absence means no permission service is composed — clients hide the control."},"subagentCatalog":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"id":{"type":"string"},"createdAt":{"type":"number"},"mode":{"type":"string","const":"one-shot"},"label":{"type":"string"}},"required":["id","createdAt","mode"],"additionalProperties":true},{"type":"object","properties":{"id":{"type":"string"},"createdAt":{"type":"number"},"mode":{"type":"string","const":"external"},"label":{"type":"string"}},"required":["id","createdAt","mode"],"additionalProperties":true},{"type":"object","properties":{"id":{"type":"string"},"createdAt":{"type":"number"},"mode":{"type":"string","const":"continuable"},"label":{"type":"string"}},"required":["id","createdAt","mode","label"],"additionalProperties":true},{"type":"object","properties":{"id":{"type":"string"},"createdAt":{"type":"number"},"mode":{"type":"string","const":"unknown"},"label":{"type":"string"}},"required":["id","createdAt","mode"],"additionalProperties":true}]},"description":"Direct children in parent catalog event order, excluding fork-inherited facts."},"subagentTiming":{"type":"object","properties":{"settledMs":{"type":"number","description":"Milliseconds accumulated across completed turns after the child's own descriptor."},"active":{"type":"object","properties":{"since":{"type":"number","description":"Start of the open turn."},"through":{"type":"number","description":"Latest event time folded into this projection cut."}},"required":["since","through"],"additionalProperties":true,"description":"Same-cut bounds of the currently open turn, when one has not reached `turn/end`."},"lastTurnCompleted":{"type":"boolean","description":"Whether the latest closed turn after the child's own descriptor completed normally; absent while a turn is open or before one closes."}},"required":["settledMs"],"additionalProperties":true,"description":"Active-turn duration and latest closed-turn completion for a descriptor-backed subagent session."},"subagent":{"oneOf":[{"type":"null","const":null},{"type":"object","properties":{"mode":{"type":"string","const":"one-shot","description":"A terminal one-shot child."},"label":{"type":"string","description":"Optional durable creation label from the child's descriptor."},"seq":{"type":"number","description":"Seq of the `subagent/descriptor` event this identity was folded from. `session.isOwnSeq(seq)` proves the identity comes from the child's OWN log suffix — where a descriptor is immutable once appended — and not from a fork seed's replayed ancestor descriptor."}},"required":["mode","seq"],"additionalProperties":true},{"type":"object","properties":{"mode":{"type":"string","const":"continuable","description":"A resumable conversation."},"label":{"type":"string","description":"Durable creation label from the child's descriptor."},"seq":{"type":"number","description":"Seq of the folded descriptor event; see the one-shot arm for the own-suffix proof."}},"required":["mode","label","seq"],"additionalProperties":true}],"description":"Identity of a descriptor-backed subagent session. `null` ⟺ no valid descriptor (missing, malformed, or unrecognized-version — deliberately undistinguished). The sentinel is deliberately serializable: a value pushed over JSON transports must survive `JSON.stringify` losslessly, where an `undefined` field would be dropped and a stale identity would survive on the receiving side. The entry itself stays non-optional."},"tokenUsage":{"type":"object","properties":{"uncachedInputTokens":{"type":"number"},"outputTokens":{"type":"number"},"cacheReadTokens":{"type":"number"},"cacheWriteTokens":{"type":"number"}},"required":["uncachedInputTokens","outputTokens","cacheReadTokens","cacheWriteTokens"],"additionalProperties":true,"description":"Provider-reported usage accumulated across the complete durable log."},"contextPressure":{"type":"object","properties":{"pressureTokens":{"type":"number","description":"Provider-reported prompt size of the most recent request: uncached input plus cache reads and writes. Response output is excluded, so this does not grow as the current turn streams. Absent until a provider reports usage."},"projectedTokens":{"type":"number","description":"What the NEXT request's prompt would cost: {@link pressureTokens} plus the heuristic repricing of everything the surface gained or lost since that sample. Only the delta is estimated, so the figure stays anchored to the provider while still reacting the moment a compaction shadows a span — which `pressureTokens` alone cannot do, since compaction reports no usage of its own. Absent until a provider reports usage."},"contextWindow":{"type":"number","description":"Newest recorded route capacity; absent when no adapter advertised one."}},"required":[],"additionalProperties":true,"description":"Newest request pressure paired with the newest known route capacity."},"contextBreakdown":{"type":"object","properties":{"systemTokens":{"type":"number","description":"Heuristic tokens of the last nonempty surviving system prompt in surface order; 0 when none exists."},"toolsTokens":{"type":"number","description":"Heuristic tokens of the newest request envelope's tool schemas; 0 before any request."},"messageTokens":{"type":"number","description":"Heuristic tokens of every other visible surface node, including superseded system prompts."}},"required":["systemTokens","toolsTokens","messageTokens"],"additionalProperties":true,"description":"Heuristic system/tools/message composition of the next request."},"agentTeam":{"type":"object","properties":{"members":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"name":{"type":"string"},"role":{"type":"string","enum":["lead","teammate"]},"phase":{"type":"string","enum":["failed","provisioning","active"],"description":"Durable lifecycle; the Lead row is always `active`. Turn activity comes from Session status."},"error":{"type":"string"}},"required":["id","name","role","phase"],"additionalProperties":true}},"tasks":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"revision":{"type":"number"},"subject":{"type":"string"},"description":{"type":"string"},"status":{"type":"string","enum":["completed","pending","in_progress","deleted"]},"blockedBy":{"type":"array","items":{"type":"string"}},"writeScopes":{"type":"array","items":{"type":"string"}},"ownerName":{"type":"string"},"ready":{"type":"boolean"},"writeScopeWarnings":{"type":"array","items":{"type":"string"}}},"required":["id","revision","subject","description","status","blockedBy","writeScopes","ready","writeScopeWarnings"],"additionalProperties":true}},"failure":{"type":"string"}},"required":["members","tasks"],"additionalProperties":true,"description":"Durable roster and non-deleted task board of the Team rooted at the projected Session."},"userQuestions":{"type":"object","properties":{"active":{"type":"array","items":{"type":"object","properties":{"callId":{"type":"string"},"questions":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","description":"Stable caller-provided question id, echoed in the answer."},"question":{"type":"string","description":"The question to display."},"detail":{"type":"string","description":"Optional supporting detail rendered with the question but kept out of option labels."},"header":{"type":"string","description":"Optional short heading/group label."},"options":{"type":"array","items":{"type":"object","properties":{"label":{"type":"string","description":"User-facing label."},"description":{"type":"string","description":"Optional extra context rendered by capable UIs."}},"required":["label"],"additionalProperties":true},"description":"Optional choices the UI can render as a menu."},"multiSelect":{"type":"boolean","description":"Whether more than one option may be selected. Defaults to single-select."},"intent":{"type":"object","properties":{"kind":{"type":"string","const":"plan-review","description":"A plan submitted for review: `detail` is the plan markdown `ask()` requires, and the decision approves or declines it."},"approve":{"type":"string","description":"The option label that approves the plan; every other option declines it. Named rather than positional so no UI infers the verdict from option order. An `approve` naming no option of its own question is rejected at `ask()`."},"callId":{"type":"string","description":"Logged tool invocation whose arguments contain the reviewed plan."}},"required":["kind","approve"],"additionalProperties":true,"description":"Optional presentation intent for capable UIs; absent asks for the generic option list."}},"required":["id","question"],"additionalProperties":true}},"state":{"type":"string","enum":["open","continued"]}},"required":["callId","questions","state"],"additionalProperties":true},"description":"Calls that can still take an answer, in ask order."},"settled":{"type":"array","items":{"type":"object","properties":{"callId":{"type":"string","description":"The settled call."},"answers":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","description":"The answered question id."},"selected":{"type":"array","items":{"type":"string"},"description":"Selected option labels. May accompany custom text for a multi-select question."},"custom":{"type":"string","description":"Optional free-text \"Other\" answer."}},"required":["id","selected"],"additionalProperties":true},"description":"The recorded batch, one entry per question; empty when the late reply carried none."}},"required":["callId","answers"],"additionalProperties":true},"description":"Calls an answer settled, in settlement order."}},"required":["active","settled"],"additionalProperties":true,"description":"Timed questions that remain answerable in this Session, and the ones a late reply settled."},"goal":{"oneOf":[{"type":"null","const":null},{"type":"object","properties":{"goal":{"type":"object","properties":{"objective":{"type":"string","description":"Human-requested completion objective."},"phase":{"type":"string","enum":["active","paused","blocked","complete"],"description":"Durable lifecycle phase."},"blockedReason":{"type":"object","properties":{"code":{"type":"string","description":"Stable lower-kebab-case classification chosen by the blocking policy."},"message":{"type":"string","description":"Non-empty explanation shown to humans and models."}},"required":["code","message"],"additionalProperties":true,"description":"Present exactly while `phase` is `blocked`."},"maxGoalRounds":{"type":"number","description":"Total admitted goal-round cap."},"id":{"type":"string","description":"Stable goal identity."},"revision":{"type":"number","description":"Positive revision; every durable mutation increments it."}},"required":["objective","phase","maxGoalRounds","id","revision"],"additionalProperties":true,"description":"Current durable goal snapshot (the CAS ref for mutations rides on it)."},"roundsStarted":{"type":"number","description":"Highest admitted round number for this goal."},"createdAt":{"type":"number","description":"Epoch milliseconds of the create mutation."},"updatedAt":{"type":"number","description":"Epoch milliseconds of the latest mutation."}},"required":["goal","roundsStarted","createdAt","updatedAt"],"additionalProperties":true}],"description":"The session's current goal and admitted-round count, or `null` before the first create and after a clear tombstone. `goal/change` supplies the whole lifecycle value; matching admitted `user/message` events advance `roundsStarted`."},"plan":{"type":"object","properties":{"active":{"type":"boolean"},"pending":{"type":"boolean"}},"required":["active","pending"],"additionalProperties":true,"description":"Plan collaboration state folded from the plan command lifecycle and `plan/mode` events."}},"required":[],"additionalProperties":true}},"required":["kind","values"],"additionalProperties":true}]},
+        jsonSchemaError: 'typert tool schema: selected dictionaries require string keys and unconstrained JSON values',
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":548,"column":9},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":618,"column":3},
     },
     'session/prompt': {
       service: 'sessionController',
@@ -1810,7 +2410,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'acknowledgement that the Agent accepted the prompt.',
         jsonSchema: {"type":"object","properties":{"accepted":{"type":"boolean","const":true}},"required":["accepted"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":462,"column":9},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":465,"column":9},
     },
     'session/rename': {
       service: 'sessionController',
@@ -1842,7 +2442,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'the accepted title and durable event sequence.',
         jsonSchema: {"type":"object","properties":{"title":{"type":"string"},"seq":{"type":"number"}},"required":["title","seq"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":431,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":434,"column":3},
     },
     'session/search': {
       service: 'sessionController',
@@ -1875,7 +2475,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'authorized bounded Session search results.',
         jsonSchema: {"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"sessionId":{"type":"string"},"snippet":{"type":"string"}},"required":["sessionId","snippet"],"additionalProperties":true}},"hasMore":{"type":"boolean"}},"required":["items","hasMore"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":290,"column":9},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":293,"column":9},
     },
     'session/selectModel': {
       service: 'sessionController',
@@ -1907,7 +2507,40 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'the normalized selection installed for the Session, without waiting for default persistence.',
         jsonSchema: {"type":"object","properties":{"selected":{"type":"object","properties":{"provider":{"type":"string"},"model":{"type":"string"},"reasoningEffort":{"type":"string"}},"required":["provider","model"],"additionalProperties":true}},"required":["selected"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":311,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":314,"column":3},
+    },
+    'session/state': {
+      service: 'sessionController',
+      description: 'Read passive Session state.',
+      invocation: { kind: 'direct' },
+      parameters: [
+        {
+          name: 'request',
+          description: 'target Session.',
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionStateRequest',
+            create: _deepseek_ai_dsh_api_session_controller_session_state_parameter_0$schema,
+            jsonSchema: {"type":"object","properties":{"sessionId":{"type":"string"}},"required":["sessionId"],"additionalProperties":true},
+          },
+          strictCodec: {
+            mode: 'strict',
+            typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionStateRequest',
+            create: _deepseek_ai_dsh_api_session_controller_session_state_parameter_0_strict$schema,
+            jsonSchema: {"type":"object","properties":{"sessionId":{"type":"string"}},"required":["sessionId"],"additionalProperties":false},
+          },
+        },
+      ],
+      cancellation: { parameter: 'signal' },
+      result: {
+        mode: 'strict',
+        typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionState',
+        create: _deepseek_ai_dsh_api_session_controller_session_state_result$schema,
+        description: 'current passive state.',
+        jsonSchema: {"type":"object","properties":{"cursor":{"type":"number"},"active":{"type":"boolean"},"running":{"type":"boolean"},"queue":{"oneOf":[{"type":"null","const":null},{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"placement":{"type":"string","enum":["queued","steering","context"]},"rpcId":{"type":"string"},"content":{"type":"array","items":{}}},"required":["id","placement","content"],"additionalProperties":true}}]},"pendingInput":{"type":"array","items":{"type":"string","enum":["approval","question","other"]},"description":"Pending Remote requests sampled when this state was read. A pending change alone does not trigger `observeState`; `wait` refreshes on its own interval."}},"required":["cursor","active","running","queue","pendingInput"],"additionalProperties":true},
+      },
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":573,"column":3},
     },
     'session/updateQueue': {
       service: 'sessionController',
@@ -1939,7 +2572,40 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'acknowledgement that the queue mutation was applied.',
         jsonSchema: {"type":"object","properties":{"accepted":{"type":"boolean","const":true}},"required":["accepted"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":504,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":507,"column":3},
+    },
+    'session/wait': {
+      service: 'sessionController',
+      description: 'Wait for Session quiescence or pending input with bounded assistant output.',
+      invocation: { kind: 'direct' },
+      parameters: [
+        {
+          name: 'request',
+          description: 'Session, wait bounds and output window.',
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionWaitRequest',
+            create: _deepseek_ai_dsh_api_session_controller_session_wait_parameter_0$schema,
+            jsonSchema: {"type":"object","properties":{"timeoutMs":{"type":"number"},"afterSeq":{"type":"number","description":"Exclusive output cursor; omission includes all available assistant records."},"maxMessages":{"type":"number","description":"Positive assistant-record limit; omission uses the history message budget."},"sessionId":{"type":"string"}},"required":["sessionId"],"additionalProperties":true},
+          },
+          strictCodec: {
+            mode: 'strict',
+            typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionWaitRequest',
+            create: _deepseek_ai_dsh_api_session_controller_session_wait_parameter_0_strict$schema,
+            jsonSchema: {"type":"object","properties":{"timeoutMs":{"type":"number"},"afterSeq":{"type":"number","description":"Exclusive output cursor; omission includes all available assistant records."},"maxMessages":{"type":"number","description":"Positive assistant-record limit; omission uses the history message budget."},"sessionId":{"type":"string"}},"required":["sessionId"],"additionalProperties":false},
+          },
+        },
+      ],
+      cancellation: { parameter: 'signal' },
+      result: {
+        mode: 'strict',
+        typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionWaitValue',
+        create: _deepseek_ai_dsh_api_session_controller_session_wait_result$schema,
+        description: 'stopping state and bounded assistant output.',
+        jsonSchema: {"type":"object","properties":{"reason":{"type":"string","enum":["idle","input-required","timeout"]},"state":{"type":"object","properties":{"cursor":{"type":"number"},"active":{"type":"boolean"},"running":{"type":"boolean"},"queue":{"oneOf":[{"type":"null","const":null},{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"placement":{"type":"string","enum":["queued","steering","context"]},"rpcId":{"type":"string"},"content":{"type":"array","items":{}}},"required":["id","placement","content"],"additionalProperties":true}}]},"pendingInput":{"type":"array","items":{"type":"string","enum":["approval","question","other"]},"description":"Pending Remote requests sampled when this state was read. A pending change alone does not trigger `observeState`; `wait` refreshes on its own interval."}},"required":["cursor","active","running","queue","pendingInput"],"additionalProperties":true},"output":{"type":"object","properties":{"records":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string","const":"event"},"event":{"type":"object","properties":{"type":{"type":"string"},"seq":{"type":"number"},"time":{"type":"number"},"data":{},"ignorable":{"type":"boolean","const":true},"sourceEventSeqs":{"description":"Earlier sources on current surface events; opaque JSON on unknown ignorable events."},"surfaceOp":{"description":"Canonical placement on current surface events; opaque JSON on unknown ignorable events."}},"required":["type","seq","time","data"],"additionalProperties":true}},"required":["type","event"],"additionalProperties":true}},"truncated":{"type":"boolean","description":"More eligible assistant messages exist in the selected interval."}},"required":["records","truncated"],"additionalProperties":true}},"required":["reason","state","output"],"additionalProperties":true},
+      },
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":595,"column":3},
     },
     'session/workspacePathApplications': {
       service: 'sessionController',
@@ -1972,7 +2638,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'OS application names, icons, and default selection; empty when desktop opening is unavailable.',
         jsonSchema: {"type":"array","items":{"type":"object","properties":{"id":{"type":"string","description":"OS application identifier; callers must revalidate it against the file's current handlers before opening."},"name":{"type":"string"},"default":{"type":"boolean"},"icon":{"oneOf":[{"type":"null","const":null},{"type":"string"}],"description":"PNG or SVG data URL, or null when the desktop supplies no icon."}},"required":["id","name","default","icon"],"additionalProperties":true}},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":398,"column":9},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":401,"column":9},
     },
     'skills/list': {
       service: 'sessionSkillCatalog',

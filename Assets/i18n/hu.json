@@ -1353,5 +1353,14 @@
  "设置二级页": "Beállítás-aloldal",
  "关闭图片预览": "Képelőnézet bezárása",
  "已更新": "Frissítve",
- "附加内容块": "Csatolt tartalomblokk"
+ "附加内容块": "Csatolt tartalomblokk",
+ "实验性功能": "Kísérleti funkciók",
+ "实验性功能由内核可选 bundle（插件层）提供，可在此逐项开关。开关增删内核 profile 的 bundle 清单，由内核热重载即时生效；关闭的 bundle 不参与加载，重新开启即恢复。": "A kísérleti funkciókat a kernel opcionális bundle-jei (bővítményréteg) nyújtják, és itt egyenként be- és kikapcsolhatók. A kapcsoló hozzáadja vagy eltávolítja a bundle-t a kernel profil bundle-listájából; a kernel hot reloaddal azonnal érvényesíti. A kikapcsolt bundle egyáltalán nem töltődik be, az újrakapcsolás pedig visszaállítja.",
+ "跨会话搜索": "Munkamenetek közötti keresés",
+ "开启后每个 Agent 获得一组只读检索工具，可搜索并引用当前工作区更早的会话；内容索引在首次搜索时打开、全 Agent 共享，侧栏搜索行为不变。": "Bekapcsolva minden Agent csak olvasható keresőeszközöket kap, amelyekkel az aktuális munkaterület korábbi munkameneteit keresheti meg, és hivatkozhat rájuk. A tartalomindex az első kereséskor nyílik meg, és minden Agent közösen használja; az oldalsáv keresésének működése nem változik.",
+ "多代理（Agent Teams）": "Agent Teams (többagentes mód)",
+ "开启后 Agent 可把任务委派给团队成员协作完成：成员名册、共享任务板与队友会话在会话内可见。注意：多代理启用期间普通 Subagent 委派按内核设计一并停用。": "Bekapcsolva az Agent feladatokat delegálhat a csapattársainak, és együttműködhet velük: a csapat névsora, a közös feladattábla és a csapattársak munkamenetei láthatók a csevegésben. Megjegyzés: amíg az Agent Teams be van kapcsolva, a szokásos Subagent-delegálás a kernel tervezéséből adódóan le van tiltva.",
+ "启用跨会话搜索": "Munkamenetek közötti keresés engedélyezése",
+ "启用多代理": "Agent Teams engedélyezése",
+ "回到底部": "Ugrás a legaljára"
 }

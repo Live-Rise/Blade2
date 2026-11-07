@@ -1353,5 +1353,14 @@
  "设置二级页": "Podstrona ustawień",
  "关闭图片预览": "Zamknij podgląd obrazu",
  "已更新": "Zaktualizowano",
- "附加内容块": "Dołączony blok treści"
+ "附加内容块": "Dołączony blok treści",
+ "实验性功能": "Funkcje eksperymentalne",
+ "实验性功能由内核可选 bundle（插件层）提供，可在此逐项开关。开关增删内核 profile 的 bundle 清单，由内核热重载即时生效；关闭的 bundle 不参与加载，重新开启即恢复。": "Funkcje eksperymentalne są zapewniane przez opcjonalne bundle jądra (warstwa wtyczek), tutaj można je włączać i wyłączać pojedynczo. Przełącznik dodaje lub usuwa bundle z listy w profilu jądra; jądro przeładowuje zmianę na gorąco. Wyłączony bundle nie jest w ogóle wczytywany, a ponowne włączenie przywraca go.",
+ "跨会话搜索": "Wyszukiwanie między sesjami",
+ "开启后每个 Agent 获得一组只读检索工具，可搜索并引用当前工作区更早的会话；内容索引在首次搜索时打开、全 Agent 共享，侧栏搜索行为不变。": "Po włączeniu każdy Agent otrzymuje zestaw narzędzi wyszukiwania tylko do odczytu, aby wyszukiwać i cytować wcześniejsze sesje w bieżącym obszarze roboczym. Indeks zawartości otwiera się przy pierwszym wyszukiwaniu i jest wspólny dla wszystkich Agentów; działanie wyszukiwania w panelu bocznym się nie zmienia.",
+ "多代理（Agent Teams）": "Agent Teams (tryb wielu agentów)",
+ "开启后 Agent 可把任务委派给团队成员协作完成：成员名册、共享任务板与队友会话在会话内可见。注意：多代理启用期间普通 Subagent 委派按内核设计一并停用。": "Po włączeniu Agent może delegować zadania członkom zespołu i współpracować z nimi: lista członków, wspólna tablica zadań i sesje kolegów z zespołu są widoczne na czacie. Uwaga: gdy Agent Teams jest włączony, zwykłe delegowanie do Subagent jest wyłączone zgodnie z założeniami jądra.",
+ "启用跨会话搜索": "Włącz wyszukiwanie między sesjami",
+ "启用多代理": "Włącz Agent Teams",
+ "回到底部": "Przewiń do dołu"
 }

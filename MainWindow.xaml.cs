@@ -390,6 +390,21 @@ public sealed partial class MainWindow : Window
     /// <summary>本轮（同一个 dispatcher tick）已经排过一次贴底：重复排只是把同一个底反复
     /// <c>ChangeView</c>，而每次都要等布局算出新的 ScrollableHeight ⇒ N 次事件 = N 次强制布局。</summary>
     private bool _transcriptScrollQueued;
+    /// <summary>贴底追逐在途：批尾/点置底后由 <see cref="ChaseTranscriptToBottom"/> 起定时器
+    /// 逐拍补发，直到「贴底 + 内容高度静默」/ 截止 / 用户上翻才收钩。虚拟化 ListView 的
+    /// 容器具现化与 markdown 树构建会在一发 <c>ChangeView</c> 之后继续把内容撑高
+    /// ⇒「批尾一发」取的是当时的 ScrollableHeight，长历史必然停在半空——「点旧会话不置底」
+    /// 的根因，追逐就是修它的。</summary>
+    private bool _bottomChaseActive;
+    /// <summary>追逐截止时刻（TickCount64 毫秒）：纯兜底防失控——收敛判据是贴底且内容
+    /// 高度静默，超过预算还没贴底才放手，绝不跟用户抢滚动。</summary>
+    private long _bottomChaseDeadline;
+    /// <summary>置底浮钮当前是否亮着：Visibility setter 每次都是一次真实属性写
+    /// （ViewChanged 一拍能来几十发），按值变化才写，免得整段滚动都在空写。</summary>
+    private bool _scrollButtonShown;
+    /// <summary>置底按钮那枚 ViewChanged 已挂的守卫（滚动面在首个非空列表布局后才出现，
+    /// Loaded/SizeChanged 兜底重钩的口径与 TurnRail 那一对逐字相同）。</summary>
+    private bool _chatScrollUiHooked;
     private readonly HashSet<int> _closedTranscriptTurns = new();
     private readonly HashSet<int> _startedTranscriptTurns = new();
     private readonly Dictionary<int, ChatBubble> _transcriptAnswers = new();
@@ -1864,6 +1879,18 @@ public sealed partial class MainWindow : Window
             "The driver that executes browser control: installed with the package, launched headless. Enabled by default.",
         ["启用浏览器控制"] = "Enable browser control",
         ["启用 Playwright 浏览器驱动"] = "Enable the Playwright browser driver",
+        // ---- 设置分区「实验性功能」（内核 OPTIONAL_BUNDLES 开关） ----
+        ["实验性功能"] = "Experimental features",
+        ["实验性功能由内核可选 bundle（插件层）提供，可在此逐项开关。开关增删内核 profile 的 bundle 清单，由内核热重载即时生效；关闭的 bundle 不参与加载，重新开启即恢复。"] =
+            "Experimental features are provided by optional kernel bundles (plugin layer) and can be switched individually here. Toggles add or remove entries from the kernel profile's bundle list; the kernel hot-reloads each change on the fly. A disabled bundle is not loaded at all, and re-enabling restores it.",
+        ["跨会话搜索"] = "Cross-session search",
+        ["开启后每个 Agent 获得一组只读检索工具，可搜索并引用当前工作区更早的会话；内容索引在首次搜索时打开、全 Agent 共享，侧栏搜索行为不变。"] =
+            "When on, every Agent gains a set of read-only search tools to find and cite earlier sessions in the current workspace. The content index opens on the first search and is shared by all Agents; sidebar search behavior is unchanged.",
+        ["多代理（Agent Teams）"] = "Agent teams (multi-agent)",
+        ["开启后 Agent 可把任务委派给团队成员协作完成：成员名册、共享任务板与队友会话在会话内可见。注意：多代理启用期间普通 Subagent 委派按内核设计一并停用。"] =
+            "When on, the Agent can delegate work to teammates and collaborate with them: the roster, shared task board, and teammate sessions are visible in chat. Note: while agent teams are enabled, ordinary subagent delegation is disabled by kernel design.",
+        ["启用跨会话搜索"] = "Enable cross-session search",
+        ["启用多代理"] = "Enable agent teams",
         ["挂载状态"] = "Mount status",
         ["电脑控制注册表"] = "Computer-use registry",
         ["Cua Driver 驱动"] = "Cua Driver provider",
@@ -2184,6 +2211,7 @@ public sealed partial class MainWindow : Window
         ["关闭图片预览"] = "Close image preview",
         ["已更新"] = "Updated",
         ["附加内容块"] = "Attached content block",
+        ["回到底部"] = "Scroll to bottom",
     };
     private string L(string key)
     {
@@ -2779,6 +2807,7 @@ public sealed partial class MainWindow : Window
 
         ChatList.ItemsSource = _visibleMessages;
         InitTurnRail(); // 右侧历史快速定位（turn rail）：事件与数据源一次性挂接
+        InitChatScrollUi(); // 置底浮钮：ViewChanged 显隐 + 追逐的用户上翻取消，同口径一次性挂接
         // 正椭圆端头挂钩：这两枚胶囊的高度由同行布局/字体缩放决定，CornerPill(24)
         // 不是任何实际高度的一半，端头会被拉成半椭圆（见 HookPillRadius 注释）。
         HookPillRadius(SearchPillSurface);
@@ -4881,6 +4910,11 @@ public sealed partial class MainWindow : Window
         // 清零后由本次回放里的 request/header 重新建立。
         _lastHeaderModel = "";
         _pendingUserBubble = null;
+        // 换会话：上一屏的追逐与新屏无关，先摘（随后的历史批尾会自己重新武装）；
+        // 浮钮显隐跟滚动面走，清屏那一拍先按「无内容」收起。
+        StopBottomChase();
+        _scrollButtonShown = false;
+        ScrollToBottomButton.Visibility = Visibility.Collapsed;
         UpdateEmptyState(); // 清屏即回空态（主区品牌标 + 输入区选择器）
         // 会话切换即重置会话作用域的辅助状态：反馈条目属于原会话，命令目录按 agent 作用域缓存
         ResetFeedbackState();
@@ -5299,7 +5333,7 @@ public sealed partial class MainWindow : Window
                         request = new { address = new { kind = "session", sessionId }, throughSeq = through, maxMessages = HistoryPageMessages },
                     });
                 }
-                catch (DshRpcException ex) when (ex.Message.Contains("past cursor"))
+                catch (DshRpcException ex) when (IsPastCursorMessage(ex.Message))
                 {
                     break;
                 }
@@ -5355,9 +5389,11 @@ public sealed partial class MainWindow : Window
                 }
             }
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            // 历史拉取失败不影响发消息。
+            // 历史拉取失败不影响发消息，但必须留痕：探针越界格式变更时这里静默吞了两天，
+            // 分页历史整体失供、点旧会话停在最早消息，无人知晓。
+            LoadTrace.Mark("history: 拉取失败 " + ex.Message);
         }
     }
 
@@ -5370,20 +5406,37 @@ public sealed partial class MainWindow : Window
     /// 取一个远超任何真实 journal 长度的值，一次请求即可解析出精确游标。</summary>
     private const int JournalProbeSeq = 1 << 30;
 
-    /// <summary>
-    /// 解析内核 past-cursor 错误里的真实游标：消息形如
-    /// "session page through seq &lt;n&gt; is past cursor &lt;sourceCursor&gt;"
-    /// （dsh-api-session-controller 的 page 实现）。取不到返回 null（内核版本差异）。
-    /// </summary>
+    /// <summary>内核「越界翻页」错误识别：0.2.2-rc.1 起报错从
+    /// "session page through seq &lt;n&gt; is past cursor &lt;cursor&gt;" 改成了
+    /// "session history cut &lt;n&gt; exceeds &lt;cursor&gt;"——壳按 "past cursor" 匹配永远
+    /// 不中，探针异常穿透后被 LoadSessionHistoryAsync 的外层 catch 静默吞掉，分页历史
+    /// 整体失供、历史全靠跟随流快照逐条兜底渲染（「点旧会话停在最早消息」的根因）。
+    /// 两种格式都认，防内核回退或混装。</summary>
+    private static bool IsPastCursorMessage(string message)
+        => !string.IsNullOrEmpty(message)
+            && (message.Contains("past cursor", StringComparison.Ordinal)
+                || message.Contains("history cut", StringComparison.Ordinal));
+
+    /// <summary>解析越界错误里的真实游标：旧格式取 "past cursor " 之后，新格式取
+    /// "exceeds " 之后（"session history cut 1073741824 exceeds 357" → 357，
+    /// 对活内核实测：page(357) 正好回满整段 journal）。</summary>
     private static int? ParsePastCursorSeq(string message)
     {
-        const string marker = "past cursor ";
-        var at = message.LastIndexOf(marker, StringComparison.Ordinal);
+        const string oldMarker = "past cursor ";
+        const string newMarker = "exceeds ";
+        var at = message.LastIndexOf(oldMarker, StringComparison.Ordinal);
+        var markerLen = oldMarker.Length;
+        var atNew = message.LastIndexOf(newMarker, StringComparison.Ordinal);
+        if (atNew > at)
+        {
+            at = atNew;
+            markerLen = newMarker.Length;
+        }
         if (at < 0)
         {
             return null;
         }
-        return int.TryParse(message.AsSpan(at + marker.Length).Trim(), out var seq) ? seq : null;
+        return int.TryParse(message.AsSpan(at + markerLen).Trim(), out var seq) ? seq : null;
     }
 
     /// <summary>
@@ -5403,12 +5456,15 @@ public sealed partial class MainWindow : Window
             // 以探测值为起点，hasMore 链会继续带到 journal 头部。
             return JournalProbeSeq;
         }
-        catch (DshRpcException ex) when (ex.Message.Contains("past cursor"))
+        catch (DshRpcException ex) when (IsPastCursorMessage(ex.Message))
         {
             if (ParsePastCursorSeq(ex.Message) is { } cursor && cursor >= -1)
             {
                 return cursor;
             }
+            // 消息认识但游标解析不出来：别静默落对半探测（老格式变更时就栽在无人知），
+            // 留痕后继续——对半探测兜底照走。
+            LoadTrace.Mark("history: probe 越界消息解析不出游标: " + ex.Message);
         }
         // 兜底：对半探测（throughSeq 过大会 "past cursor"）
         var lo = 0;
@@ -5425,7 +5481,7 @@ public sealed partial class MainWindow : Window
                 }, ct);
                 lo = mid;
             }
-            catch (DshRpcException ex) when (ex.Message.Contains("past cursor"))
+            catch (DshRpcException ex) when (IsPastCursorMessage(ex.Message))
             {
                 hi = mid - 1;
             }
@@ -5460,7 +5516,7 @@ public sealed partial class MainWindow : Window
                     request = new { address = new { kind = "session", sessionId }, throughSeq = through, maxMessages = HistoryPageMessages },
                 }, ct);
             }
-            catch (DshRpcException ex) when (ex.Message.Contains("past cursor"))
+            catch (DshRpcException ex) when (IsPastCursorMessage(ex.Message))
             {
                 break;
             }
@@ -5559,13 +5615,32 @@ public sealed partial class MainWindow : Window
                         throw new InvalidOperationException(L("会话历史分页未前进。"));
                     pending.AddRange(earlier);
                 }
-                foreach (var ev in pending.OrderBy(e => e.GetProperty("seq").GetInt32()))
+                // 快照/补拉页是「整段历史绕批直灌」的口子：逐条 RenderEventCore = 每条一次
+                // 全表投影，且批尾结算缺席 ⇒ 贴底追逐不武装（点旧会话停在最早消息的另一条
+                // 路径）。与 RenderJournalCore 同一记账：批内只渲染（本段内无 await，批界
+                // 不会被别的批插穿），批尾一次投影 + 一次追逐。
+                var rendered = 0;
+                _journalBulkDepth++;
+                try
                 {
-                    var seq = ev.GetProperty("seq").GetInt32();
-                    if (seq <= _journalCursor) continue;
-                    RenderEventCore(ev);
-                    if (Str(ev, "type") == "turn/end") MaybeNotifyTurnEnded(ev);
-                    _journalCursor = seq;
+                    foreach (var ev in pending.OrderBy(e => e.GetProperty("seq").GetInt32()))
+                    {
+                        var seq = ev.GetProperty("seq").GetInt32();
+                        if (seq <= _journalCursor) continue;
+                        RenderEventCore(ev);
+                        if (Str(ev, "type") == "turn/end") MaybeNotifyTurnEnded(ev);
+                        _journalCursor = seq;
+                        rendered++;
+                    }
+                }
+                finally
+                {
+                    _journalBulkDepth--;
+                    if (_journalBulkDepth == 0 && rendered > 0)
+                    {
+                        LoadTrace.Mark($"follow: 快照/补拉批尾结算 {rendered} 条");
+                        FlushJournalBulk();
+                    }
                 }
             }
             else if (frame.TryGetProperty("event", out var ev) &&
@@ -6190,6 +6265,150 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    // ---- 贴底追逐 + 一键置底浮钮 ---------------------------------------------------------
+
+    /// <summary>追逐的兜底预算：收敛判据是「贴底 + 内容高度静默」（见 <see cref="OnBottomChaseTick"/>），
+    /// 超预算只是防失控。长会话容器具现化 + markdown 树构建轻松跑过 3s，放宽到 8s；
+    /// 追逐期间每拍只读两个滚动属性，空转成本可忽略。</summary>
+    private const long BottomChaseBudgetMs = 8000;
+
+    /// <summary>逐拍补发的节奏与收敛口径：64ms 一拍；离底 ≤1px 算贴底（补发目标就是当时的
+    /// ScrollableHeight，落点要么到底要么差得远，不存在 96px 的「接近」态）；贴底后
+    /// ExtentHeight 连续 <see cref="BottomChaseStableTicks"/> 拍不变才算静默收钩。</summary>
+    private const int BottomChaseTickMs = 64;
+    private const int BottomChaseStableTicks = 3;
+    private const double BottomChaseAtBottomPx = 1;
+
+    /// <summary>贴底追逐的驱动定时器：延迟建（绝大多数会话用不到），复用不重建。
+    /// 旧实现挂 <c>ChatList.LayoutUpdated</c> 逐拍补发，两处失效：一拍何时来不受控制
+    /// （滚动偏移变化本身不脏布局，补发的 ChangeView 之后可能再无拍进来）；「见底即收」
+    /// 收钩之后异步图片解码/续建把内容再撑高就没人管——两条都表现为停在半空。</summary>
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _bottomChaseTimer;
+    private double _bottomChaseLastExtent = -1;
+    private int _bottomChaseStable;
+
+    /// <summary>批尾 / 点置底后的**贴底追逐**。一发 <see cref="ScrollTranscriptToBottom"/>
+    /// 只对「一发之后内容不再长高」成立；虚拟化 ListView 的容器在那一发之后继续具象化、
+    /// 助手气泡的 markdown 树继续构建、图片异步解码，内容还在长 ⇒ 取当时 ScrollableHeight
+    /// 的那一发停在半空（「点旧会话不置底」的根因）。定时器逐拍补发直到内容静默，
+    /// 超预算 / 用户上翻 / 清屏 / 切会话才收钩。<see cref="ScrollTranscriptToBottom"/>
+    /// 自带的排队去重保证拍与拍之间不会叠出强制布局风暴。</summary>
+    private void ChaseTranscriptToBottom()
+    {
+        _bottomChaseActive = true;
+        _bottomChaseDeadline = Environment.TickCount64 + BottomChaseBudgetMs;
+        _bottomChaseLastExtent = -1;
+        _bottomChaseStable = 0;
+        if (_bottomChaseTimer is null)
+        {
+            _bottomChaseTimer = DispatcherQueue.CreateTimer();
+            _bottomChaseTimer.Interval = TimeSpan.FromMilliseconds(BottomChaseTickMs);
+            _bottomChaseTimer.Tick += OnBottomChaseTick;
+        }
+        _bottomChaseTimer.Start();
+        ScrollTranscriptToBottom(force: true);
+        UpdateScrollToBottomButton();
+    }
+
+    private void OnBottomChaseTick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object e)
+    {
+        if (!_bottomChaseActive)
+        {
+            sender.Stop();
+            return;
+        }
+        if (Environment.TickCount64 > _bottomChaseDeadline || _visibleMessages.Count == 0)
+        {
+            StopBottomChase();
+            UpdateScrollToBottomButton();
+            return;
+        }
+        if (TranscriptScroller(ChatList) is not { } sv)
+        {
+            return; // 滚动面还没 realize（首帧）：等下一拍
+        }
+        if (sv.ScrollableHeight - sv.VerticalOffset > BottomChaseAtBottomPx)
+        {
+            // 没贴底（内容在长 / 上一发被虚拟化的旧 extent 钳短）：补一发，重置静默计数。
+            _bottomChaseStable = 0;
+            _bottomChaseLastExtent = -1;
+            ScrollTranscriptToBottom(force: true);
+            return;
+        }
+        // 已贴底：ExtentHeight 还在变（图片解码/续建撑高）就继续守着，连续几拍不动才收钩。
+        var extent = sv.ExtentHeight;
+        if (_bottomChaseLastExtent >= 0 && Math.Abs(extent - _bottomChaseLastExtent) < 0.5)
+        {
+            if (++_bottomChaseStable >= BottomChaseStableTicks)
+            {
+                StopBottomChase();
+                UpdateScrollToBottomButton();
+            }
+        }
+        else
+        {
+            _bottomChaseStable = 0;
+            _bottomChaseLastExtent = extent;
+        }
+    }
+
+    private void StopBottomChase()
+    {
+        _bottomChaseActive = false;
+        _bottomChaseTimer?.Stop();
+    }
+
+    /// <summary>置底浮钮的 ViewChanged 挂接：滚动面在首个非空列表布局后才出现，
+    /// Loaded/SizeChanged 兜底重钩（口径与 <see cref="InitTurnRail"/> 那一对逐字相同）。</summary>
+    private void HookChatScrollUi()
+    {
+        if (_chatScrollUiHooked || TranscriptScroller(ChatList) is not { } sv)
+        {
+            return;
+        }
+        _chatScrollUiHooked = true;
+        sv.ViewChanged += (_, _) => UpdateScrollToBottomButton();
+    }
+
+    /// <summary>浮钮显隐：有可滚内容（ScrollableHeight &gt; 0）且未贴底才亮。阈值与跟随
+    /// 判据同一条（<see cref="StickToBottomPx"/>）。显隐只在值变化时写——ViewChanged 一拍
+    /// 几十发，每次都写 Visibility 是整段滚动都在空写。</summary>
+    private void UpdateScrollToBottomButton()
+    {
+        var show = TranscriptScroller(ChatList) is { } sv
+            && sv.ScrollableHeight > 0
+            && _visibleMessages.Count > 0
+            && !IsTranscriptAtBottom();
+        if (show == _scrollButtonShown)
+        {
+            return;
+        }
+        _scrollButtonShown = show;
+        ScrollToBottomButton.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void OnScrollToBottomClick(object sender, RoutedEventArgs e)
+    {
+        // 点了就是「我要最新」：走追逐而不是单发——长会话逐字增高的尾巴单发够不着。
+        ChaseTranscriptToBottom();
+    }
+
+    /// <summary>构造期一次性挂接：滚动面出现时钩 ViewChanged（Loaded/SizeChanged 兜底，
+    /// 空会话首屏没有滚动面）；追逐期间用户**上翻**即摘钩——WheelDelta &lt; 0 是「往回读」，
+    /// 追逐不许跟用户抢滚动。</summary>
+    private void InitChatScrollUi()
+    {
+        ChatList.Loaded += (_, _) => HookChatScrollUi();
+        ChatList.SizeChanged += (_, _) => HookChatScrollUi();
+        ChatList.PointerWheelChanged += (_, args) =>
+        {
+            if (args.GetCurrentPoint(ChatList).Properties.MouseWheelDelta < 0)
+            {
+                StopBottomChase();
+            }
+        };
+    }
+
     private async Task RestoreBusinessStreamsAsync()
     {
         if (_restoringBusinessStreams) return;
@@ -6206,6 +6425,7 @@ public sealed partial class MainWindow : Window
             }
             // P1-23：业务流恢复完成 → 短暂 recovered 态（界面不显字，随后回 connected）
             SetConnectionVisual("recovered");
+            _ = WarmSearchIndexAsync();
             _ = Task.Run(async () =>
             {
                 await Task.Delay(2000);
@@ -6383,7 +6603,9 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /// <summary>批尾结算：一次投影刷新 + 一次贴底。顺序不能反——贴底要用投影后的真实高度算底。</summary>
+    /// <summary>批尾结算：一次投影刷新 + 一次贴底。顺序不能反——贴底要用投影后的真实高度算底。
+    /// 贴底走**追逐**而不是单发：虚拟化容器/markdown 树在单发之后还在把内容撑高，长历史停在
+    /// 半空正是「点旧会话不置底」（见 <see cref="ChaseTranscriptToBottom"/>）。</summary>
     private void FlushJournalBulk()
     {
         if (_transcriptViewDirty)
@@ -6394,7 +6616,7 @@ public sealed partial class MainWindow : Window
         }
         if (_visibleMessages.Count > 0)
         {
-            ScrollTranscriptToBottom(force: true);
+            ChaseTranscriptToBottom();
         }
     }
 
@@ -8238,7 +8460,7 @@ public sealed partial class MainWindow : Window
                         request = new { address = new { kind = "session", sessionId = sid }, throughSeq = through, maxMessages = 64 },
                     });
                 }
-                catch (DshRpcException ex) when (ex.Message.Contains("past cursor"))
+                catch (DshRpcException ex) when (IsPastCursorMessage(ex.Message))
                 {
                     through = through >= 8 ? through / 2 : 0;
                     continue;
@@ -8280,7 +8502,7 @@ public sealed partial class MainWindow : Window
                             request = new { address = new { kind = "session", sessionId = sid }, throughSeq = through, maxMessages = 64 },
                         });
                     }
-                    catch (DshRpcException ex) when (ex.Message.Contains("past cursor"))
+                    catch (DshRpcException ex) when (IsPastCursorMessage(ex.Message))
                     {
                         through = through >= 8 ? through / 2 : 0;
                         continue;
@@ -8722,7 +8944,7 @@ public sealed partial class MainWindow : Window
     /// 原「自动审批」分区已撤下侧栏入口，内容并入「插件」分区配置 Tab 的默认插件卡上方
     /// （0.2.1 内核起该块改挂官方 auto-review bundle，见 <see cref="AddAutoReviewCardsAsync"/>）。</summary>
     private static readonly string[] SectionOrder =
-        { "general", "personalization", "models", "plugins", "skills", "memory", "pet", "agent-presets", "computer-control", "browser-control", "usage", "about" };
+        { "general", "personalization", "models", "plugins", "skills", "memory", "pet", "agent-presets", "computer-control", "browser-control", "experimental", "usage", "about" };
 
     /// <summary>壳内建分区 id（不进内核 settings/mutate，也不参与「恢复本页默认」）。</summary>
     private const string UsageSectionId = "usage";
@@ -8730,13 +8952,14 @@ public sealed partial class MainWindow : Window
     private const string SkillsSectionId = "skills";
     private const string ComputerControlSectionId = "computer-control";
     private const string BrowserControlSectionId = "browser-control";
+    private const string ExperimentalSectionId = "experimental";
     private const string PetSectionId = "pet";
 
     /// <summary>壳内建分区集合：无待写回字段，不挂「设置文件」维护卡（恢复默认对它无意义）。</summary>
     private static readonly HashSet<string> ShellBuiltinSections = new(StringComparer.Ordinal)
     {
         UsageSectionId, MemorySectionId, SkillsSectionId, ComputerControlSectionId, BrowserControlSectionId,
-        PetSectionId, AboutSectionId,
+        ExperimentalSectionId, PetSectionId, AboutSectionId,
         PersonalizationSectionId,
     };
 
@@ -8751,6 +8974,7 @@ public sealed partial class MainWindow : Window
         "agent-presets" => "Agent 预设",
         "computer-control" => "电脑控制",
         "browser-control" => "浏览器控制",
+        "experimental" => "实验性功能",
         "usage" => "使用统计",
         "pet" => "宠物",
         "about" => "关于",
@@ -8768,6 +8992,7 @@ public sealed partial class MainWindow : Window
         "agent-presets" => "\uE9D9", // 机器人
         "computer-control" => "\uE7F4", // 显示器（电脑控制）
         "browser-control" => "\uE774",  // 地球（浏览器控制）
+        "experimental" => "\uE9CE",     // 烧杯（TestBeaker：实验性；原旗标 E7A7 让位语义）
         "usage" => "\uE9D2",         // 图表（原「使用统计」入口的图标）
         "pet" => "\uE76E",           // 笑脸（宠物：MDL2 里最接近「伙伴/ mascot」的字形）
         "about" => "\uE946",         // 信息（关于）
@@ -10995,6 +11220,9 @@ public sealed partial class MainWindow : Window
                     break;
                 case BrowserControlSectionId:
                     RenderBrowserControlSection();
+                    break;
+                case ExperimentalSectionId:
+                    RenderExperimentalSection();
                     break;
                 case UsageSectionId:
                     await RenderUsageSectionAsync();
@@ -14145,6 +14373,31 @@ public sealed partial class MainWindow : Window
 
     // ---------------- 顶条搜索（session/search RPC） ----------------
 
+    /// <summary>单发检索 RPC 的等待预算（毫秒）。内核检索是 openAt=first-search：冷索引的
+    /// 第一发要现建索引（真实历史下分钟级），不设预算 = 用户第一次搜索的下拉空窗也是分钟级。
+    /// 预算耗尽回落本地标题匹配；索引由启动预热建好后，一发亚秒返回。</summary>
+    private const int SearchRpcBudgetMs = 5000;
+
+    /// <summary>
+    /// 内核检索索引预热：连上内核后偷偷打一发检索，把 openAt=first-search 的「首搜建索引」
+    /// 成本在后台吸收掉，用户第一次搜索直接走热索引。失败静默（用户首搜按预算回落本地标题）。
+    /// </summary>
+    private async Task WarmSearchIndexAsync()
+    {
+        try
+        {
+            if (_rpc is null)
+            {
+                return;
+            }
+            await _rpc.CallOkAsync("session/search", new { request = new { query = "的" } });
+        }
+        catch (Exception)
+        {
+            // 预热失败（未开启检索 / 超时 / 空库）不影响任何功能：回落路径本就在
+        }
+    }
+
     /// <summary>
     /// 顶条检索：内核全文检索（session/search，args = {request:{query}}）与本地
     /// 标题匹配并行合并。内核只检索消息内容（user/assistant message），会话名
@@ -14177,8 +14430,16 @@ public sealed partial class MainWindow : Window
         List<SearchHitVm> kernelHits;
         try
         {
-            var value = await _rpc.CallOkAsync("session/search", new { request = new { query = text } });
+            // 预算 5s：内核检索是 openAt=first-search——冷索引的第一发要现建索引（分钟级），
+            // 无预算就是「下拉永远空」。预算耗尽回落本地标题匹配（下拉立刻有行），索引由
+            // 启动预热（<see cref="WarmSearchIndexAsync"/>）建好后一发亚秒级返回。
+            using var budget = new CancellationTokenSource(SearchRpcBudgetMs);
+            var value = await _rpc.CallOkAsync("session/search", new { request = new { query = text } }, budget.Token);
             kernelHits = KernelSearchHits(value);
+        }
+        catch (OperationCanceledException)
+        {
+            kernelHits = new List<SearchHitVm>(); // 预算耗尽（冷索引在建）：回落本地标题
         }
         catch (DshRpcException ex) when (IsSearchDisabled(ex))
         {
@@ -14653,6 +14914,205 @@ public sealed partial class MainWindow : Window
 
         RenderMountStatusCard("browser-use");
     }
+
+    // ---------------- 实验性功能（壳内建分区 · 内核可选 bundle 开关） ----------------
+
+    /// <summary>「实验性功能」分区文案（键 = DshPluginBootstrap 受管 bundle 包名，值存
+    /// 中文原文键、渲染时过 L()——静态表不能碰实例本地化）。**只配需要定制说法的条目**：
+    /// 表里没有的 bundle 渲染时回退读内核包自带的 locale 元数据
+    /// （<see cref="KernelBundleMetadata"/>），内核加包/改说法设置页自动跟上。</summary>
+    private sealed record ExperimentalBundleCopy(string Title, string Desc, string AutoId, string AutoName);
+
+    private static readonly Dictionary<string, ExperimentalBundleCopy> ExperimentalBundleCopyTable = new(StringComparer.Ordinal)
+    {
+        [DshPluginBootstrap.SessionSearchBundle] = new(
+            "跨会话搜索",
+            "开启后每个 Agent 获得一组只读检索工具，可搜索并引用当前工作区更早的会话；内容索引在首次搜索时打开、全 Agent 共享，侧栏搜索行为不变。",
+            "Setting_session-search_enabled", "启用跨会话搜索"),
+        [DshPluginBootstrap.AgentTeamBundle] = new(
+            "多代理（Agent Teams）",
+            "开启后 Agent 可把任务委派给团队成员协作完成：成员名册、共享任务板与队友会话在会话内可见。注意：多代理启用期间普通 Subagent 委派按内核设计一并停用。",
+            "Setting_agent-team_enabled", "启用多代理"),
+    };
+
+    /// <summary>「实验性功能」分区：内核 OPTIONAL_BUNDLES 全集（出厂关闭）的开关页。开关增删
+    /// 内核 profile 的 dsh.profile.bundles 并记用户偏好（下次启动按偏好重放，不回弹），
+    /// patchReload=live 热生效。自动审查同属可选 bundle，但开关已在「插件 › 自动审查」
+    /// （含切换后果提示卡），此处不重复渲染；其余全部列出，文案取定制表或内核 locale 元数据。</summary>
+    private void RenderExperimentalSection()
+    {
+        SettingsHost.Children.Add(MakeSectionDesc(
+            L("实验性功能由内核可选 bundle（插件层）提供，可在此逐项开关。开关增删内核 profile 的 bundle 清单，由内核热重载即时生效；关闭的 bundle 不参与加载，重新开启即恢复。")));
+
+        foreach (var (bundle, _) in DshPluginBootstrap.ManagedOptionalBundles)
+        {
+            // 自动审查的开关与切换后果提示卡在「插件 › 自动审查」，两处都渲染 = 一个开关两个真相。
+            if (bundle == DshPluginBootstrap.AutoReviewBundle)
+            {
+                continue;
+            }
+            string title, desc, autoId, autoName;
+            if (ExperimentalBundleCopyTable.TryGetValue(bundle, out var curated))
+            {
+                title = L(curated.Title);
+                desc = L(curated.Desc);
+                autoId = curated.AutoId;
+                autoName = L(curated.AutoName);
+            }
+            else
+            {
+                var meta = KernelBundleMetadata(bundle, _shellLocale);
+                title = meta?.Title ?? bundle;
+                desc = meta?.Desc ?? "";
+                autoId = $"Setting_{bundle}_enabled";
+                autoName = title;
+            }
+            AddOptionalBundleToggleCard(bundle, title, desc, autoId, autoName);
+        }
+    }
+
+    /// <summary>内核包自带的展示元数据：<c>Kernel\dsh\node_modules\&lt;bundle&gt;\locale\&lt;locale&gt;.json</c>
+    /// 的 <c>meta.title/description</c>（内核 0.2.2 家族随包发，八语言）。locale 依次试壳当前语言、
+    /// 剥区域码、en、zh；locale 文件全缺再退包清单的 description；title 兜底包名。
+    /// 读不到任何元数据返回 null，调用方用包名兜底。</summary>
+    private static (string Title, string Desc)? KernelBundleMetadata(string bundleName, string shellLocale)
+    {
+        try
+        {
+            var pkgDir = Path.Combine(
+                DshKernelHost.BundledBinDir, "..", "dsh", "node_modules",
+                bundleName.Replace('/', Path.DirectorySeparatorChar));
+            foreach (var locale in KernelLocaleCandidates(shellLocale))
+            {
+                var path = Path.Combine(pkgDir, "locale", locale + ".json");
+                if (!File.Exists(path))
+                {
+                    continue;
+                }
+                using var doc = JsonDocument.Parse(File.ReadAllText(path));
+                if (!doc.RootElement.TryGetProperty("meta", out var meta) ||
+                    meta.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+                var title = meta.TryGetProperty("title", out var t) && t.ValueKind == JsonValueKind.String
+                    ? t.GetString()
+                    : null;
+                var desc = meta.TryGetProperty("description", out var d) && d.ValueKind == JsonValueKind.String
+                    ? d.GetString()
+                    : null;
+                if (string.IsNullOrWhiteSpace(title) && string.IsNullOrWhiteSpace(desc))
+                {
+                    continue;
+                }
+                return (title ?? bundleName, desc ?? "");
+            }
+            var manifest = Path.Combine(pkgDir, "package.json");
+            if (File.Exists(manifest))
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(manifest));
+                if (doc.RootElement.TryGetProperty("description", out var d) &&
+                    d.ValueKind == JsonValueKind.String)
+                {
+                    return (bundleName, d.GetString() ?? "");
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // 元数据读不到（内核树缺失/包被裁剪）：调用方按包名兜底，不阻塞设置页
+        }
+        return null;
+    }
+
+    /// <summary>内核 locale 文件的候选语言序：壳当前语言 → 剥区域码（zh-TW→zh）→ en → zh。</summary>
+    private static IEnumerable<string> KernelLocaleCandidates(string shellLocale)
+    {
+        if (!string.IsNullOrWhiteSpace(shellLocale))
+        {
+            yield return shellLocale;
+        }
+        var dash = shellLocale?.IndexOf('-') ?? -1;
+        if (dash > 0)
+        {
+            yield return shellLocale![..dash];
+        }
+        yield return "en";
+        yield return "zh";
+    }
+
+    /// <summary>可选 bundle 开关卡（与「自动审查」开关卡同构：标题+说明在左、开关在右，
+    /// 卡内带状态行）。写入失败（profile package.json 不可写、bundles 清单缺失）时开关
+    /// 回滚，保持与清单一致。</summary>
+    private void AddOptionalBundleToggleCard(
+        string bundleName, string title, string desc, string autoId, string autoName)
+    {
+        var card = NewCardIn(SettingsHost);
+        // 两列 Grid：文字列 Star 吃掉剩余宽度，开关列 Auto 贴右缘（与挂载开关卡同构）。
+        var row = new Grid { HorizontalAlignment = HorizontalAlignment.Stretch };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var text = new StackPanel
+        {
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, Sp12, 0),
+        };
+        text.Children.Add(new TextBlock { Text = title, Style = AppStyle("BodyStrongTextStyle") });
+        text.Children.Add(new TextBlock
+        {
+            Text = desc,
+            Style = AppStyle("CardDescriptionTextStyle"),
+            TextWrapping = TextWrapping.Wrap,
+        });
+        Grid.SetColumn(text, 0);
+        row.Children.Add(text);
+        var toggle = Aut(new ToggleSwitch
+        {
+            IsOn = DshPluginBootstrap.IsOptionalBundleEnabled(DataHome, bundleName),
+            OnContent = L("开"),
+            OffContent = L("关"),
+            VerticalAlignment = VerticalAlignment.Center,
+            Style = AppStyle("SettingsToggleSwitchStyle"),
+        }, autoId, autoName);
+        Grid.SetColumn(toggle, 1);
+        row.Children.Add(toggle);
+        card.Children.Add(row);
+        var state = new TextBlock
+        {
+            Text = OptionalBundleStateLine(bundleName),
+            Style = AppStyle("CardDescriptionTextStyle"),
+        };
+        var syncing = false; // 回滚 IsOn 会重入 Toggled：用哨兵避免递归
+        toggle.Toggled += (_, _) =>
+        {
+            if (syncing)
+            {
+                return;
+            }
+            try
+            {
+                if (DshPluginBootstrap.SetOptionalBundleEnabled(DataHome, bundleName, toggle.IsOn))
+                {
+                    state.Text = OptionalBundleStateLine(bundleName);
+                    return;
+                }
+                syncing = true;
+                toggle.IsOn = !toggle.IsOn;
+            }
+            catch (Exception) { } // 事件入口兜底（async void 教训）
+            finally
+            {
+                syncing = false;
+            }
+        };
+        card.Children.Add(state);
+    }
+
+    /// <summary>可选 bundle 的状态行：profile bundle 清单里该条目的当前态（内核热重载后生效）。</summary>
+    private string OptionalBundleStateLine(string bundleName)
+        => DshPluginBootstrap.IsOptionalBundleEnabled(DataHome, bundleName)
+            ? L("已启用（内核热重载后生效）")
+            : L("已停用");
 
     // ---------------- 自动审查（并入「插件」分区 · 内核 auto-review bundle 开关） ----------------
 

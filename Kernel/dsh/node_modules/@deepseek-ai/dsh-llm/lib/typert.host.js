@@ -357,7 +357,7 @@ export const TYPERT = {
           },
           {
             "name": "GenerateOptions",
-            "declaration": "export interface GenerateOptions {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    messages: RequestMessage[];\n    system?: string;\n    tools?: ToolSchema[];\n    toolHistory?: ToolHistory;\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n    signal?: AbortSignal;\n    sessionId?: Branded<'SessionId'>;\n    purpose?: 'compaction' | 'session-title';\n}"
+            "declaration": "export interface GenerateOptions<Purpose extends string = LlmRequestPurpose> {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    messages: RequestMessage[];\n    system?: string;\n    tools?: ToolSchema[];\n    toolHistory?: ToolHistory;\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n    signal?: AbortSignal;\n    sessionId?: Branded<'SessionId'>;\n    purpose?: Purpose;\n}"
           },
           {
             "name": "GoalId",
@@ -420,6 +420,14 @@ export const TYPERT = {
             "declaration": "export interface LlmImageRequestPricing {\n    priceImages(images: readonly ImageBlock[]): readonly LlmImageRequestPrice[];\n}"
           },
           {
+            "name": "LlmModelBadge",
+            "declaration": "export interface LlmModelBadge {\n    text: LocalizedText;\n    tone: LlmModelBadgeTone;\n}"
+          },
+          {
+            "name": "LlmModelBadgeTone",
+            "declaration": "export type LlmModelBadgeTone = 'neutral' | 'info' | 'success' | 'warning';"
+          },
+          {
             "name": "LlmModelContext",
             "declaration": "export interface LlmModelContext {\n    contextWindow: number;\n}"
           },
@@ -429,7 +437,7 @@ export const TYPERT = {
           },
           {
             "name": "LlmModelInfo",
-            "declaration": "export interface LlmModelInfo {\n    provider: string;\n    id: string;\n    name: string;\n    description?: string;\n    inputModalities?: readonly ModelModality[];\n}"
+            "declaration": "export interface LlmModelInfo {\n    provider: string;\n    id: string;\n    name: string;\n    description?: string;\n    inputModalities?: readonly ModelModality[];\n    badge?: LlmModelBadge;\n}"
           },
           {
             "name": "LlmModelReasoningInfo",
@@ -448,8 +456,20 @@ export const TYPERT = {
             "declaration": "export interface LlmReasoningEffortInfo {\n    id: ReasoningEffortId;\n    name: string;\n    description?: string;\n}"
           },
           {
+            "name": "LlmRequestPurpose",
+            "declaration": "export type LlmRequestPurpose = Extract<keyof LlmRequestPurposeMap, string>;"
+          },
+          {
+            "name": "LlmRequestPurposeMap",
+            "declaration": "export interface LlmRequestPurposeMap {\n}"
+          },
+          {
             "name": "LlmResolvedModelInfo",
             "declaration": "export interface LlmResolvedModelInfo extends LlmModelInfo {\n    context?: LlmModelContext;\n    defaultMaxTokens?: number;\n    reasoning?: LlmModelReasoningInfo;\n    systemPromptUpdate?: SystemPromptUpdate;\n    toolUpdate?: ToolUpdate;\n}"
+          },
+          {
+            "name": "LocalizedText",
+            "declaration": "export type LocalizedText = string | { readonly en: string; readonly [locale: string]: string; };"
           },
           {
             "name": "Message",
@@ -473,7 +493,7 @@ export const TYPERT = {
           },
           {
             "name": "MessageSourceMap",
-            "declaration": "export interface MessageSourceMap {\n    user: { kind: 'user'; };\n    model: ModelMessageSource;\n    tool: ToolMessageSource;\n    'system-prompt': SystemPromptMessageSource;\n    'model-selection': { kind: 'model-selection'; } & ContextFormed;\n    'runtime-context': { kind: 'runtime-context'; } & ContextFormed;\n    'working-directory': { kind: 'working-directory'; };\n    'user-approval': { kind: 'user-approval'; } & ContextFormed;\n    'ptc-mode': { kind: 'ptc-mode'; };\n    'tool-registry': { kind: 'tool-registry'; };\n    'user-rpc': { kind: 'user'; rpcId: SessionRequestId; clientTimeZone?: string; principal?: Principal; };\n    'agent-message': AgentMessageSource;\n    'subagent-settled': SubagentSettledMessageSource;\n    'skill-invocation': SkillInvocationSource;\n    'compact-checkpoint': CompactionCheckpointSource;\n    'cordis-host-runner': { kind: 'cordis-host-runner'; };\n    'team-message': TeamMessageSource;\n    'user-question-reply': { kind: 'user-question-reply'; callId: ToolCallId; outcome: 'answered'; };\n    goal: GoalMessageSource;\n    'plan-mode': { kind: 'plan-mode'; } & ContextFormed;\n    schedule: { kind: 'schedule'; } & ContextFormed;\n    'session-reference': SessionReferenceSource;\n    webhook: { readonly kind: 'webhook'; readonly provider: string; readonly source: WebhookSourceId; readonly deliveryId: WebhookDeliveryId; readonly ruleId: WebhookRuleId; readonly form: 'notice'; readonly summary: string; };\n}"
+            "declaration": "export interface MessageSourceMap {\n    user: { kind: 'user'; };\n    model: ModelMessageSource;\n    tool: ToolMessageSource;\n    'system-prompt': SystemPromptMessageSource;\n    'model-selection': { kind: 'model-selection'; } & ContextFormed;\n    'tool-registry': { kind: 'tool-registry'; };\n    'action-cards': { kind: 'action-cards'; through: SessionSeq; } & ContextFormed;\n    'runtime-context': { kind: 'runtime-context'; } & ContextFormed;\n    'user-rpc': { kind: 'user'; rpcId: SessionRequestId; clientTimeZone?: string; principal?: Principal; };\n    'working-directory': { kind: 'working-directory'; };\n    'user-approval': { kind: 'user-approval'; } & ContextFormed;\n    'agent-message': AgentMessageSource;\n    'subagent-settled': SubagentSettledMessageSource;\n    'skill-invocation': SkillInvocationSource;\n    'ptc-mode': { kind: 'ptc-mode'; };\n    'compact-checkpoint': CompactionCheckpointSource;\n    'cordis-host-runner': { kind: 'cordis-host-runner'; };\n    'user-question-reply': { kind: 'user-question-reply'; callId: ToolCallId; outcome: 'answered'; };\n    'team-message': TeamMessageSource;\n    goal: GoalMessageSource;\n    'plan-mode': { kind: 'plan-mode'; } & ContextFormed;\n    schedule: { kind: 'schedule'; } & ContextFormed;\n    'session-reference': SessionReferenceSource;\n    webhook: { readonly kind: 'webhook'; readonly provider: string; readonly source: WebhookSourceId; readonly deliveryId: WebhookDeliveryId; readonly ruleId: WebhookRuleId; readonly form: 'notice'; readonly summary: string; };\n}"
           },
           {
             "name": "ModelMessageSource",
@@ -505,7 +525,7 @@ export const TYPERT = {
           },
           {
             "name": "PrincipalMap",
-            "declaration": "export interface PrincipalMap {\n    owner: { readonly kind: 'owner'; };\n}"
+            "declaration": "export interface PrincipalMap {\n    owner: { readonly kind: 'owner'; };\n    'share-viewer': ShareViewerPrincipal;\n}"
           },
           {
             "name": "ProviderRequestId",
@@ -562,6 +582,10 @@ export const TYPERT = {
           {
             "name": "SessionSeq",
             "declaration": "export type SessionSeq = BrandedNumber<'SessionSeq'>;"
+          },
+          {
+            "name": "ShareViewerPrincipal",
+            "declaration": "export interface ShareViewerPrincipal {\n    readonly kind: 'share-viewer';\n    readonly shareId: string;\n    readonly actor: { readonly providerId: string; readonly tenantId: string; readonly subjectId: string; readonly displayName?: string; };\n}"
           },
           {
             "name": "SkillInvocationSource",
@@ -677,6 +701,27 @@ export const TYPERT = {
         "name": "llm/adapters-updated",
         "mode": "emit",
         "signature": "'llm/adapters-updated'(): void"
+      },
+      {
+        "description": "A provider's advertised models or display metadata changed; consumers reload `listModels()`.",
+        "summary": "A provider's advertised models or display metadata changed; consumers reload `listModels()`.",
+        "tags": [
+          {
+            "name": "mode",
+            "comment": "emit",
+            "text": "@mode emit\n     *"
+          },
+          {
+            "name": "param",
+            "argument": "provider",
+            "comment": "- route whose model catalog changed.",
+            "text": "@param provider - route whose model catalog changed."
+          }
+        ],
+        "jsDoc": "/**\n * A provider's advertised models or display metadata changed; consumers reload `listModels()`.\n * @mode emit\n * @param provider - route whose model catalog changed.\n */",
+        "name": "llm/models-updated",
+        "mode": "emit",
+        "signature": "'llm/models-updated'(provider: string): void"
       },
       {
         "description": "Waterfall around every streaming model call (retry, replay, routing). Bound to the {@link LlmRuntime}; call `next()` to reach the resolved adapter's stream, or yield your own chunks to short-circuit.",

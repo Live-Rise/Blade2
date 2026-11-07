@@ -31,9 +31,9 @@ export declare class BasicCompactionEngine extends CompactionEngine {
     private readonly overflowAgents;
     constructor(ctx: Context, config?: BasicCompactionConfig);
     /**
-     * Register automatic between-step pressure and model-request overflow
-     * recovery. `compactIfNeeded` stays dynamically dispatched so subclass
-     * overrides are honored at event time.
+     * Register between-step pressure, model-switch pressure, and request-overflow
+     * recovery. Pre-step and overflow listeners dispatch through `compactIfNeeded`;
+     * model switches price the proposed header directly. All summaries use `summarize`.
      */
     private _registerAutomaticCompaction;
     /**
@@ -58,6 +58,8 @@ export declare class BasicCompactionEngine extends CompactionEngine {
      * @returns the latest summary compaction result, or `null` when no summary ran.
      */
     compactIfNeeded(agent: Agent, trigger: CompactionTrigger, signal: AbortSignal): Promise<CompactionResult | null>;
+    /** Price the proposed header; switch checks require history below its threshold. */
+    private compactPressure;
     /**
      * Compact one inclusive positional range from the agent-owned surface using
      * the effective token meter for all retention and shrink pricing.

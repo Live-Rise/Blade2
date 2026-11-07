@@ -1353,5 +1353,14 @@
  "设置二级页": "Subpagina de setări",
  "关闭图片预览": "Închide previzualizarea imaginii",
  "已更新": "Actualizat",
- "附加内容块": "Bloc de conținut atașat"
+ "附加内容块": "Bloc de conținut atașat",
+ "实验性功能": "Funcții experimentale",
+ "实验性功能由内核可选 bundle（插件层）提供，可在此逐项开关。开关增删内核 profile 的 bundle 清单，由内核热重载即时生效；关闭的 bundle 不参与加载，重新开启即恢复。": "Funcțiile experimentale sunt oferite de bundle-uri opționale ale nucleului (stratul de pluginuri) și pot fi comutate individual de aici. Comutatorul adaugă sau elimină bundle-ul din lista de bundle-uri a profilului nucleului; nucleul reîncarcă modificarea din mers. Un bundle dezactivat nu este încărcat deloc, iar reactivarea îl restaurează.",
+ "跨会话搜索": "Căutare între sesiuni",
+ "开启后每个 Agent 获得一组只读检索工具，可搜索并引用当前工作区更早的会话；内容索引在首次搜索时打开、全 Agent 共享，侧栏搜索行为不变。": "Când este activat, fiecare Agent primește un set de instrumente de căutare doar pentru citire, cu care poate căuta și cita sesiuni anterioare din spațiul de lucru curent. Indexul de conținut se deschide la prima căutare și este partajat de toți Agenții; comportamentul căutării în bara laterală rămâne neschimbat.",
+ "多代理（Agent Teams）": "Agent Teams (mod multi-agent)",
+ "开启后 Agent 可把任务委派给团队成员协作完成：成员名册、共享任务板与队友会话在会话内可见。注意：多代理启用期间普通 Subagent 委派按内核设计一并停用。": "Când este activat, Agentul poate delega sarcini către membrii echipei și poate colabora cu ei: lista membrilor, tabla de sarcini partajată și sesiunile colegilor de echipă sunt vizibile în chat. Notă: cât timp Agent Teams este activat, delegarea obișnuită către Subagent este dezactivată prin designul nucleului.",
+ "启用跨会话搜索": "Activează căutarea între sesiuni",
+ "启用多代理": "Activează Agent Teams",
+ "回到底部": "Derulare în jos"
 }

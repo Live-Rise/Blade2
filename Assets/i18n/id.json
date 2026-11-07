@@ -1353,5 +1353,14 @@
  "设置二级页": "Subhalaman pengaturan",
  "关闭图片预览": "Tutup pratinjau gambar",
  "已更新": "Diperbarui",
- "附加内容块": "Blok konten terlampir"
+ "附加内容块": "Blok konten terlampir",
+ "实验性功能": "Fitur eksperimental",
+ "实验性功能由内核可选 bundle（插件层）提供，可在此逐项开关。开关增删内核 profile 的 bundle 清单，由内核热重载即时生效；关闭的 bundle 不参与加载，重新开启即恢复。": "Fitur eksperimental disediakan oleh bundle opsional kernel (lapisan plugin) dan dapat diaktifkan/nonaktifkan satu per satu di sini. Sakelar menambah atau menghapus entri pada daftar bundle di profil kernel, dan kernel memuat ulang panas sehingga langsung berlaku. Bundle yang dinonaktifkan tidak ikut dimuat, dan mengaktifkannya kembali akan memulihkannya.",
+ "跨会话搜索": "Pencarian lintas sesi",
+ "开启后每个 Agent 获得一组只读检索工具，可搜索并引用当前工作区更早的会话；内容索引在首次搜索时打开、全 Agent 共享，侧栏搜索行为不变。": "Saat aktif, setiap Agent mendapat satu set alat pencarian baca-saja untuk mencari dan mengutip sesi yang lebih lama di ruang kerja saat ini. Indeks konten dibuka pada pencarian pertama dan dipakai bersama oleh semua Agent; perilaku pencarian di panel samping tidak berubah.",
+ "多代理（Agent Teams）": "Multi-agen (Agent Teams)",
+ "开启后 Agent 可把任务委派给团队成员协作完成：成员名册、共享任务板与队友会话在会话内可见。注意：多代理启用期间普通 Subagent 委派按内核设计一并停用。": "Saat aktif, Agent dapat mendelegasikan tugas kepada anggota tim untuk dikerjakan bersama: daftar anggota, papan tugas bersama, dan sesi rekan tim terlihat di dalam sesi. Catatan: selama multi-agen aktif, delegasi subagent biasa juga dinonaktifkan sesuai desain kernel.",
+ "启用跨会话搜索": "Aktifkan pencarian lintas sesi",
+ "启用多代理": "Aktifkan multi-agen",
+ "回到底部": "Gulir ke bawah"
 }

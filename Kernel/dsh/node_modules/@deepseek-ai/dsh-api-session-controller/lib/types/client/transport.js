@@ -75,6 +75,7 @@ export class SessionEventStream extends RemoteJournalStream {
         let assistantRevision;
         for await (const frame of this.remote.session.follow({
             address: this.address,
+            activate: true,
             assistantStream: true,
             ...this.repairRequest(request),
         }, signal)) {

@@ -1004,6 +1004,10 @@ public sealed partial class MainWindow
             Style = AppTextStyle("CaptionTextStyle"),
             Foreground = brush,
             TextTrimming = TextTrimming.CharacterEllipsis,
+            // CaptionTextStyle 自带 TextWrapping=Wrap（Theme/Typography.xaml）：不显式压成
+            // NoWrap，长路径 chip（ToolCardPath/Url/Workdir）会折成三行把卡头撑高，
+            // CharacterEllipsis 在 Wrap 态下也轮不到生效。
+            TextWrapping = TextWrapping.NoWrap,
             MaxWidth = 280,
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -1023,6 +1027,11 @@ public sealed partial class MainWindow
             Padding = new Thickness(Sp4, 1, Sp4, 1),
         };
         HookPillRadius(chip);
+        // 280 DIP 内裁成省略号的长文本（路径/URL）悬停看全文；短 chip 不挂，免得悬停常弹。
+        if (text.Length > 48)
+        {
+            ToolTipService.SetToolTip(chip, text);
+        }
         return chip;
     }
 

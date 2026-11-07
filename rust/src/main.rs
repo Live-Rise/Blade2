@@ -382,6 +382,19 @@ enum Msg {
     Search(String),
     Scheme(Scheme),
     Select(String),
+    /// 一键置底浮钮（「回到底部」）的 `Click`。载荷零：目标恒是**绝对底部**，判据与主干
+    /// `ScrollTranscriptToBottom(force: true)` 那一族同口 —— 走 [`Shell::stick_transcript_chase`]
+    /// 估距追逐，不是只补「账本当前差的那几格」（用户上翻多深账本就记多深，但估距比账本
+    /// 外推更稳：过滚那一发被 `ScrollViewer` 边界夹住是免费的，少滚才是 bug 本身）。
+    ChatScrollToBottom,
+    /// 用户滚轮的轮询 tick（自 `spawn_background` 睡 ~200ms 一发；见 [`Shell::arm_wheel_tick`]）。
+    /// 为什么必须存在：分叉没有 `ViewChanged`，「用户上翻就该亮置底按钮」的唯一输入源是
+    /// 低级滚轮钩子的账本（[`scroll::USER_WHEEL_DIRTY`] 只置信号位），而空闲会话里没有
+    /// `Msg` 就永不重渲染 ⇒ 这条 tick 就是把账本搬进模型的泵：到点 `absorb_user_wheel()`
+    /// + 重武装；没有滚轮的那几拍零格数入账、渲染零变化。
+    /// 载荷 = 是否**心跳**（每 10s 一发，载荷真 = 泵还活着的取证行，不搬账）——
+    /// 驱动轮对账用：心跳在而滚轮 tick 不在 ⇒ 断的是钩子腿，不是泵。
+    ChatWheelTick(bool),
     Hover(Option<String>),
     /// 圆底钮**自己那一颗**的悬停档（`Some(key)` = 指针正在这颗钮上）。不能复用 `Hover`：
     /// 气泡卡的 Border 与钮内层 Border 都听 `PointerEntered`，冒泡顺序是内→外，同一个槽
@@ -4625,6 +4638,14 @@ const MEMORY_CONTENT_KEY: &str = "memory_content";
 const INSTRUCTIONS_SAVE_DEBOUNCE: Duration = Duration::from_millis(1000);
 const SKIN_OPACITY_SAVE_DEBOUNCE: Duration = Duration::from_millis(300);
 
+/// 用户滚轮轮询 tick 的节拍（[`Shell::arm_wheel_tick`]）。上翻那一发滚轮到按钮亮起的最坏
+/// 延迟 = 这一个窗口 + 一帧渲染；200ms 与主干 TurnRail 的 ViewChanged 节流档同量级，
+/// 空闲期每拍只做一次原子读，成本趋零。
+const WHEEL_POLL_INTERVAL: Duration = Duration::from_millis(200);
+/// 滚轮泵的心跳周期（拍数）：50 × [`WHEEL_POLL_INTERVAL`] = 10s 一发
+/// [`Msg::ChatWheelTick(true)`]，落一行 `SCROLL poller alive` 取证行。
+const WHEEL_HEARTBEAT_ROUNDS: u32 = 50;
+
 /// #140 B-2a：设置页自动保存那枚防抖窗口，逐字照主干 `ScheduleSettingsAutoSave()`
 /// （`MainWindow.xaml.cs:10428-10434`）里 `DispatcherTimer` 的 `Interval =
 /// TimeSpan.FromMilliseconds(400)`。主干每登记一次就 `Stop(); Tick -= ; Tick += ; Start();`
@@ -4651,13 +4672,13 @@ const BUBBLE_SLIDER_WIDTH: f64 = 220.0;
 const ABOUT_UPDATE_REPO: &str = "Live-Rise/Blade2";
 /// 主干 `ShellVersionText()`（`About.cs:43-59`）把 `Package.Id.Version` 四段拼成
 /// `{Major}.{Minor}.{Build}.{Revision}`，权威就是仓库根 `Package.appxmanifest:10` 那枚
-/// `Identity` 元素的 `Version`（今天现测 `0.9.0.4`）—— 第四段是**修订号**，不是恒零占位。
+/// `Identity` 元素的 `Version`（2026-11-06 现测 `0.9.0.5`）—— 第四段是**修订号**，不是恒零占位。
 /// 这里直接承载那四段字面值，**不**从 `CARGO_PKG_VERSION` 派生：cargo 只收三段 semver，
 /// 第四段在 `Cargo.toml` 里无处安放，于是任何 `concat!(env!("CARGO_PKG_VERSION"), ".N")`
 /// 的补段把戏都等于把第四段钉成常数 —— 主干一抬修订号，分叉就永远对不上（旧 `.0` 那版
 /// 正是这么错的，不是「数值落后」而是结构上不可能对齐）。这一串与主干清单是否仍一致由
 /// `about_copy_tests` 实读清单比对兜住：抬主干版本时同步这一行，忘了同步就红。
-const SHELL_VERSION: &str = "0.9.0.4";
+const SHELL_VERSION: &str = "0.9.0.5";
 
 /// D1 取证：`BLADE2_PILLDBG=1` 时把每次重绘选到的档位与收到的状态消息打到 stderr。
 /// ⚠ 走 `writeln!` + `let _ =` 而不是 `eprintln!`：GUI 子系统下 stderr 不连控制台，
@@ -12531,6 +12552,39 @@ impl Shell {
         Self::arm_settings_autosave_tick(context);
     }
 
+    /// 用户滚轮轮询 tick 的**自续**武装（置底按钮显隐的输入泵）。
+    ///
+    /// 形制逐字同 [`Shell::arm_instructions_tick`] 一族（`spawn_background` + 线程级 `sleep`，
+    /// 睡在非 UI 线程，一个帧都不挡），差一格：那几枚睡**一次**就回，这枚在后台线程里**循环
+    /// 等信号**（[`scroll::take_user_wheel_dirty`]，原子读 + 清位，每拍成本趋零）直到真的攒到了
+    /// 用户滚轮才回一发 [`Msg::ChatWheelTick(false)`]；每 10s 回一发心跳
+    /// [`Msg::ChatWheelTick(true)`] 作「泵还活着」的取证行（驱动轮对账用）。reducer 臂搬完账
+    /// **恒重武装** —— 这条泵活着才能接住下一次上翻。泵的生存期 = 组件的生存期
+    /// （token 取消 / 退役时交付侧作废）。
+    ///
+    /// 为什么不做成「只在聊天页才武装」：滚轮落点在不在正文带里由 [`Shell::absorb_user_wheel`]
+    /// 现判（不记账），泵自己无几何可判，全局常开是唯一不出错的形状。
+    fn arm_wheel_tick(context: &ComponentContext<Shell>) {
+        let _task = context.spawn_background(move |token| {
+            let mut rounds = 0u32;
+            loop {
+                // token 取消 / 组件退役：交付侧本来就会把回执作废（`ComponentTaskStatus::
+                // Cancelled`），这里兜在 `FnOnce` 必须回一条 Msg 的形状上，载荷随意。
+                if token.is_cancelled() {
+                    return Msg::ChatWheelTick(false);
+                }
+                std::thread::sleep(WHEEL_POLL_INTERVAL);
+                rounds += 1;
+                if scroll::take_user_wheel_dirty() {
+                    return Msg::ChatWheelTick(false);
+                }
+                if rounds % WHEEL_HEARTBEAT_ROUNDS == 0 {
+                    return Msg::ChatWheelTick(true);
+                }
+            }
+        });
+    }
+
     /// 主干 `SaveInstructions`（`MainWindow.Personalization.cs:278-309`）的分叉落点。
     /// 四步顺序照原文：①`MaxLength` 已在武装那一发过（`:30`，分叉在 `Msg::Field` 臂里补）；
     /// ②脏检 `if (!_instructionsDirty) return;`（`:279`）；③有正文就 `Trim() + NewLine` 写、
@@ -13329,6 +13383,103 @@ impl Shell {
             }
             refused => self.push_log(format!("SCROLL stick skip notches={notches} refused={refused:?}")),
         }
+    }
+
+    /// 贴底追逐的最大轮数。一轮 = 一次 [`scroll::MAX_BURST_NOTCHES`] 格的注入批（200 格 ≈ 9600 DIP）；
+    /// 4 轮 ≈ 38400 DIP 的滚动预算，盖过 200 行渲染上限（[`CHAT_TAIL`]) 的任何现实内容
+    /// （估距见 [`scroll::history_gap_estimate`]，逐行估高 + 一屏）。
+    const CHASE_MAX_ROUNDS: usize = 4;
+
+    /// 回读/落地后的**贴底追逐**（「点旧会话不置底」修批的主刀）。
+    ///
+    /// 旧口径（`Stick::bottom()` + 一次 [`Shell::scroll_transcript_to_bottom`]）只对「账本归 0
+    /// 恰好等于真贴底」的场景成立；切会话正文整棵换树，真实离底距离可能上万 DIP，账本记的 0
+    /// 与几何完全脱节 ⇒ `burst_for_gap(0)` 只给 3 格 ≈ 144 DIP，长历史必然停在半空。
+    ///
+    /// 追逐把账本先按**估距**立账（[`scroll::history_gap_estimate`]：逐气泡估高 + 一屏，
+    /// 全部宁大勿小 —— 高估被边界夹住免费，低估 = 停在半空），再循环补发：
+    /// 每轮按账本算格数（[`scroll::stick_action`] force 通路，与主干那句判据同一条）、发一发
+    /// [`scroll::post_wheel_burst_at_window_point`]、用**实际发出的格数**扣账
+    /// （[`scroll::Stick::user_roll`]，与用户滚轮同一条换算率），账本压进贴底阈值即收。
+    ///
+    /// 出口两条不变量（与旧口径对齐，调用方零感知）：
+    /// * **账本终值恒为 [`scroll::Stick::bottom`]** —— 注入被拒/落点不可信/轮数用尽，一律按
+    ///   「尽力了，账本回贴底」处理；后续 `follow_transcript_growth` 照常吸增量，置底按钮
+    ///   照常按账本隐没。唯一例外是轮与轮之间那几拍（账本还挂着余量），不外泄。
+    /// * **落点与过滚口径与 [`Shell::stick_transcript`] 逐字同一条**（[`stick_landing_point`]
+    ///   + [`RAIL_FROM_CHAT_RIGHT_DIP`]），光标瞬移一趟的代价（scroll.rs `inject_wheel`
+    ///   头注已备案）也同源 —— 只是多发几批。
+    ///
+    /// 调用点两个：`apply_history` 尾部（换会话/补拉回读落地）与 [`Msg::ChatScrollToBottom`]
+    /// （一键置底按钮，见 `scroll_to_bottom_button`）。都要求「目标就是绝对底部」，所以共用。
+    fn stick_transcript_chase(&mut self) {
+        self.absorb_user_wheel();
+        let Some(chat) = self.chat_box() else {
+            // 几何问不到（宿主全屏那一档 / 客户区失败）：与 `stick_transcript` 的 no-box 档
+            // 同一条回落 —— 一发不发，账本回贴底（别让后续跟随死在坏账上）。
+            self.push_log("SCROLL chase hold=no-box".to_string());
+            self.chat_stick = scroll::Stick::bottom();
+            return;
+        };
+        let chars: Vec<usize> = self
+            .bubbles
+            .iter()
+            .rev()
+            .take(CHAT_TAIL)
+            .map(|bubble| bubble.text.chars().count() + bubble.summary.chars().count())
+            .collect();
+        let est = scroll::history_gap_estimate(&chars, chat.right - chat.left, CHAT_BAND);
+        self.chat_stick = scroll::Stick::new(est);
+        self.push_log(format!(
+            "SCROLL chase begin rows={} est_dip={est:.0} force=true hook={}",
+            chars.len(),
+            scroll::wheel_watch_installed()
+        ));
+        for round in 0..Self::CHASE_MAX_ROUNDS {
+            let notches = match scroll::stick_action(self.chat_stick, true, CHAT_BAND) {
+                scroll::StickAction::Roll { notches, .. } => notches,
+                scroll::StickAction::Hold { reason, gap_dip } => {
+                    self.push_log(format!("SCROLL chase hold={reason} gap_dip={gap_dip:.0}"));
+                    break;
+                }
+            };
+            let Some((window, source)) =
+                stick_landing_point(&chat, chat.right - RAIL_FROM_CHAT_RIGHT_DIP)
+            else {
+                self.push_log("SCROLL chase hold=no-point".to_string());
+                break;
+            };
+            let posted = scroll::post_wheel_burst_at_window_point(notches, window);
+            match posted {
+                scroll::Posted::Sent { notches: sent, at } => {
+                    self.chat_stick = self.chat_stick.user_roll(sent, CHAT_BAND);
+                    self.push_log(format!(
+                        "SCROLL chase round={round} notches={sent} point=({},{}) anchor={} class={} route={} gap_dip={:.0}",
+                        at.x,
+                        at.y,
+                        source,
+                        posted.target_class(),
+                        posted.route(),
+                        self.chat_stick.gap_dip(),
+                    ));
+                    if self.chat_stick.is_at_bottom() {
+                        self.chat_stick = scroll::Stick::bottom();
+                        return;
+                    }
+                }
+                refused => {
+                    self.push_log(format!("SCROLL chase skip round={round} refused={refused:?}"));
+                    break;
+                }
+            }
+        }
+        // 轮数用尽仍没压进阈值：预算到顶，按「尽力了」收账（终值不变量见头注）。
+        self.chat_stick = scroll::Stick::bottom();
+        // 追逐这一路注入了几十格滚轮，而注入发生在**装钩子的那根线程**不泵消息的窗口里
+        // ⇒ 系统按 LowLevelHooksTimeout 逐发跳过、跳多了把钩子静默摘除（`refresh_wheel_watch`
+        // 头注里的实测在案）。收尾重装一发 = 给下一个超时预算，用户随后的上翻才有账可记。
+        let reinstalled = scroll::refresh_wheel_watch();
+        self.push_log(format!("SCROLL chase hook-refresh installed={reinstalled}"));
     }
 
     // ---- #65 轮次轨：重绑 / 目标定位 / 点击跳转 ------------------------------------------
@@ -15248,9 +15399,10 @@ impl Shell {
         // （`tmp/qa6-report.txt` 主代理收割段量的正是这个）。
         // 主干那边没有独立的一句「回读完成 ⇒ 贴底」，它是 `force: true` 那一族里的
         // `MW:7789`（发送后补拉历史那一刀）；分叉的切会话回读是同一种「整段内容刚进树」，
-        // 所以按同一条 `force: true` 处理，账本也在这里重立。
-        self.chat_stick = scroll::Stick::bottom();
-        self.scroll_transcript_to_bottom();
+        // 所以按同一条 `force: true` 处理。账本在这里重立：不再是强归 0 的旧口径（那会让
+        // `burst_for_gap(0)` 只发 3 格，长历史必然停在半空——「点旧会话不置底」的根因），
+        // 改成按估距立账、循环补发到压进贴底阈值的追逐（`stick_transcript_chase` 头注）。
+        self.stick_transcript_chase();
     }
 
     /// 主干 `LoadSessionHistoryAsync` 尾段的标题回填（:4954-4964）：投影缺失的旧会话左栏
@@ -19390,6 +19542,10 @@ impl Component for Shell {
             "DIAG: WHEELWATCH installed={wheel_watch} —— 贴底的「用户上翻」判据输入源；\
              false ⇒ #89 退回恒跟随（与主干拿不到滚动面时同一条回落）"
         ));
+        // 置底按钮显隐的输入泵（`Msg::ChatWheelTick`）：钩子只置原子信号位，账本要等这条
+        // tick 搬 —— 空闲会话「没有 Msg 就不重渲染」，泵不开按钮就永远跟不上上翻。
+        Self::arm_wheel_tick(context);
+        shell.push_log("DIAG: WHEELPOLL armed —— 置底按钮显隐的滚轮泵（200ms 拍）".to_string());
         shell
     }
 
@@ -22420,6 +22576,43 @@ impl Component for Shell {
                 self.hover = key;
             }
             Msg::Press(key) => self.pressed = key,
+            // 一键置底浮钮：目标恒为绝对底部 ⇒ 与回读落地同一把追逐（估距立账 + 循环补发，
+            // `stick_transcript_chase` 头注），发完的下一帧账本回贴底 ⇒ 按钮随渲染自然隐没。
+            Msg::ChatScrollToBottom => self.stick_transcript_chase(),
+            // 用户滚轮 tick：把钩子攒的格数搬进账本（搬完这一发自然触发一次重渲染，
+            // 置底按钮的显隐跟着账本走）。**恒重武装**——这条泵活着才能接住下一次上翻；
+            // 没有 Msg 就不重渲染的空闲会话全靠它醒。tick 行本身是驱动轮的取证点：
+            // 它出现 = 泵与钩子都在，缺它 = 两者之一没接上（对账见 absorb 的 user 行）。
+            Msg::ChatWheelTick(heartbeat) => {
+                if heartbeat {
+                    // 泵健康取证行：只在驱动轮取证时读；正常会话里 10s 一行 DIAG 不进界面。
+                    // seen/recorded/drop 三件套把「账本没记」钉到具体那道闸：seen 不涨 =
+                    // 钩子没被叫到；seen 涨而 recorded 不涨 = 剔在路由/手签（drop 编号）；
+                    // recorded 涨而 tick 不来 = 泵腿（心跳自己证明泵活着，矛盾即竞态）。
+                    let (seen, recorded, drop) = scroll::user_wheel_forensics();
+                    let (hit, top) = scroll::last_route_pair();
+                    let (tagged, foreign, raw) = scroll::seen_buckets();
+                    let (px, py, flags, extra, delta) = scroll::last_seen_sample();
+                    self.push_log(format!(
+                        "SCROLL poller alive seen={seen} tagged={tagged} foreign={foreign} hw={raw} recorded={recorded} drop={drop} route=({hit:#x},{top:#x}) last=(pt {px},{py} flags={flags:#x} extra={extra:#x} delta={delta}) gap_dip={:.0}",
+                        self.chat_stick.gap_dip()
+                    ));
+                    // 心跳顺手给钩子换气（见 refresh_wheel_watch 头注）：流式那一路每拍 3 格
+                    // 的注入同样在磨超时预算，10s 一重装把钩子钉在岗上。账本零丢失（先取后放）。
+                    let reinstalled = scroll::refresh_wheel_watch();
+                    self.push_log(format!(
+                        "SCROLL poller hook-refresh installed={reinstalled}"
+                    ));
+                    Self::arm_wheel_tick(context);
+                    return;
+                }
+                self.push_log(format!(
+                    "SCROLL tick gap_dip={:.0}",
+                    self.chat_stick.gap_dip()
+                ));
+                self.absorb_user_wheel();
+                Self::arm_wheel_tick(context);
+            }
             // 钮级悬停与行级提亮分槽，所以这条消息**不碰** `hover` / `copied`：
             // 指针从行内钮挪回正文时，那一行还得保持提亮（主干整卡 PointerEntered 只管卡）。
             Msg::PillHover(key) => self.pill_hover = key,
@@ -24468,6 +24661,65 @@ impl Shell {
                 .content(row)
                 .into(),
         )
+    }
+
+    /// 一键置底浮钮（「回到底部」）。主干没有这颗钮（用户口径：WinUI3 规范的圆形向下
+    /// 箭头、置于输入框上方）⇒ 分叉的新增件，判据与主干 `IsTranscriptAtBottom()` 同一条
+    /// 阈值（`STICK_TO_BOTTOM_DIP` = 96），只是几何量换成账本：`chat_stick.gap_dip()` 在
+    /// 阈值内（含贴底）整棵不入树（reactor 无 `Visibility`，取舍臂长在 `chat_page` 那格）。
+    ///
+    /// 刻法 = 圆底钮那一族（[`pill_button`]）：Button 在 reactor 里没有 background /
+    /// corner_radius 出口（`button_ghost` 头注），可见的圆是**内容里那层 Border** ——
+    /// ghost 四态钉透明 + 负 margin（[`TEMPLATE_INSET`]）抵掉模板 padding；面与描边与
+    /// goal-bar 同一浮层 chrome，32×32 整圆（CornerRadius 16 = 短边一半，主干
+    /// `CornerPill(24)` 在 32 高上等于整圆的同档算术），字形
+    /// [`glyph::SCROLL_TO_BOTTOM`]（向下 chevron，14px）。悬停复用 [`Msg::PillHover`]
+    /// 那套键位槽把面换次档卡色（键自造「scroll-bottom」，全仓无撞名）。
+    /// Name / tooltip 同串过表（主干成规，同 [`Shell::goal_bar_view`] 那颗「管理」）；
+    /// `Click` 投 [`Msg::ChatScrollToBottom`]。
+    ///
+    /// 落位（也在本函数里定，调用方只有 `chat_page` 一处）：视口网格（`[Auto,*]` 两行）
+    /// 的行 1 底缘居中 —— 即正文流底部、composer 带之上；`grid_row(1)` + Bottom +
+    /// 底边距 12 与 goal-bar 的浮层写法同族，只是宿主换成**视口**那一格（外层行 1 是
+    /// goal-bar / 提问 / 审批卡的 contested 槽，浮钮不进那一格就永远不会和它们抢位置）。
+    fn scroll_to_bottom_button(&self, context: &mut ViewContext<Shell>, p: Palette) -> View {
+        let label = self.catalog.l("回到底部");
+        let hovered = self.pill_hover.as_deref() == Some("scroll-bottom");
+        let entered = "scroll-bottom".to_string();
+        // 面：rest = CardBrush，悬停 = CardSecondaryBrush（同一浮层 chrome 的轻档反馈）。
+        let face = if hovered { p.card_secondary.clone() } else { p.card.clone() };
+        let button: View = Button::new()
+            .width(size::SHELL_BACK_BUTTON)
+            .height(size::SHELL_BACK_BUTTON)
+            .min_width(0.0)
+            .min_height(0.0)
+            .grid_row(1)
+            .vertical_alignment(VerticalAlignment::Bottom)
+            .horizontal_alignment(HorizontalAlignment::Center)
+            .margin(th([0.0, 0.0, 0.0, space::S12]))
+            .resource_overrides(button_ghost(None))
+            .automation_id("ScrollToBottomButton")
+            .automation_name(label.clone())
+            .on_click(context.message(Msg::ChatScrollToBottom))
+            .content(
+                Border::new()
+                    .width(size::SHELL_BACK_BUTTON)
+                    .height(size::SHELL_BACK_BUTTON)
+                    .margin(th(TEMPLATE_INSET))
+                    .corner_radius(radius::XLARGE)
+                    .background(face)
+                    .border_brush(p.stroke.clone())
+                    .border_thickness(size::STROKE)
+                    .horizontal_alignment(HorizontalAlignment::Center)
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .on_pointer_entered(context.callback(move |_| {
+                        Msg::PillHover(Some(entered.clone()))
+                    }))
+                    .on_pointer_exited(context.callback(move |_| Msg::PillHover(None)))
+                    .content(mark_size(glyph::SCROLL_TO_BOTTOM, size::GLYPH_BODY)),
+            )
+            .into();
+        button.tooltip(label)
     }
 }
 
@@ -28232,6 +28484,18 @@ impl Shell {
             "stream",
             Border::new().grid_row(1).content(stream),
         ));
+        // 一键置底浮钮（「回到底部」）：挂在流**之后**（后入者在上 ⇒ 浮在正文之上），
+        // 宿主是视口这一格的行 1 底缘（= composer 带之上）——外层行 1 是 goal-bar /
+        // 提问 / 审批卡的 contested 槽，浮钮不进那一格。判据与主干 `IsTranscriptAtBottom()`
+        // 同一条阈值（96），几何量换账本：`chat_stick` 压进阈值（含贴底）或正文为空
+        // （空态那一档本来就没有可滚的东西）⇒ 整棵不入树；显隐随账本走，账本由
+        // `Msg::ChatWheelTick` 那条泵搬（空闲会话没有 Msg 就不重渲染，全靠它醒）。
+        if !self.chat_stick.is_at_bottom() && !self.bubbles.is_empty() {
+            viewport_cells.push(KeyedView::new(
+                "scroll-bottom",
+                self.scroll_to_bottom_button(context, p),
+            ));
+        }
         let viewport: View = Grid::new()
             .rows([GridLength::Auto, GridLength::STAR])
             .keyed_children(viewport_cells)
@@ -41482,13 +41746,14 @@ mod pill_tests {
             assert_eq!(TEMPLATE_INSET[side], -(PADDING[side] + 1.0));
         }
         let src = include_str!("main.rs");
-        // 六处：pill_button / nav_row / feedback_toggle / SettingsSubBack / PluginsNav_*
+        // 七处：pill_button / nav_row / feedback_toggle / SettingsSubBack / PluginsNav_*
         // / SkinWeNavCard（皮肤导入扩面新增的 Wallpaper Engine 子页卡，与 PluginsNav 同族）
+        // / scroll_to_bottom_button（一键置底浮钮：ghost 钮 + Border 画圆的同一族自绘点）
         // （探针字符串拼起来写，免得这条断言把自己也数进去）
         let probe = concat!("th(TEMPLATE_", "INSET)");
         assert_eq!(
             src.matches(probe).count(),
-            6,
+            7,
             "自绘点必须统一走 TEMPLATE_INSET，一处不多一处不少"
         );
         // 上一版那份只抵 Padding 的字面量不得复活（同样拼起来写，免得这条断言自己匹配自己）
@@ -64791,14 +65056,16 @@ mod journal_bulk_scroll_gate_tests {
             "批内不许另开逐帧跟随腿：那正是本刀要压成批尾一发的那一串"
         );
         assert_eq!(
-            w.matches(concat!("scroll_transcript_to_", "bottom();")).count(),
+            w.matches(concat!("stick_transcript_", "chase();")).count(),
             1,
-            "批尾那一发不许吞（force=true 天然过闸），也不许补第二发"
+            "批尾那一发不许吞（force=true 天然过闸），也不许补第二发：贴底一律走估距追逐 \
+             （「点旧会话不置底」修批），账本重立搬进了 `stick_transcript_chase` 那一格"
         );
         assert_eq!(
             w.matches(concat!("self.chat_stick = scroll::Stick::", "bottom();")).count(),
-            1,
-            "批尾账本重立是 #89/#204 的家，本刀不许顺手改它"
+            0,
+            "批尾账本重立已搬进 `stick_transcript_chase`（估距立账 + 注入被拒/轮数用尽都回贴底）\
+             ，本窗里不许再有第二处直写账本"
         );
 
         assert_eq!(

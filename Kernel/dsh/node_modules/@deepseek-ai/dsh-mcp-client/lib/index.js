@@ -689,9 +689,10 @@ function startConnection(ctx, config, policy) {
 				signal: exec.signal,
 				timeout: config.toolCallTimeoutMs
 			};
+			const listable = generation.getServerCapabilities()?.resources !== void 0;
 			switch (request.method) {
-				case "resources/list": return await generation.listResources(request.cursor === void 0 ? void 0 : { cursor: request.cursor }, options);
-				case "resources/templates/list": return await generation.listResourceTemplates(request.cursor === void 0 ? void 0 : { cursor: request.cursor }, options);
+				case "resources/list": return listable ? await generation.listResources(request.cursor === void 0 ? void 0 : { cursor: request.cursor }, options) : { resources: [] };
+				case "resources/templates/list": return listable ? await generation.listResourceTemplates(request.cursor === void 0 ? void 0 : { cursor: request.cursor }, options) : { resourceTemplates: [] };
 				case "resources/read": return await generation.readResource({ uri: request.uri }, options);
 				/* v8 ignore next 2 -- resource requests are the closed, typed tool operation union */
 				default: return assertNever(request);

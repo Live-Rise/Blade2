@@ -89,6 +89,7 @@
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::panic::{self, AssertUnwindSafe};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 // ---------------------------------------------------------------- Win32 入口
 
@@ -177,10 +178,19 @@ const WH_MOUSE_LL: i32 = 14;
 /// 钩子 proc 的 `code == HC_ACTION`（低级钩子只有这一种 code 会带真事件）。
 const HC_ACTION: i32 = 0;
 
-/// `MSLLHOOKSTRUCT::flags` 的 `LLMHF_INJECTED` 位：这一发是 `SendInput` 注进来的。
-/// 分叉自己那发贴底滚轮会被**同一个钩子**看见，不认这一位就会把「我滚的」记成「用户滚的」，
-/// 贴底账本立刻假。**但只认这一位不够**（测试驱动也用 `SendInput`）⇒ 判据在 [`is_own_wheel`]。
-const LLMHF_INJECTED: u32 = 0x10;
+/// `MSLLHOOKSTRUCT::flags` 的注入位：这一发是 `SendInput` 注进来的（文档位 0x1；
+/// 0x2 = LOWER_INJECTED，同一族一并认）。分叉自己那发贴底滚轮会被**同一个钩子**看见，
+/// 不认这一位就会把「我滚的」记成「用户滚的」，贴底账本立刻假。
+/// **但只认这一位不够**（测试驱动也用 `SendInput`）⇒ 判据在 [`is_own_wheel`]。
+/// ⚠ 建仓时这里曾写成 `0x10` —— 那是**键盘**侧 `LLKHF_INJECTED` 的值，鼠标侧的
+/// `LLMHF_INJECTED` 是 0x1（2026-11-06 驱动轮取证行 `flags=0x1` 实测钉死）。
+const LLMHF_INJECTED: u32 = 0x1;
+const LLMHF_LOWER_INJECTED: u32 = 0x2;
+
+/// 「这一发是注入的」判据（[`is_own_wheel`] 与取证分桶共用同一条）。
+fn flags_injected(flags: u32) -> bool {
+    flags & (LLMHF_INJECTED | LLMHF_LOWER_INJECTED) != 0
+}
 
 /// WinUI 3 桌面窗口的顶层窗口类（实测 `tmp/keys-probe-report.txt` 第一行
 /// `class=WinUIDesktopWin32WindowClass`）。所有 XAML 内容都在它下面。
@@ -773,6 +783,50 @@ pub enum StickAction {
     Hold { reason: &'static str, gap_dip: f64 },
 }
 
+// ---------------------------------------------------------------- 纯函数：回读估距（切会话贴底追逐的账本种子）
+//
+// 切会话/回读落地那一发与逐字增量那一发有本质区别：整棵正文刚换树，账本此前记的 0 与
+// 真实几何毫无关系 —— `ScrollViewer` 偏移读不回来（模块头注在案），离底距离只能**估**。
+// 估距三件套全是**宁大勿小**的宽估：高估免费（过滚被 `ScrollViewer` 边界夹住，
+// [`OVER_ROLL_NOTCHES`] 同一条定理）；低估才是 bug 本身 —— 账本提前清零 ⇒ 停在半空，
+// 而且账本还以为贴了底，连「再点一下置底」的按钮都不亮。
+
+/// 一行正文的估高（DIP）。Body 字号下实测一行 ≈ 20 DIP 行距，取整偏大。
+pub const EST_LINE_DIP: f64 = 24.0;
+
+/// 单字符估宽（DIP）。全角（中文）≈ 字号 14–16、拉丁 ≈ 8 —— 取**全角档**：同一段文本
+/// 折出的行数只会估多不会估少。
+pub const EST_CHAR_DIP: f64 = 16.0;
+
+/// 每条气泡自身的 chrome（DIP）：行 margin + 卡头/操作行/气泡 padding 的下界合计。
+/// 正文一个字都没有的行（工具行/占位）也至少占这么多。
+pub const EST_ROW_CHROME_DIP: f64 = 40.0;
+
+/// 单条气泡的估高（DIP），下限 = [`Band::row_dip`]（调用方传 `main.rs` 的
+/// `CHAT_ROW_DIP` 那一档，与逐字增量的记账口径同一条底线）。
+/// 带宽不可信（≤0 / NaN）时按「一行一个字符」估到最满 —— 「宁大勿小」的极端档。
+#[must_use]
+pub fn bubble_row_height_dip(text_chars: usize, band_width_dip: f64, band: Band) -> f64 {
+    let chars_per_line = if band_width_dip.is_finite() && band_width_dip > 0.0 {
+        ((band_width_dip / EST_CHAR_DIP).floor() as usize).max(1)
+    } else {
+        1
+    };
+    let lines = text_chars.div_ceil(chars_per_line).max(1) as f64;
+    (lines * EST_LINE_DIP + EST_ROW_CHROME_DIP).max(band.row_dip)
+}
+
+/// 回读落地后的离底估距：逐气泡估高求和 + 一屏余量（视口那一屏本身也要滚过去，
+/// 与主干 `ScrollableHeight` 里含的那一屏同口径）。
+#[must_use]
+pub fn history_gap_estimate(text_chars: &[usize], band_width_dip: f64, band: Band) -> f64 {
+    text_chars
+        .iter()
+        .map(|&c| bubble_row_height_dip(c, band_width_dip, band))
+        .sum::<f64>()
+        + band.page_dip
+}
+
 // ---------------------------------------------------------------- 线程内状态
 //
 // 与 `keys.rs` 同一条理由：这些只能在 UI 线程上用（`Rc<RefCell<…>>` 非 `Send`），
@@ -796,6 +850,104 @@ thread_local! {
     /// 这里**只有诊断信息**，不参与任何决策 ⇒ 子窗口句柄绝不当缓存用（见 [`post_target`]）。
     static LAST_TARGET: Cell<(usize, &'static str, &'static str)> =
         const { Cell::new((0, CLASS_NONE, ROUTE_NONE)) };
+}
+
+/// 「钩子攒到了至少一发用户滚轮」的跨线程信号位。
+///
+/// 为什么必须是一枚 `static AtomicBool` 而不是又一个 `thread_local`：`USER_WHEEL` 只能被
+/// UI 线程读写（钩子回调与取走都在 UI 线程那条消息泵上），可「没有 Msg 就不重渲染」的
+/// 空闲会话里，UI 线程永远不会自己醒 —— 置底按钮的显隐要跟上用户上翻，就得有个人去戳
+/// `main.rs` 那条 `spawn_background` 轮询 tick（同 `arm_instructions_tick` 一族成规）。
+/// 后台线程只**读这一枚位**（`swap` 清位），真正的账本 `USER_WHEEL` 仍由 UI 线程的
+/// `Shell::absorb_user_wheel` 在收到 `Msg` 后取走 —— 数据面零跨线程。
+static USER_WHEEL_DIRTY: AtomicBool = AtomicBool::new(false);
+
+/// 后台轮询用：取走并清掉「有用户滚轮」的信号位。`true` = 自上次取走后至少攒到过一发。
+pub fn take_user_wheel_dirty() -> bool {
+    USER_WHEEL_DIRTY.swap(false, Ordering::Relaxed)
+}
+
+/// 钩子**见过**的滚轮事件总数（进入 [`note_user_wheel`] 判定体的每一发，含被路由/手签
+/// 剔掉的）。只增不减、从不精确消费 ⇒ 纯取证计数：心跳行里带着它，就能把「钩子根本没
+/// 被叫到」（计数不动）与「钩子叫到了但记账被剔」（计数动而账本不动）这两条死腿分开。
+static USER_WHEEL_SEEN: AtomicU32 = AtomicU32::new(0);
+
+/// 取证读口：钩子至今见过的滚轮事件总数（见该位模块级注释）。
+pub fn user_wheel_seen() -> u32 {
+    USER_WHEEL_SEEN.load(Ordering::Relaxed)
+}
+
+/// 钩子**记进账本**的滚轮事件总数（走到 `USER_WHEEL` 入账那一拍的每一发）。
+/// `seen - recorded` 的差值 = 在下游被剔掉的部分；`drop_reason` 说明最后一发剔在哪道闸。
+static USER_WHEEL_RECORDED: AtomicU32 = AtomicU32::new(0);
+
+/// 最后一发被剔的原因（0 = 没剔过 / 1 = 自家手签 / 2 = 顶层解析失败 / 3 = 路由归属剔）。
+/// 纯取证：心跳行带出去，把「账本没记」钉到具体那一道闸上。
+static USER_WHEEL_DROP: AtomicU32 = AtomicU32::new(0);
+
+const DROP_NONE: u32 = 0;
+const DROP_OWN: u32 = 1;
+const DROP_NO_TOP: u32 = 2;
+const DROP_ROUTE: u32 = 3;
+/// delta 为 0 的滚轮事件（系统偶发/驱动噪声）：不是自家手签，也不是真用户滚动。
+const DROP_ZERO: u32 = 4;
+
+/// 取证读口：`(见过, 已入账, 最后一发被剔原因)`。
+pub fn user_wheel_forensics() -> (u32, u32, u32) {
+    (
+        USER_WHEEL_SEEN.load(Ordering::Relaxed),
+        USER_WHEEL_RECORDED.load(Ordering::Relaxed),
+        USER_WHEEL_DROP.load(Ordering::Relaxed),
+    )
+}
+
+/// 路由剔那一发的现场：`(hit, top)` 两枚句柄（截成 u32 存）。`hit == 0` = WindowFromPoint
+/// 没命中；两者相等 = `hit == top` 早退臂；不等 = 看 pid/root 那两道。心跳行带出去，
+/// 「路由剔」就不再是黑盒。
+static LAST_ROUTE_HIT: AtomicU32 = AtomicU32::new(0);
+static LAST_ROUTE_TOP: AtomicU32 = AtomicU32::new(0);
+
+/// 取证读口：路由剔那一发的 `(hit, top)` 原始句柄（u32 截断，只配对不相等用）。
+pub fn last_route_pair() -> (u32, u32) {
+    (LAST_ROUTE_HIT.load(Ordering::Relaxed), LAST_ROUTE_TOP.load(Ordering::Relaxed))
+}
+
+/// 见过那几发的**三桶分流**（seen 的细分，互斥穷举）：
+/// * tagged = 自家手签（INJECT_TAG）——追逐/流式自己注入的；
+/// * injected = 外来注入（LLMHF_INJECTED 但不带自家手签）——驱动轮 / 自动化工具；
+/// * raw = 真·硬件滚轮。
+/// 心跳行带出去：「外来注入为 0 而驱动轮确实发了」= 系统层跳过（超时预算），不是代码剔。
+static SEEN_TAGGED: AtomicU32 = AtomicU32::new(0);
+static SEEN_INJECTED: AtomicU32 = AtomicU32::new(0);
+static SEEN_RAW: AtomicU32 = AtomicU32::new(0);
+
+/// 取证读口：`(tagged, injected, raw)` 三桶计数。
+pub fn seen_buckets() -> (u32, u32, u32) {
+    (
+        SEEN_TAGGED.load(Ordering::Relaxed),
+        SEEN_INJECTED.load(Ordering::Relaxed),
+        SEEN_RAW.load(Ordering::Relaxed),
+    )
+}
+
+/// 最后一发见过的滚轮事件的**原样现场**：`(pt_x, pt_y, flags, extra_lo, delta)`。
+/// extra 是 64 位手签的低 32 位（高位恒 0xB0DE_2F00，低 32 位足以辨身）；
+/// pt 原样（物理屏幕坐标）。心跳行带出去，「路由剔 / pt 失真 / delta 归零」当场现形。
+static LAST_SEEN_PT_X: AtomicU32 = AtomicU32::new(0);
+static LAST_SEEN_PT_Y: AtomicU32 = AtomicU32::new(0);
+static LAST_SEEN_FLAGS: AtomicU32 = AtomicU32::new(0);
+static LAST_SEEN_EXTRA: AtomicU32 = AtomicU32::new(0);
+static LAST_SEEN_DELTA: AtomicU32 = AtomicU32::new(0);
+
+/// 取证读口：最后一发见过的滚轮事件的 `(pt_x, pt_y, flags, extra_lo, delta)`。
+pub fn last_seen_sample() -> (u32, u32, u32, u32, u32) {
+    (
+        LAST_SEEN_PT_X.load(Ordering::Relaxed),
+        LAST_SEEN_PT_Y.load(Ordering::Relaxed),
+        LAST_SEEN_FLAGS.load(Ordering::Relaxed),
+        LAST_SEEN_EXTRA.load(Ordering::Relaxed),
+        LAST_SEEN_DELTA.load(Ordering::Relaxed),
+    )
 }
 
 /// 锚点属于哪条滚动带 —— #89 需要知道「用户这一发滚轮滚的是不是正文」。
@@ -1373,7 +1525,12 @@ fn point_in_window(hwnd: usize, point: Point) -> bool {
 /// * 「这一发是不是分叉自己注的」**不在这里判** —— 见 [`is_own_wheel`]：只按 [`LLMHF_INJECTED`]
 ///   挡会把测试驱动的模拟滚轮一起挡掉，那条规则就当没实现过。
 pub fn user_wheel_notches(mouse_data: u32) -> Option<i32> {
-    let delta = ((mouse_data & 0xFFFF) as u16) as i16 as i32;
+    // MSLLHOOKSTRUCT.mouseData 对 WM_MOUSEWHEEL 的口径与 wParam 同族：**delta 在高字**
+    // （`GET_WHEEL_DELTA_WPARAM = (short)HIWORD(wParam)` 同一条打包法）。本机驱动轮实测
+    // `mouseData = 0x78_0000` = +120 << 16，低字恒 0 —— 建仓版读低字，delta 恒 0 ⇒ 钩子
+    // 看见了也永远记不进账：「用户上翻就停止跟随」与置底按钮的显隐输入从建仓起就是死的
+    // （单测喂的是手工值，量不出这个错）。
+    let delta = (((mouse_data >> 16) & 0xFFFF) as u16) as i16 as i32;
     let notches = -delta / WHEEL_DELTA;
     (notches != 0).then_some(notches)
 }
@@ -1391,7 +1548,7 @@ const INJECT_TAG: usize = 0xB0DE_2F00_0000_0001;
 /// 也会被一起挡掉 ⇒ #89 的「停止跟随」那条规则在真机上永远测不到（这是本模块刻意要避免的
 /// 「假实现」：判据在，输入源被自己掐了）。
 pub fn is_own_wheel(flags: u32, extra_info: usize) -> bool {
-    flags & LLMHF_INJECTED != 0 && extra_info == INJECT_TAG
+    flags_injected(flags) && extra_info == INJECT_TAG
 }
 
 /// 钩子那一发**该不该记进贴底账本**：自家的不算、不到一格的不算。纯函数（[`is_own_wheel`] 与
@@ -1434,10 +1591,39 @@ pub fn uninstall_wheel_watch() -> bool {
     let handle = WHEEL_HOOK.with(|slot| slot.get());
     WHEEL_HOOK.with(|slot| slot.set(std::ptr::null_mut()));
     USER_WHEEL.with(|slot| slot.set(None));
+    USER_WHEEL_DIRTY.store(false, Ordering::Relaxed);
     if handle.is_null() {
         return true;
     }
     unsafe { UnhookWindowsHookEx(handle) != 0 }
+}
+
+/// 给钩子**换一口气**：卸了重装（账本与信号位原样保留，`uninstall_wheel_watch` 的清账不适用）。
+///
+/// 为什么需要它：`WH_MOUSE_LL` 的回调在**装它的那个线程**上投递，而那根线程在 update 闭包
+/// 里注入贴底滚轮的那段时间**不在泵消息** ⇒ 这一段时间里每一发滚轮的钩子通知都在等它，
+/// 等过系统的 `LowLevelHooksTimeout` 就被跳过；跳过累计多了，系统会**把钩子静默摘除**
+/// —— 实测（`tmp/sb5-run.rs.txt` 心跳三件套）：81 格追逐之后钩子对**一切**滚轮装聋
+/// （`seen` 恒 0），而 `wheel_watch_installed()` 仍报 true，因为句柄还在、链上没人了。
+/// 追逐收尾 / 心跳到点重装一发 = 给系统一个新的超时预算，钩子重新上岗；
+/// 账本那格先取后放、信号位按原值回写，账面零丢失。
+pub fn refresh_wheel_watch() -> bool {
+    let handle = WHEEL_HOOK.with(|slot| slot.get());
+    if handle.is_null() {
+        return false;
+    }
+    unsafe {
+        UnhookWindowsHookEx(handle);
+    }
+    let pending = USER_WHEEL.with(|slot| slot.take());
+    let dirty = take_user_wheel_dirty();
+    WHEEL_HOOK.with(|slot| slot.set(std::ptr::null_mut()));
+    let reinstalled = install_wheel_watch();
+    USER_WHEEL.with(|slot| slot.set(pending));
+    if dirty {
+        USER_WHEEL_DIRTY.store(true, Ordering::Relaxed);
+    }
+    reinstalled
 }
 
 /// 钩子是否还挂着（诊断行用）。
@@ -1471,6 +1657,27 @@ fn note_user_wheel(code: i32, w_param: usize, l_param: *const c_void) {
     if code != HC_ACTION || l_param.is_null() {
         return; // 被忽略的 code：低级钩子是全局热点，先返回再说话
     }
+    if w_param == WM_MOUSEWHEEL as usize {
+        // 取证计数在所有守卫之前：驱动轮的心跳行靠它分辨「钩子没被叫到」与「叫到了但
+        // 被剔」。只增不减、Relaxed，成本一次原子加，钩子热路径吃得起。三桶分流见
+        // SEEN_TAGGED 那一族注释。
+        let _ = USER_WHEEL_SEEN.fetch_add(1, Ordering::Relaxed);
+        let raw = unsafe { &*(l_param as *const WinMouseHookStruct) };
+        let injected = flags_injected(raw.mouse_flags);
+        let bucket = if raw.extra_info == INJECT_TAG {
+            &SEEN_TAGGED
+        } else if injected {
+            &SEEN_INJECTED
+        } else {
+            &SEEN_RAW
+        };
+        let _ = bucket.fetch_add(1, Ordering::Relaxed);
+        LAST_SEEN_PT_X.store(raw.point.x as u32, Ordering::Relaxed);
+        LAST_SEEN_PT_Y.store(raw.point.y as u32, Ordering::Relaxed);
+        LAST_SEEN_FLAGS.store(raw.mouse_flags, Ordering::Relaxed);
+        LAST_SEEN_EXTRA.store(raw.extra_info as u32, Ordering::Relaxed);
+        LAST_SEEN_DELTA.store(raw.mouse_data, Ordering::Relaxed);
+    }
     if w_param == WM_MOUSEHWHEEL {
         return; // 横向滚轮：本模块只记竖向
     }
@@ -1479,10 +1686,15 @@ fn note_user_wheel(code: i32, w_param: usize, l_param: *const c_void) {
     }
     let raw = unsafe { &*(l_param as *const WinMouseHookStruct) };
     let Some(notches) = observed_wheel(raw.mouse_flags, raw.mouse_data, raw.extra_info) else {
+        // 自家手签那一发（额外信息对上 INJECT_TAG）才叫 OWN；delta=0 的噪声另归 ZERO，
+        // 两种在心跳取证行里是两回事。
+        let reason = if raw.extra_info == INJECT_TAG { DROP_OWN } else { DROP_ZERO };
+        USER_WHEEL_DROP.store(reason, Ordering::Relaxed);
         return;
     };
     let at = Point { x: raw.point.x, y: raw.point.y };
     let Some(top) = hwnd() else {
+        USER_WHEEL_DROP.store(DROP_NO_TOP, Ordering::Relaxed);
         return;
     };
     // 归属判定复用发送侧那同一条 [`pick_route`]：不是自家窗口上的滚轮与贴底账本无关。
@@ -1496,9 +1708,16 @@ fn note_user_wheel(code: i32, w_param: usize, l_param: *const c_void) {
         }
     }
     if pick_route(hit, hit_pid, unsafe { GetCurrentProcessId() }, root, top) != Route::Inject {
+        USER_WHEEL_DROP.store(DROP_ROUTE, Ordering::Relaxed);
+        LAST_ROUTE_HIT.store(hit as u32, Ordering::Relaxed);
+        LAST_ROUTE_TOP.store(top as u32, Ordering::Relaxed);
         return;
     }
     USER_WHEEL.with(|slot| slot.set(Some(merge_user_wheel(slot.get(), notches, at))));
+    // 跨线程信号位只表示「攒到了」，不承载格数本身（数据面见该位的模块级注释）。
+    USER_WHEEL_DIRTY.store(true, Ordering::Relaxed);
+    USER_WHEEL_DROP.store(DROP_NONE, Ordering::Relaxed);
+    let _ = USER_WHEEL_RECORDED.fetch_add(1, Ordering::Relaxed);
 }
 
 #[cfg(test)]
@@ -2002,30 +2221,32 @@ mod tests {
     // ---- #89 的输入源：用户滚轮观测（分叉版 `ViewChanged`）--------------------------------
 
     /// 钩子那一发的增量 → 本模块符号：**向尾端为正**，与 `wheel_delta` 恰好反号。
+    /// ⚠ 增量在 `MSLLHOOKSTRUCT::mouseData` 的**高字**（与 `wParam` 的
+    /// `GET_WHEEL_DELTA_WPARAM` 同一条打包法；本机实测 0x78_0000 = +120，见
+    /// `user_wheel_notches` 头注——建仓版读低字，账本恒空）。
     #[test]
     fn observed_wheel_uses_the_module_sign_convention() {
-        // 真滚轮向下（向尾端）：增量 -120 → 记 +1 格。
-        assert_eq!(user_wheel_notches((-WHEEL_DELTA) as u32), Some(1));
-        assert_eq!(user_wheel_notches((3 * WHEEL_DELTA) as u32), Some(-3), "向上翻 3 格");
-        assert_eq!(user_wheel_notches((-3 * WHEEL_DELTA) as u32), Some(3));
-        // 高半字（历史遗留的转数）不许混进低半字的增量里。
-        let high_only = 0x0003_0000u32;
-        assert_eq!(user_wheel_notches(high_only), None, "只填了高半字 = 竖向增量是 0");
-        let mixed = (0x0002_0000u32 | ((-WHEEL_DELTA) as u16) as u32) as u32;
-        assert_eq!(user_wheel_notches(mixed), Some(1), "低半字才是增量");
+        // 真滚轮向下（向尾端）：高字增量 -120 → 记 +1 格。
+        assert_eq!(user_wheel_notches(((-WHEEL_DELTA) as u16 as u32) << 16), Some(1));
+        assert_eq!(user_wheel_notches(((3 * WHEEL_DELTA) as u16 as u32) << 16), Some(-3), "向上翻 3 格");
+        assert_eq!(user_wheel_notches(((-3 * WHEEL_DELTA) as u16 as u32) << 16), Some(3));
+        // 低半字不是增量（保留域恒 0）：只填低字 = 没有竖向增量，不记账。
+        let low_only = ((-WHEEL_DELTA) as u16 as u32) as u32;
+        assert_eq!(user_wheel_notches(low_only), None, "低半字不是增量口径");
         // 不到一格（触控板）不记账：攒够一格再算，否则账本会漏。
-        assert_eq!(user_wheel_notches((-60i32) as u32), None);
+        assert_eq!(user_wheel_notches(((-60i32) as u16 as u32) << 16), None);
         assert_eq!(user_wheel_notches(0), None);
         // 一整手势（10 格）也在同一口径里。
-        assert_eq!(user_wheel_notches((-1200i32) as u32), Some(10));
+        assert_eq!(user_wheel_notches(((-1200i32) as u16 as u32) << 16), Some(10));
     }
 
     /// 「自家注入」必须**两个条件同时成立**才算：只认 `LLMHF_INJECTED` 会把测试驱动的模拟滚轮
     /// 一起当噪音丢掉 ⇒ #89 的「用户上翻就停跟随」在真机上永远测不到（假实现）。
     #[test]
     fn only_our_own_injected_wheel_is_ignored() {
-        let down = (-WHEEL_DELTA) as u32;
-        let up = (WHEEL_DELTA) as u32;
+        // 增量在高字（见 `user_wheel_notches` 头注）：down = -120 << 16、up = +120 << 16。
+        let down = ((-WHEEL_DELTA) as u16 as u32) << 16;
+        let up = ((WHEEL_DELTA) as u16 as u32) << 16;
         // 硬件：flags=0 ⇒ 记。
         assert_eq!(observed_wheel(0, down, 0), Some(1));
         assert_eq!(observed_wheel(0, up, 0), Some(-1));
@@ -2280,6 +2501,65 @@ mod tests {
             assert!(matches!(stick_action(away, false, band), StickAction::Hold { reason: HOLD_USER_UP, .. }));
         }
         assert_eq!(away.gap_dip(), 192.0 + 5.0 * 64.0, "不贴底时增量必须算进离底距离");
+    }
+
+    // ---- 回读估距（切会话贴底追逐的账本种子）------------------------------------------
+
+    /// 估距的底线与方向：短行落在一行估高的下限（`row_dip` 那一档），且**宁大勿小** ——
+    /// 高估被边界夹住是免费的，低估就是「停在半空」这个 bug 本身。
+    #[test]
+    fn bubble_row_estimate_floors_at_row_and_grows_with_text() {
+        let band = chat_band();
+        // 空文本 / 工具行：估高 = 一行 chrome，但仍不许低于一行口径（64 DIP）。
+        assert_eq!(bubble_row_height_dip(0, 1000.0, band), 64.0);
+        assert_eq!(bubble_row_height_dip(5, 1000.0, band), 64.0);
+        // 同带宽下文本越长估得越高（线性），且任何输入都 ≥ 64。
+        let short = bubble_row_height_dip(50, 1000.0, band);
+        let long = bubble_row_height_dip(500, 1000.0, band);
+        assert!(long > short, "长文本必须估得更高：{short} → {long}");
+        // 500 字 ÷ 每行 62 字（1000/16 取整）⇒ 9 行 × 24 + 40 = 256。
+        assert_eq!(long, 9.0 * EST_LINE_DIP + EST_ROW_CHROME_DIP);
+        for chars in [0usize, 1, 500, 50_000] {
+            assert!(bubble_row_height_dip(chars, 1000.0, band) >= band.row_dip, "chars={chars}");
+        }
+    }
+
+    /// 带宽不可信时按「一行一个字符」估到最满 —— 「宁大勿小」的极端档；好带宽下每行字符数
+    /// 随带宽线性放宽。
+    #[test]
+    fn bubble_row_estimate_survives_broken_band_width() {
+        let band = chat_band();
+        let chars = 200usize;
+        let worst = bubble_row_height_dip(chars, 0.0, band);
+        assert_eq!(worst, chars as f64 * EST_LINE_DIP + EST_ROW_CHROME_DIP, "0 带宽 ⇒ 一行一字");
+        for bad in [f64::NAN, f64::NEG_INFINITY, -100.0] {
+            assert_eq!(bubble_row_height_dip(chars, bad, band), worst, "坏带宽同归最满档 {bad}");
+        }
+        // 带宽翻倍 ⇒ 每行字符翻倍 ⇒ 行数减半（下取整），估高只会变低不会变高。
+        let narrow = bubble_row_height_dip(chars, 500.0, band);
+        let wide = bubble_row_height_dip(chars, 1000.0, band);
+        assert!(wide < narrow, "带宽变宽估高必须变窄：{narrow} → {wide}");
+    }
+
+    /// 总账 = 逐气泡之和 + 一屏余量；90 条 seed 那一档（模块头注的标定）必须落在
+    /// `MAX_BURST_NOTCHES` 预算内、且比「账本强归 0 只发 3 格」的旧口径大一个量级。
+    #[test]
+    fn history_gap_estimate_sums_rows_plus_one_band() {
+        let band = chat_band();
+        // 全空会话：估距 = 一屏。stick_action(force) 给的就是「1 格 + 过滚」，与旧行为同口。
+        assert_eq!(history_gap_estimate(&[], 1000.0, band), band.page_dip);
+        // 90 行短文本（seed 档）：每行 64 ⇒ 5760 + 640 = 6400 DIP ≈ 模块头注标定的 6100。
+        let seed: Vec<usize> = vec![0; 90];
+        let est = history_gap_estimate(&seed, 1000.0, band);
+        assert_eq!(est, 90.0 * 64.0 + band.page_dip);
+        let notches = burst_for_gap(est, band).expect("好几何必有格数");
+        assert!(notches > 100, "90 行历史必须给大 burst，got {notches}");
+        assert!(notches <= MAX_BURST_NOTCHES, "夹在预算内");
+        // 200 行长文本（CHAT_TAIL 上限档）：逐行之和 + 一屏，账本种子不被 3 格旧口径吞掉。
+        let tail: Vec<usize> = vec![1_000; 200];
+        let deep = history_gap_estimate(&tail, 1000.0, band);
+        assert!(deep > 200.0 * band.row_dip + band.page_dip, "长文本行高必须高于 64 下限");
+        assert!(burst_for_gap(deep, band).expect("好几何必有格数") >= MAX_BURST_NOTCHES / 4);
     }
 
     // ---- #89 落点几何（ChatBox）与逆 DPI 换算 ------------------------------------------

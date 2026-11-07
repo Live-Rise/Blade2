@@ -1,0 +1,208 @@
+/** `stats` namespace dictionaries for the Statistics table. */
+/** Dictionary namespace owned by this plugin. */
+export declare const NS = "stats";
+/** Simplified Chinese dictionary (the key-set source of truth). */
+export declare const zh: {
+    readonly 'view.stats': "统计";
+    readonly 'column.scope': "轮次 / 步骤";
+    readonly 'column.scope.title': "轮次行是该轮的合计；点一行展开或折叠它的每一步";
+    readonly 'column.prompt': "触发";
+    readonly 'column.prompt.title': "这一轮是由什么触发的；人写的提示词显示正文，自动触发显示来源标签";
+    readonly 'trigger.agent-message': "智能体消息";
+    readonly 'trigger.team-message': "团队消息";
+    readonly 'trigger.schedule': "定时触发";
+    readonly 'trigger.webhook': "Webhook";
+    readonly 'trigger.tool-jobs': "后台任务";
+    readonly 'trigger.cordis-host-runner': "插件触发";
+    readonly 'trigger.subagent-settled': "子代理完成";
+    readonly 'trigger.goal': "目标轮次";
+    readonly 'trigger.context': "上下文唤醒";
+    readonly 'trigger.other': "自动触发";
+    readonly 'column.did': "执行内容";
+    readonly 'column.did.title': "该步调用的工具与次数；没有工具调用的步显示回答正文的摘要";
+    readonly 'column.context': "上下文";
+    readonly 'column.context.title': "该步 usage 的输入词数 + 缓存读 + 缓存写";
+    readonly 'column.output': "输出";
+    readonly 'column.output.title': "该步 usage 的输出词数";
+    readonly 'column.cache': "缓存命中";
+    readonly 'column.cache.title': "缓存读 ÷（输入 + 缓存读 + 缓存写）：提示词里命中缓存的比例";
+    readonly 'cache.detail': "缓存读 {read} · 输入 {input} · 缓存写 {write}";
+    readonly 'column.ttft': "首 token";
+    readonly 'column.ttft.title': "步开始到第一个输出片段（TTFT）";
+    readonly 'column.model': "模型用时";
+    readonly 'column.model.title': "步开始到收到完整回复（含首 token 延迟）";
+    readonly 'column.tps': "输出速度";
+    readonly 'column.tps.title': "输出词数 ÷ 生成秒数（TPS，tok/s）";
+    readonly 'column.tool': "工具用时";
+    readonly 'column.tool.title': "该步内每次工具调用到拿到结果的耗时之和；还没有结果的调用不计";
+    readonly 'column.time': "总用时";
+    readonly 'column.time.title': "总用时拆分：浅蓝 首 token、蓝 生成、橙 工具调用、灰 其余。条长按平方根刻度，步只和同一轮的步比，轮只和轮比";
+    readonly 'turn.label': "第 {turn} 轮";
+    readonly 'step.label': "第 {step} 步";
+    readonly 'step.toggle.aria': "展开或折叠第 {step} 步的工具详情";
+    readonly 'step.partial': "起止未知";
+    readonly 'step.started.title': "步骤开始于 {time}";
+    readonly 'compaction.label': "压缩";
+    readonly 'compaction.running': "压缩中…";
+    readonly 'compaction.shadowed': "压缩 {tokens} tokens 历史";
+    readonly 'compaction.summary': "摘要 {chars} 字符";
+    readonly 'compaction.title': "压缩调用单独展示，不并入轮次的步骤合计";
+    readonly 'event.show': "显示事件行（含压缩）";
+    readonly 'context.delta.show': "显示上下文增量";
+    readonly 'context.delta.title': "相对同轮上一步的提示词增量；负值表示上下文减少（如压缩）";
+    readonly 'event.request-header': "请求头";
+    readonly 'event.system-prompt': "系统提示词";
+    readonly 'event.tool-set': "工具集变更";
+    readonly 'event.context-prune': "上下文裁剪";
+    readonly 'event.request-context': "路由能力";
+    readonly 'event.model-retry': "模型重试";
+    readonly 'event.model-attempt': "模型尝试";
+    readonly 'event.context-refresh': "上下文刷新";
+    readonly 'event.approval': "审批";
+    readonly 'event.context.detail': "{provider} / {model} · 提示词模式 {mode}";
+    readonly 'event.retry.detail': "第 {retry} 次重试 · 等待 {delay}";
+    readonly 'event.attempt.detail': "未提交消息的模型尝试";
+    readonly 'event.refresh.detail': "{source} · {chars} 字符";
+    readonly 'event.approval.detail': "{tool} · {status}";
+    readonly 'event.source.runtime': "运行时上下文";
+    readonly 'event.source.time': "时间上下文";
+    readonly 'event.approval.asked': "等待审批";
+    readonly 'event.approval.allowed': "允许一次";
+    readonly 'event.approval.rejected': "拒绝";
+    readonly 'event.approval.cancelled': "取消";
+    readonly 'event.approval.unavailable': "不可用";
+    readonly 'event.title': "非步骤事件行：解释请求、提示词、工具集、重试、上下文刷新、审批和裁剪变化，不计入轮次的步骤合计";
+    readonly 'event.reason.initial': "初始";
+    readonly 'event.reason.resume': "恢复";
+    readonly 'event.reason.change': "变更";
+    readonly 'event.reason.series': "新序列";
+    readonly 'event.header.detail': "{reason} · {tools} 个工具";
+    readonly 'event.series': "新序列";
+    readonly 'event.system.append': "追加";
+    readonly 'event.system.replace': "替换";
+    readonly 'event.system.clear': "清空";
+    readonly 'event.system.detail': "{action} · {chars} 字符";
+    readonly 'event.tools.added': "新增 {tools}";
+    readonly 'event.tools.removed': "移除 {tools}";
+    readonly 'event.prune.detail': "裁剪 {tokens} tokens";
+    readonly 'step.partial.title': "这一步的开始与结束事件不在当前事件窗口里（页签重连或窗口重建时被截断），首 token、模型用时、总用时都没有起点可以相减；重新加载页签会从完整窗口重新装配";
+    readonly 'state.running': "进行中";
+    readonly 'state.interrupted': "中断";
+    readonly 'state.cacheMiss': "缓存未命中";
+    readonly 'state.cacheMiss.title': "这一步的提示词几乎没命中缓存：进程重启、会话恢复后的第一次请求都是这样，输入按全价计";
+    readonly 'state.aborted': "未完成";
+    readonly 'state.aborted.title': "该步已经结束，但没有收到完整回复（多为被取消或失败）";
+    readonly unknown: "未记录";
+    readonly partial: "还有 {count} 次工具调用没有拿到结果，这里是已知耗时的下限";
+    readonly empty: "当前窗口里还没有可以测量的步骤。";
+    readonly loadOlder: "加载更早";
+    readonly 'loadOlder.loading': "正在加载更早的轮次…";
+    readonly 'loadOlder.done': "已经是最早的记录";
+    readonly 'loadOlder.failed': "加载失败，重试";
+    readonly summary: "{turns} 轮 · {steps} 步";
+    readonly 'table.showTotals': "显示合计行";
+    readonly 'contextMode.label': "上下文口径";
+    readonly 'contextMode.latest': "最新";
+    readonly 'contextMode.latest.title': "轮次行显示最后一步的提示词大小（最终上下文）；合计行始终为累计值";
+    readonly 'contextMode.cumulative': "累计";
+    readonly 'contextMode.cumulative.title': "轮次行显示该轮各步提示词大小之和（累计处理量）；合计行始终为累计值";
+    readonly 'totals.full': "全量合计";
+    readonly 'totals.full.title': "整段会话合计；总用时为模型用时 + 工具用时（不含跨轮空隙）";
+    readonly 'totals.window': "本窗口合计";
+    readonly 'totals.window.title': "当前已加载窗口的合计；上下文为各步累计值";
+    readonly 'expand.all': "展开全部";
+    readonly 'collapse.all': "折叠全部";
+    readonly 'turn.expand': "展开";
+    readonly 'turn.collapse': "折叠";
+    readonly 'turn.toggle.title': "展开或折叠这一轮的每一步";
+    readonly 'turn.toggle.aria': "展开或折叠第 {turn} 轮";
+    readonly 'did.answer': "回答";
+    readonly 'did.working': "生成中";
+    readonly 'did.aborted': "中断";
+    readonly 'did.more': "其他 {count} 项";
+    readonly 'did.rest': "还有 {count} 次调用";
+    readonly 'did.title': "共调用 {calls} 次：{tools}";
+    readonly 'did.retry': "重试 {count} 次";
+    readonly 'did.lines': "{lines} 行";
+    readonly 'did.lines.unit': "行";
+    readonly 'did.chars': "{chars} 字符";
+    readonly 'did.output': "→ {chars} 字符";
+    readonly 'did.total': "本步工具输出合计 {chars} 字符，会进入下一步的上下文";
+    readonly 'detail.show': "详情";
+    readonly 'detail.hide': "收起";
+    readonly 'detail.title': "点这一行展开或收起工具详情";
+    readonly 'detail.calls': "{count} 次工具调用";
+    readonly 'detail.answer': "回答";
+    readonly 'detail.answer.truncated': "回答过长，仅展示前 16,000 字符";
+    readonly 'detail.code.title': "代码块";
+    readonly 'detail.code.wrap': "自动换行";
+    readonly 'detail.code.unwrap': "不换行";
+    readonly 'detail.footnotes': "脚注";
+    readonly 'detail.copy': "复制";
+    readonly 'detail.copy.title': "复制这段正文";
+    readonly 'detail.copied': "已复制";
+    readonly 'detail.copyFailed': "复制失败";
+    readonly 'detail.chars': "{chars} 字符";
+    readonly 'detail.lines': "{lines} 行";
+    readonly 'detail.file': "文件";
+    readonly 'detail.diff': "改动对比";
+    readonly 'detail.emptyBody': "这条调用没有留下正文";
+    readonly 'detail.hidden': "还有 {count} 次调用没有列出（一步最多列 {limit} 次）";
+    readonly 'detail.args': "原始参数";
+    readonly 'detail.wrap': "换行";
+    readonly 'detail.wrap.title': "长行换行显示，不出现横向滚动";
+    readonly 'detail.raw.title': "查看原始 JSON 参数";
+    readonly 'detail.lineCap': "只显示前 {shown} 行，共 {total} 行";
+    readonly 'detail.truncated': "内容过长，这里只保留了前 {chars} 字符";
+    readonly 'tool.failed': "失败 {count}";
+    readonly 'tool.failed.title': "该步有 {count} 次工具调用返回错误结果";
+    readonly 'bar.ttft': "首 token {value}";
+    readonly 'bar.gen': "生成 {value}";
+    readonly 'bar.tool': "工具调用 {value}";
+    readonly 'bar.rest': "其余 {value}";
+    readonly 'bar.wall': "总用时 {value}";
+    readonly 'bar.running': "还没结束，这是已用时间";
+    readonly 'bar.gap': "距上一步 {value}";
+    readonly 'bar.start': "开始于 {clock}";
+    readonly 'turn.started': "这一轮开始于 {time}";
+    readonly 'turn.images': "{count} 张图";
+    readonly 'imagePreview.hint': "悬停或聚焦预览这一轮的图片，点击查看大图";
+    readonly 'imagePreview.dialog': "图片预览";
+    readonly 'imagePreview.open': "查看第 {index} 张图（共 {count} 张）";
+    readonly 'imagePreview.alt': "第 {index} 张图";
+    readonly 'imagePreview.loading': "图片加载中…";
+    readonly 'imagePreview.failed': "图片加载失败";
+    readonly 'imagePreview.retry': "重试";
+    readonly 'imagePreview.close': "关闭图片预览";
+    readonly 'steps.total': "共 {total} 步";
+    readonly 'steps.tail': "只看最新 {limit} 步";
+    readonly 'steps.all': "显示全部 {total} 步";
+    readonly 'steps.filter': "只看 {tool}";
+    readonly 'steps.clear': "取消筛选";
+    readonly 'steps.matched': "{count} 步用到 {tool}";
+};
+/** The performance dictionary key union. */
+export type StatsKey = keyof typeof zh;
+declare module '@deepseek-ai/dsh-client-ui-slots' {
+    interface LocaleNamespaceMap {
+        /** Turn and step Statistics table copy. */
+        stats: StatsKey;
+    }
+}
+/** Namespace-bound translator threaded through the Statistics table. */
+export type StatsTranslate = import('@deepseek-ai/dsh-client-ui-slots').TranslateNS<typeof NS>;
+/** English dictionary, checked complete against the Chinese source of truth. */
+export declare const en: Record<StatsKey, string>;
+/** Japanese dictionary, checked complete against the Chinese source of truth. */
+export declare const ja: Record<StatsKey, string>;
+/** Spanish dictionary. */
+export declare const es: Record<StatsKey, string>;
+/** French dictionary. */
+export declare const fr: Record<StatsKey, string>;
+/** German dictionary. */
+export declare const de: Record<StatsKey, string>;
+/** Russian dictionary. */
+export declare const ru: Record<StatsKey, string>;
+/** Portuguese dictionary. */
+export declare const pt: Record<StatsKey, string>;
+//# sourceMappingURL=locales.d.ts.map

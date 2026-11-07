@@ -265,6 +265,9 @@ pub mod glyph {
     /// FontSize 12）：`AgentModeButton` / `PermissionButton` / `ModelButton` 三颗共用。
     /// 与 `EXPAND_GROUP` 同码位（E70D），主干按用途各记一份，这里同规。
     pub const DROPDOWN_CHEVRON: char = '\u{e70d}';
+    /// 一键置底浮钮（「回到底部」）的字形：向下 chevron，与主干 `JobsTriggerButton`
+    /// 下拉那颗同码位（E70D）。按用途各记一份（仓规同上）。
+    pub const SCROLL_TO_BOTTOM: char = '\u{e70d}';
     pub const SETTINGS: char = '\u{e713}';
     pub const BACK: char = '\u{e72b}';
     pub const SEARCH: char = '\u{e721}';

@@ -1,7 +1,7 @@
 /** Host catalog, durable projection caches, and explicitly retained Client instances. */
 import type { SubagentAddress } from '@deepseek-ai/dsh-subagent/client';
 import { SessionSeq, type SessionId } from '@deepseek-ai/dsh-session/types';
-import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/types';
+import type { SessionProjectionMap, SessionProjectionViewValues } from '@deepseek-ai/dsh-session-projection/types';
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types';
 import type { SessionControlFrame, SessionRenameValue, SessionSummary } from '../../types.ts';
 import type { RemoteFailure, RemoteResult } from '@deepseek-ai/dsh-typert-protocol';
@@ -32,9 +32,14 @@ export interface SessionListSnapshot {
     error: RemoteFailure | null;
     projectionsBySession: Readonly<Record<SessionId, SessionProjectionSnapshot>>;
 }
-/** Shared projection values and the lifecycle of their explicit baseline read. */
+/**
+ * Every projection value the store currently holds, with the summary mark
+ * stripped, and the lifecycle of its explicit baseline read. This is the full
+ * attached-Session set, not a list row's summary contract (see
+ * `SessionListEntry.projectionValues`).
+ */
 export interface SessionProjectionSnapshot {
-    readonly values: Readonly<Partial<SessionProjectionMap>>;
+    readonly values: Readonly<Partial<SessionProjectionViewValues>>;
     readonly state: 'idle' | 'loading' | 'ready' | 'migration-required' | 'error';
     readonly error: RemoteFailure | null;
 }
@@ -171,7 +176,7 @@ export declare class SessionManager {
      * immediately (same synchronous-addressability guarantee as create).
      * Blankness starts provisionally true so the authoritative Host summary can
      * preserve it or lower it after an exact cut before the first `turn/start`;
-     * lineage rides parentSessionId. A child published before Workspace
+     * the fork has no durable source relationship. A child published before Workspace
      * attachment fails is also reconciled into the list.
      * @param opts - source session, optional exact inclusive boundary seq, and permission to start migration.
      * @returns the fork result (the child session id).
@@ -215,8 +220,8 @@ export declare class SessionManager {
      */
     projectionValues(sessionId: SessionId): Readonly<Partial<SessionProjectionMap>> | undefined;
     /**
-     * Apply a complete control baseline or one later replacement frame.
-     * @param frame - baseline or live control replacement from Session Controller.
+     * Apply a complete control baseline or one later per-event projection frame.
+     * @param frame - baseline or live per-event projection change from Session Controller.
      */
     handleControlFrame(frame: SessionControlFrame): void;
     private replaceControlBaseline;

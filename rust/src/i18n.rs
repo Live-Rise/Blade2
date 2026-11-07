@@ -846,6 +846,9 @@ pub const EN: &[(&str, &str)] = &[
     ("{0}：{1} tokens", "{0}: {1} tokens"),
     ("{0} 失败", "{0} failed"),
     ("对话消息列表", "Conversation messages"),
+    // 一键置底浮钮（分叉新增件，主干没有这颗钮）：Name 与 tooltip 同串，见 main.rs
+    // 的 `scroll_to_bottom_button`。
+    ("回到底部", "Scroll to bottom"),
     ("标准模式", "Standard mode"),
     ("PTC 模式", "PTC mode"),
     ("极简模式", "Minimal mode"),
@@ -1840,6 +1843,18 @@ pub const EN: &[(&str, &str)] = &[
     ("关闭图片预览", "Close image preview"),
     ("已更新", "Updated"),
     ("附加内容块", "Attached content block"),
+    // —— 主干「实验性功能」分区（内核 OPTIONAL_BUNDLES 开关）的 8 枚键，2026-11-06 从
+    //    主干 MainWindow.xaml.cs 工作区版镜像（值逐字同主干 ShellEnglish；分叉反漂移
+    //    两把锁 `en_table_matches_every_mainline_shell_english_key` /
+    //    `rd9_five_families_*` 以主干工作区文件为基准 ⇒ 主干一落新键这里必须跟上）——
+    ("实验性功能", "Experimental features"),
+    ("实验性功能由内核可选 bundle（插件层）提供，可在此逐项开关。开关增删内核 profile 的 bundle 清单，由内核热重载即时生效；关闭的 bundle 不参与加载，重新开启即恢复。", "Experimental features are provided by optional kernel bundles (plugin layer) and can be switched individually here. Toggles add or remove entries from the kernel profile's bundle list; the kernel hot-reloads each change on the fly. A disabled bundle is not loaded at all, and re-enabling restores it."),
+    ("跨会话搜索", "Cross-session search"),
+    ("开启后每个 Agent 获得一组只读检索工具，可搜索并引用当前工作区更早的会话；内容索引在首次搜索时打开、全 Agent 共享，侧栏搜索行为不变。", "When on, every Agent gains a set of read-only search tools to find and cite earlier sessions in the current workspace. The content index opens on the first search and is shared by all Agents; sidebar search behavior is unchanged."),
+    ("多代理（Agent Teams）", "Agent teams (multi-agent)"),
+    ("开启后 Agent 可把任务委派给团队成员协作完成：成员名册、共享任务板与队友会话在会话内可见。注意：多代理启用期间普通 Subagent 委派按内核设计一并停用。", "When on, the Agent can delegate work to teammates and collaborate with them: the roster, shared task board, and teammate sessions are visible in chat. Note: while agent teams are enabled, ordinary subagent delegation is disabled by kernel design."),
+    ("启用跨会话搜索", "Enable cross-session search"),
+    ("启用多代理", "Enable agent teams"),
 ];
 
 #[derive(Clone)]

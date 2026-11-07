@@ -1,0 +1,24 @@
+import type { Usage } from "../types.ts";
+export interface OpenRouterUsageAccounting {
+    /** Amount charged to the user's OpenRouter account. */
+    cost: number | null;
+    /** Whether OpenRouter used the user's upstream provider key. */
+    is_byok: boolean;
+    cost_details: {
+        /** Total inference cost billed through the user's upstream provider account, when available. */
+        upstream_inference_cost: number | null;
+        /** Upstream cost for prompt processing, including any provider-side cache pricing. */
+        upstream_inference_prompt_cost: number;
+        /** Upstream cost for completion generation. */
+        upstream_inference_completions_cost: number;
+        /** Metered server-tool cost already included in OpenRouter's charged `cost`. */
+        server_tool_cost?: number | null;
+    } | null;
+}
+export declare function isOpenRouterModel(model: {
+    provider: string;
+    baseUrl: string;
+}): boolean;
+/** Replace the catalog total with OpenRouter's billed cost when the response contains complete, valid accounting. */
+export declare function applyOpenRouterReportedCost(usage: Usage, reported: OpenRouterUsageAccounting): void;
+//# sourceMappingURL=openrouter-cost.d.ts.map

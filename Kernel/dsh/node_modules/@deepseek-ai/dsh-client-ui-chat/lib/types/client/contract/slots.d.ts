@@ -5,10 +5,13 @@ import type { SessionId, SessionSeq } from '@deepseek-ai/dsh-session/types';
 import type { PendingSubmission } from '@deepseek-ai/dsh-api-session-controller/client';
 import type { FileAttachmentRef } from '@deepseek-ai/dsh-attachment';
 import type { InboxState } from '@deepseek-ai/dsh-agent/types';
-import type { CommandNode, CompactionSummaryNode, ConversationLocationDataStore, ConversationTurnDataMap, ConversationGroupData, GroupSnapshot, MessageImageLoader, MessageImageSource, MessageImagesOwnerProps, RenderEntry, TurnLocation, UserTextFacts, UserTextInput } from '@deepseek-ai/dsh-client-ui-conversation/client';
+import type { CommandNode, CompactionSummaryNode, ConversationLocationDataStore, ConversationTurnDataMap, TextInteractionGesture, TextInteractionSurface, ConversationGroupData, GroupSnapshot, MessageImageLoader, MessageImageSource, MessageImagesOwnerProps, RenderEntry, TurnLocation, UserTextFacts, UserTextInput } from '@deepseek-ai/dsh-client-ui-conversation/client';
 import type { HostObservable, InjectFace, KeyedSnapshotSelectorHook, PropsLocale, PropsRenderSlots, PropsRuntime, PropsRenderFactories, PropsStore, SlotHookFactory, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots';
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store';
-import type { MarkdownFileMentions, MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives';
+import type { ConnectionStateSource } from '@deepseek-ai/dsh-client-connection/client';
+import type { FileDragActions, MarkdownFileMentions, MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives';
+import type { ContextMenuTriggerProps } from '@deepseek-ai/dsh-client-ui-context-menu/client';
+import type { ChatKey } from '../locale.ts';
 import type { createChatStore } from '../stores.ts';
 import type { ChatPresentationPolicy } from '../presentation-policy.ts';
 import type { FlowMotionRows } from '../chat/flow-motion.ts';
@@ -53,15 +56,21 @@ export interface QuotaNoticeState {
     /** Per-publication sequence; the host keys its surface by it. */
     seq: number;
 }
-/** Original model-provided reasoning offered to the expanded Body Slot. */
+/** Original and display-ready reasoning offered to the expanded Body Slot. */
 export interface ReasoningBodyOwnerProps {
-    /** Complete or streaming reasoning text. */
+    /** Complete or streaming model output. */
+    readonly rawText: string;
+    /** Reasoning text prepared for display. */
     readonly text: string;
     /** Whether the reasoning tail is still streaming. */
     readonly running: boolean;
 }
 /** Session-independent original or derived display input to the Content Factory. */
-export interface ReasoningContentInput extends ReasoningBodyOwnerProps {
+export interface ReasoningContentInput {
+    /** Caller-selected Markdown. */
+    readonly text: string;
+    /** Whether the supplied text is still streaming. */
+    readonly running: boolean;
     /** Localized Markdown controls, used unchanged when supplied; omission uses Chat's defaults. */
     readonly labels?: MarkdownLabels;
 }
@@ -103,9 +112,10 @@ export interface ChatFileMentions {
      * Resolve prose links for one closing Turn.
      * @param owner - closing-Turn identity and file opener.
      * @param sessionId - viewed Session, including when history is inherited from a fork.
+     * @param getFileTriggerProps - ordinary gesture binding for a resolved file path.
      * @returns link resolver when available.
      */
-    forClosing(owner: TurnTailOwnerProps, sessionId: SessionId): MarkdownFileMentions | undefined;
+    forClosing(owner: TurnTailOwnerProps, sessionId: SessionId, getFileTriggerProps?: (path: string) => ContextMenuTriggerProps): MarkdownFileMentions | undefined;
 }
 declare module '@deepseek-ai/cordis' {
     interface Context {
@@ -164,6 +174,19 @@ export interface ChatNodeInjected {
         groupAction: SlotHookFactory<'conversation.chat.node', UseGroupAction>;
     };
 }
+/**
+ * Owner currency of the message-source decoration above one user message bubble.
+ *
+ * Entry selectors receive the durable message `source` and row kind. A
+ * non-null selection elects the component and reaches it as `matched`.
+ * Entries own their markup and copy; Chat does not interpret the source.
+ */
+export interface UserBeforeOwnerProps {
+    /** Durable message source; Chat does not interpret it. */
+    readonly source: unknown;
+    /** Chat row kind that owns the decoration site. */
+    readonly kind: 'user' | 'steering';
+}
 /** Stable owner currency delivered to a keyed Chat renderer. */
 export interface ChatNodeOwnerProps {
     /** Renderer-owned Node portion selected by the grouping Definition. */
@@ -174,7 +197,6 @@ export interface ChatNodeOwnerProps {
     forkAt: (seq: number) => void;
     /** Session-authorized image loader supplied by the Chat view. */
     loadImage: MessageImageLoader;
-    fileMentions: (owner: TurnTailOwnerProps) => MarkdownFileMentions | undefined;
     /** Turn-process state when this Node belongs to a projected Turn. */
     turnProcess?: TurnProcessOwnerProps | undefined;
 }
@@ -243,7 +265,15 @@ export interface PerformanceUsageInjected {
 }
 /** Business callbacks injected into the Chat view. */
 export interface ChatViewInjected {
+    /** File preparation and failure callbacks owned by the file-drag plugin. */
+    readonly fileDrag: FileDragActions;
+    /** Resolve the reference against this Session and its current path base when the gesture begins. */
+    resolveFilePath: (path: string) => string;
+    /** Dispatch one gesture to the Conversation plugin registry. */
+    dispatchInteraction: (gesture: TextInteractionGesture) => string | null;
     hooks: {
+        /** Live plugin IDs; removed plugins dismiss their active surface. */
+        interactionIds: ObservableSnapshot<readonly string[]>;
         /** Live presentation policy derived from the accepted work-details mode. */
         presentation: ObservableSnapshot<ChatPresentationPolicy>;
     };
@@ -269,12 +299,16 @@ export interface ChatViewInjected {
         read: () => ChatScrollPosition | null;
     };
     forkAt: (seq: number) => void;
-    fileMentions: (owner: TurnTailOwnerProps) => MarkdownFileMentions | undefined;
 }
-/** Existing Session-owned node sources shared by the view and its flow renderer. */
-export type ChatFlowDataInjected = Pick<ChatViewInjected, 'hooks' | 'keyedHooks'>;
+/** Session-owned node sources shared with the view, plus the flow's connection state. */
+export type ChatFlowDataInjected = Pick<ChatViewInjected, 'keyedHooks'> & {
+    hooks: Pick<ChatViewInjected['hooks'], 'presentation'> & {
+        /** Client connection lifecycle; the running clock pauses while it is not connected. */
+        connectionState: ConnectionStateSource;
+    };
+};
 /** Ordered rows and reconciled local echoes rendered inside one Chat viewport. */
-export interface ChatFlowOwnerProps extends Pick<ChatNodeOwnerProps, 'cwd' | 'openFile' | 'inspectCall' | 'forkAt' | 'loadImage' | 'fileMentions'> {
+export interface ChatFlowOwnerProps extends Pick<ChatNodeOwnerProps, 'cwd' | 'openFile' | 'inspectCall' | 'forkAt' | 'loadImage'> {
     readonly entries: readonly RenderEntry[];
     readonly pendingInputs: readonly (PendingSubmission | InboxState['next-step'][number])[];
     readonly lastInputTurn: number | undefined;
@@ -283,7 +317,7 @@ export interface ChatFlowOwnerProps extends Pick<ChatNodeOwnerProps, 'cwd' | 'op
 /** Full props of the Chat-owned flow renderer. */
 export type ChatFlowSlotProps = PropsRuntime<'conversation.chat.flow'> & PropsRenderSlots<'conversation.chat.node'> & PropsRenderFactories & PropsStore<ChatStore> & InjectFace<ChatFlowDataInjected> & PropsLocale<'chat'>;
 /** Full Chat view props. */
-export type ChatViewSlotProps = PropsRuntime<'conversation.view'> & PropsRenderSlots<'conversation.chat.flow'> & PropsStore<ChatStore> & InjectFace<ChatViewInjected> & PropsLocale<'chat'>;
+export type ChatViewSlotProps = PropsRuntime<'conversation.view'> & PropsRenderSlots<'conversation.chat.flow' | 'conversation.chat.text-interaction'> & PropsStore<ChatStore> & InjectFace<ChatViewInjected> & PropsLocale<'chat'>;
 /** Full props shared by the user and output image entries. */
 export type MessageImagesProps = PropsRuntime<'conversation.chat.user.images' | 'conversation.chat.message.images'> & PropsRenderFactories;
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -293,7 +327,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
     }
     interface LocaleNamespaceMap {
         /** Chat target, transcript node, statistics, and details copy. */
-        chat: import('../locale.ts').ChatKey;
+        chat: ChatKey;
     }
     interface SlotFactoryMap {
         /** Prepared user text, attachments, and references inside a caller-owned message row. */
@@ -316,6 +350,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
         };
     }
     interface SlotMap {
+        /** Area-local text gestures and surfaces; each consumer registers its own synchronous admission. */
+        'conversation.chat.text-interaction': {
+            kind: 'keyed';
+            scope: 'session';
+            owner: TextInteractionSurface;
+        };
         /** Ordered Chat rows and local echoes with viewport-bound visibility hooks. */
         'conversation.chat.flow': {
             kind: 'single';
@@ -340,6 +380,17 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
             };
             hookContext: ChatNodeHookContext;
             inject: ChatNodeInjected;
+        };
+        /**
+         * Message-source decoration owned and rendered by the user Node entry.
+         * Selectors elect one component from the durable source and row kind.
+         * No match renders no visible content; steering and pending rows do not
+         * render this slot.
+         */
+        'conversation.chat.user.before': {
+            kind: 'chain';
+            scope: 'session';
+            owner: UserBeforeOwnerProps;
         };
         /**
          * Renderer for one consecutive group of durable message images. The owner
@@ -368,9 +419,9 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
             owner: CommandRowOwnerProps;
         };
         /**
-         * Expanded reasoning body with the unchanged model text. The official entry
+         * Expanded reasoning body with raw and display-ready text. The official entry
          * has priority 100 and calls the reasoning Content Factory; smaller priority
-         * values replace it. Contributions must preserve access to the original text.
+         * values replace it. Contributions must preserve access to untranslated display text.
          */
         'conversation.chat.reasoning.body': {
             kind: 'single';

@@ -7,23 +7,9 @@
 import type { Volatile } from '@deepseek-ai/cosmokit';
 import { Context, Service } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
-import { z as zod } from 'zod';
-import type { Agent, AgentFactory, AgentHandle, AgentOptions, CreateAgentOptions, ResumeAgentOptions, TurnBoundaryProjection } from '@deepseek-ai/dsh-agent';
+import type { Agent, AgentFactory, AgentHandle, AgentOptions, CreateAgentOptions, ResumeAgentOptions } from '@deepseek-ai/dsh-agent';
 import type { SessionHeader, SessionId } from '@deepseek-ai/dsh-session';
 import { DEFAULT_MAX_PARALLEL_TOOL_CALLS } from './constants.ts';
-/** Host projection of agent turn and step boundaries. */
-export declare const turnBoundaryProjectionDefinition: {
-    key: "turnBoundary";
-    stateVersion: number;
-    stateSchema: zod.ZodType<TurnBoundaryProjection, unknown, zod.core.$ZodTypeInternals<TurnBoundaryProjection, unknown>>;
-    init: () => {
-        openTurnStartSeq: null;
-        lastStepStartSeq: null;
-        lastStepBoundary: null;
-        lastTurn: number;
-    };
-    apply: (state: NoInfer<TurnBoundaryProjection>, event: import("@deepseek-ai/dsh-session").SessionEvent) => TurnBoundaryProjection;
-};
 declare module '@deepseek-ai/cordis' {
     interface Context {
         agentLoop: AgentLoop;
@@ -83,7 +69,7 @@ export interface Config {
      * omission defaults to {@link DEFAULT_MAX_PARALLEL_TOOL_CALLS}.
      */
     maxParallelToolCalls: Volatile<number>;
-    /** Agents created or resumed at plugin startup. */
+    /** Agents created or resumed at plugin startup; a resumed agent records its configured route as the Session's model selection. */
     agents: (AgentOptions & {
         /** Stable config label used in logs and as the fresh combined-id prefix. */
         id: string;
@@ -108,7 +94,11 @@ export declare class AgentLoop extends Service implements AgentFactory {
     private readonly ownership;
     /** Plain holder prevents Cordis from re-tracing the factory's dependency context through a caller shadow. */
     private readonly runtime;
+    private modelProjectionHandle;
+    private inboxProjectionHandle;
     constructor(ctx: Context, config: Config);
+    protected [Service.init](): Promise<void>;
+    private applyConfiguredRoute;
     /** Report a contained declarative-start failure to identity-bound consumers. */
     private reportConfiguredStartupFailure;
     /** Restore a materialized exact config identity on remount, or create it on first use. */
@@ -116,12 +106,14 @@ export declare class AgentLoop extends Service implements AgentFactory {
     /** Wait for a draining same-id lifecycle to finish registry teardown. */
     private waitForDrainingConfiguredIdentity;
     /**
-     * Construct the driver, scope, and one memoized reverse teardown for a new
-     * agent. The teardown is registered with the factory and the owner fiber
-     * BEFORE publication, so a mid-setup unload rolls everything back; `signal`
-     * fuses caller cancellation with lifecycle teardown for setup awaits.
+     * Own initialization and teardown from an acquired Session to a published Agent.
+     * Registers factory teardown and caller cancellation before constructing the scope.
+     * Failed initialization drains cleanup while retaining stored events and inbox input.
+     * @param ownerCtx - caller context that owns the Agent lifecycle.
+     * @param options - acquired Session/write handle, loop options, start source, parent Agent, setup, and cancellation.
+     * @returns the initialized Agent and its shared disposer.
      */
-    private prepare;
+    private initializeAgent;
     /**
      * Create an agent and session under one caller-supplied identity, owned by
      * the accessing fiber. Constructor-driven config calls mint a fresh combined
@@ -135,11 +127,9 @@ export declare class AgentLoop extends Service implements AgentFactory {
     create(id: SessionId, options?: AgentOptions, meta?: Pick<SessionHeader, 'cwd'>): Promise<Agent>;
     /**
      * Take a fresh session's write ownership when persistence is mounted.
-     * Nothing is appended here: the constructor seed (which never re-emits
-     * through `session/event`) is stored by `appendUnstoredSuffix` at the
-     * publication commit point, so a failed or cancelled validation or setup
-     * closes an unmaterialized handle and leaves no stored residue — the same
-     * id can be created again.
+     * The constructor seed is stored before Session store entry. Setup then
+     * appends through the live event feed; creation failure retains any events
+     * already written to the handle.
      * @param session - the unpublished session to store.
      * @param signal - optional cancellation forwarded to the backend create.
      * @returns the owned handle and stored cursor, or `undefined` without a backend.
@@ -147,10 +137,6 @@ export declare class AgentLoop extends Service implements AgentFactory {
     private createStoredSession;
     /**
      * Durably store the session events appended since the last stored cursor.
-     * Pre-publication appends (constructor seed markers, setup-window events
-     * such as delegation policy records) never re-emit through `session/event`,
-     * so publication must flush them through the handle before live events
-     * start routing into it.
      * @param stored - the session's owned handle and stored cursor, if any.
      * @param session - the unpublished session whose suffix is stored.
      */
@@ -162,9 +148,6 @@ export declare class AgentLoop extends Service implements AgentFactory {
      * @returns the published handle.
      */
     createAgent(ownerCtx: Context, options: CreateAgentOptions): Promise<AgentHandle>;
-    /** Prepare one Agent around an acquired Session, run setup, and publish it. */
-    private setupAndPublish;
-    private initializeAgent;
     /**
      * Resume an owned agent from the configured persistence service.
      * @param ownerCtx - caller context that owns load, setup, and the live lifecycle.

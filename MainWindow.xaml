@@ -133,6 +133,7 @@
                 <!-- 不设 TextMemberPath：键盘选中建议项不回填标题（Win11 设置同构），
                      也避免无结果提示行的文字被写回输入框。选中跳转走 QuerySubmitted 的 ChosenSuggestion。 -->
                 <AutoSuggestBox x:Name="SearchBox"
+                                TextBoxStyle="{StaticResource SearchBoxTextBoxStyle}"
                                 PlaceholderText="搜索会话…"
                                 MinHeight="{ThemeResource TouchTargetSize}"
                                 VerticalContentAlignment="Center"
@@ -462,6 +463,7 @@
                                           HorizontalAlignment="Stretch"
                                           ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                           ScrollViewer.HorizontalScrollMode="Disabled"
+                                          ShowsScrollingPlaceholders="False"
                                           AutomationProperties.AutomationId="ChatList"
                                           AutomationProperties.Name="对话消息列表">
                                     <ListView.ItemContainerStyle>
@@ -753,6 +755,31 @@
                                 <TextBlock x:Name="KernelBootHint" Style="{StaticResource HintTextStyle}" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Visibility="Collapsed" />
                                 <Button x:Name="KernelBootRetry" Content="重试" Visibility="Collapsed" HorizontalAlignment="Center" Click="OnKernelBootRetryClick" />
                             </StackPanel>
+
+                            <!-- 一键置底浮钮（「回到底部」）：向上翻历史时浮现的圆形向下箭头，
+                                 点了走 ChaseTranscriptToBottom 追逐。位置 = 正文带底缘居中
+                                 （输入框上方），面/描边与悬停预览卡同一 chrome；显隐由
+                                 UpdateScrollToBottomButton 按 ViewChanged 现算，贴底阈值与
+                                 跟随判据同一条 96。排在 ApprovalHost 之前 = 审批卡亮时照
+                                 声明序压住它（阻塞卡优先，与空态/失败卡同一偏序口径）。 -->
+                            <Button x:Name="ScrollToBottomButton"
+                                    Grid.Row="1"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Bottom"
+                                    Margin="0,0,0,12"
+                                    Width="32" Height="32"
+                                    Padding="0"
+                                    CornerRadius="16"
+                                    Background="{ThemeResource CardBrush}"
+                                    BorderBrush="{ThemeResource StrokeBrush}"
+                                    BorderThickness="1"
+                                    Visibility="Collapsed"
+                                    Click="OnScrollToBottomClick"
+                                    AutomationProperties.AutomationId="ScrollToBottomButton"
+                                    AutomationProperties.Name="回到底部"
+                                    ToolTipService.ToolTip="回到底部">
+                                <FontIcon Glyph="&#xE70D;" FontSize="{ThemeResource GlyphSizeBody}" />
+                            </Button>
 
                             <!-- 审批卡片：底部居中浮动（限宽，窄窗收缩） -->
                             <ContentControl x:Name="ApprovalHost" Grid.Row="1" VerticalAlignment="Bottom" HorizontalAlignment="Center" Visibility="Collapsed">

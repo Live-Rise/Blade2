@@ -1353,5 +1353,14 @@
  "设置二级页": "Trang cài đặt cấp hai",
  "关闭图片预览": "Đóng xem trước ảnh",
  "已更新": "Đã cập nhật",
- "附加内容块": "Khối nội dung đính kèm"
+ "附加内容块": "Khối nội dung đính kèm",
+ "实验性功能": "Tính năng thử nghiệm",
+ "实验性功能由内核可选 bundle（插件层）提供，可在此逐项开关。开关增删内核 profile 的 bundle 清单，由内核热重载即时生效；关闭的 bundle 不参与加载，重新开启即恢复。": "Tính năng thử nghiệm do các bundle tùy chọn của kernel (lớp plugin) cung cấp và có thể bật/tắt từng mục tại đây. Công tắc sẽ thêm hoặc bớt mục trong danh sách bundle của profile kernel, và mỗi thay đổi có hiệu lực ngay qua hot reload của kernel. Bundle đã tắt sẽ không được nạp, còn bật lại thì được khôi phục.",
+ "跨会话搜索": "Tìm kiếm xuyên phiên",
+ "开启后每个 Agent 获得一组只读检索工具，可搜索并引用当前工作区更早的会话；内容索引在首次搜索时打开、全 Agent 共享，侧栏搜索行为不变。": "Khi bật, mỗi Agent sẽ nhận được một bộ công cụ tìm kiếm chỉ đọc để tìm và trích dẫn các phiên trước đó trong workspace hiện tại. Chỉ mục nội dung được mở khi tìm kiếm đầu tiên và được dùng chung bởi mọi Agent; hành vi tìm kiếm ở ngăn bên không thay đổi.",
+ "多代理（Agent Teams）": "Đa tác nhân (Agent Teams)",
+ "开启后 Agent 可把任务委派给团队成员协作完成：成员名册、共享任务板与队友会话在会话内可见。注意：多代理启用期间普通 Subagent 委派按内核设计一并停用。": "Khi bật, Agent có thể ủy thác công việc cho các thành viên trong nhóm cùng hoàn thành: danh sách thành viên, bảng nhiệm vụ chung và các phiên của đồng đội hiển thị ngay trong phiên. Lưu ý: trong khi đa tác nhân đang bật, việc ủy thác cho Subagent thông thường cũng bị tắt theo thiết kế của kernel.",
+ "启用跨会话搜索": "Bật tìm kiếm xuyên phiên",
+ "启用多代理": "Bật đa tác nhân",
+ "回到底部": "Cuộn xuống dưới"
 }

@@ -113,7 +113,7 @@ function parseClaudeCodeConfig(raw, vars = {}) {
 const name = "hooks-claude-code";
 const inject = [
 	"shell",
-	"sessionProjections",
+	"agents",
 	"workingDirectory"
 ];
 const Config = z.object({
@@ -348,7 +348,7 @@ const SUBAGENT_TYPE = "general-purpose";
 /** The last open turn number in the agent's log, or 0 without an agent. */
 function lastTurn(ctx, agent) {
 	if (!agent) return 0;
-	return ctx.sessionProjections.stateOf(agent.session, "turnBoundary").lastTurn;
+	return ctx.agents.turnBoundaryOf(agent.session).lastTurn;
 }
 /** Flatten content blocks to the text a hook payload carries (the common case). */
 function blocksToText(content) {

@@ -30,6 +30,9 @@
     keyin:<spec>           真 SendInput 单键：esc|ret|up|down|left|right|tab|bksp，可 shift+ / ctrl+ 前缀
     hover:<key>            真 SendInput 指针移到元素中心 + 抖 3px（成规：伪造 hover 不算）
     click:<key>            UIA 定位到元素中心后真 SendInput 左键单击（不是按像素盲点）
+    wheel:<key>=<notches>  UIA 定位到元素中心后真 SendInput 滚轮；正 = 向尾端（视觉向下），
+                           负 = 向头端。无 INJECT_TAG 手签 ⇒ 应用侧按「用户滚轮」记账
+                           （贴底账本 / 置底按钮显隐的输入源）。夹 60 格。
     waitlog:<substr>       阻塞直到分叉自持日志含 substr（字面 Ordinal 子串）
     loggrep:<substr>       字面 Ordinal 子串，与 waitlog 同口径；命中行原样打出来（逐字取证）
     logre:<regex>          显式正则那一发（先编译再跑；^ 行锚 = 立刻记问题，见下面日志口径备案）
@@ -184,6 +187,27 @@ public static class Dr4Native {
         seq[0].type = INPUT_MOUSE; seq[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
         seq[1].type = INPUT_MOUSE; seq[1].mi.dwFlags = MOUSEEVENTF_LEFTUP;
         uint b = SendInput(2, seq, Marshal.SizeOf(typeof(INPUT)));
+        return a + b;
+    }
+    public const uint MOUSEEVENTF_WHEEL = 0x0800;
+    // 滚轮 notches 格（每发固定 ±WHEEL_DELTA=120，与应用侧 scroll.rs 的「一事件一格」同形）。
+    // 符号口径 = 应用侧 wheel_delta：正 notches = 向尾端（视觉向下）⇒ 增量取负。
+    // 关键：dwExtraInfo 不带任何手签 ⇒ 分叉的 WH_MOUSE_LL 钩子把这一发当「用户滚轮」记账
+    //（INJECT_TAG 剔除的是自家贴底注入，真 SendInput 无标记），置底按钮显隐判据吃的就是它。
+    // 夹 60 格：真实手势也就十几格，防止参数手滑把窗口甩飞。
+    public static uint WheelAbs(int physX, int physY, int notches) {
+        uint a = MoveAbs(physX, physY);
+        if (notches == 0) return a;
+        int n = Math.Abs(notches);
+        if (n > 60) n = 60;
+        int delta = notches > 0 ? -120 : 120;
+        INPUT[] seq = new INPUT[n];
+        for (int i = 0; i < n; i++) {
+            seq[i].type = INPUT_MOUSE;
+            seq[i].mi.mouseData = unchecked((uint)delta);
+            seq[i].mi.dwFlags = MOUSEEVENTF_WHEEL;
+        }
+        uint b = SendInput((uint)n, seq, Marshal.SizeOf(typeof(INPUT)));
         return a + b;
     }
     public static int GetSystemMetricsInt(int n) { return GetSystemMetrics32(n); }
@@ -790,6 +814,42 @@ function Do-Click([string]$key) {
     Start-Sleep -Milliseconds 700
 }
 
+function Do-Wheel([string]$spec) {
+    # wheel:<key>#<n>=<notches>：UIA 定位后真 SendInput 滚轮。正 notches = 向尾端
+    # （视觉向下），负 = 向头端；无 INJECT_TAG 手签 ⇒ 应用侧按「用户滚轮」记账
+    #（贴底账本 + 置底按钮显隐判据的输入源），是分叉没有 ViewChanged 时唯一可注入的
+    # 真实滚轮通道。落点纪律与 click 同一条：UIA 定位，不按像素盲点。
+    # `#<n>`（1-based；`last` = 最后一枚）可选：正文带里同名元素一抓一把（ToolCard ×30），
+    # 不带限定时 Find-El 的歧义判据会拦；滚轮的 verdict 是「打在哪个矩形上」，
+    # 报行里带上选中的序号与矩形即可归属，不受那条歧义红线管。
+    Ensure-Foreground 'wheel' | Out-Null
+    $k = $spec.IndexOf('=')
+    if ($k -lt 0) { W 'WHEEL-BADSPEC use wheel:<key>#<n>=<notches>'; return }
+    $lhs = $spec.Substring(0, $k)
+    $notches = 0
+    if (-not [int]::TryParse($spec.Substring($k + 1), [ref]$notches)) { W ('WHEEL-BADNOTCHES=' + $spec); return }
+    $key = $lhs; $pick = 0
+    $h = $lhs.IndexOf('#')
+    if ($h -ge 0) {
+        $key = $lhs.Substring(0, $h)
+        $tail = $lhs.Substring($h + 1)
+        if ($tail -eq 'last') { $pick = -1 }
+        elseif (-not [int]::TryParse($tail, [ref]$pick)) { W ('WHEEL-BADPICK=' + $lhs); return }
+    }
+    $f = Find-El $key
+    if ($f.how -eq 'none') { W ('WHEEL-NOTFOUND=' + $key); return }
+    $idx = 0
+    if ($pick -eq 0) { $idx = 0 }
+    elseif ($pick -eq -1) { $idx = $f.els.Count - 1 }
+    else { $idx = $pick - 1 }
+    if ($idx -lt 0 -or $idx -ge $f.els.Count) { W ('WHEEL-PICK-OUT-OF-RANGE=' + $lhs + ' n=' + $f.els.Count); return }
+    $c = Center-Of $f.els[$idx]
+    if ($null -eq $c) { W ('WHEEL-NO-RECT=' + $lhs + ' pick=' + ($idx + 1)); return }
+    $n = [int]([Dr4Native]::WheelAbs([int]$c.x, [int]$c.y, $notches))
+    W ('WHEELED=' + $lhs + ' notches=' + $notches + ' how=' + $f.how + ' pick=' + ($idx + 1) + '/' + $f.els.Count + ' at=' + $c.x + ',' + $c.y + ' injected=' + $n + ' (UIA 定位后真 SendInput 滚轮，应用侧按用户滚轮记账)')
+    Start-Sleep -Milliseconds 700
+}
+
 # ---------------------------------------------------------------- 截图
 function Shot-Name([string]$name) {
     if ($name -notmatch '^dr4-') { $name = 'dr4-' + $name }
@@ -1075,6 +1135,7 @@ foreach ($raw in ($Steps -split ';')) {
         'keyin' { Send-Key $arg }
         'hover' { Do-Hover $arg }
         'click' { Do-Click $arg }
+        'wheel' { Do-Wheel $arg }
         'waitlog' { Wait-Log $arg $WaitSec | Out-Null }
         'loggrep' {
             $ls = Get-Dr4LogLines
@@ -1119,7 +1180,9 @@ Start-Sleep -Milliseconds 800
 $kids = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($proc.Id)" -ErrorAction SilentlyContinue)
 foreach ($k in $kids) { W ('ORPHAN-CHILD=' + $k.Name + ' pid=' + $k.ProcessId) }
 if ($kids.Count -gt 0) {
-    [void](Mark-Dr4Problem 'ORPHAN-CHILD=' ($kids.Count + ' child(ren) survived the close: ' + ((@($kids | ForEach-Object { [string]$_.Name + '@' + [string]$_.ProcessId })) -join ' ')))
+    # [string] 先落：Int32 + String 在 PowerShell 里按「把字符串转 Int32」算，直接抛
+    #（0xC000027B 那条 SamePage 教训的 PS 版：错误发生在实参求值，函数体根本没进）。
+    [void](Mark-Dr4Problem 'ORPHAN-CHILD=' (([string]$kids.Count) + ' child(ren) survived the close: ' + ((@($kids | ForEach-Object { [string]$_.Name + '@' + [string]$_.ProcessId })) -join ' ')))
 }
 $leftRs = @(Get-Process blade2-rs -ErrorAction SilentlyContinue)
 $leftFake = @(Get-Process fake_dsh -ErrorAction SilentlyContinue)

@@ -1353,5 +1353,14 @@
  "设置二级页": "Underside i innstillinger",
  "关闭图片预览": "Lukk bildeforhåndsvisning",
  "已更新": "Oppdatert",
- "附加内容块": "Vedlagt innholdsblokk"
+ "附加内容块": "Vedlagt innholdsblokk",
+ "实验性功能": "Eksperimentelle funksjoner",
+ "实验性功能由内核可选 bundle（插件层）提供，可在此逐项开关。开关增删内核 profile 的 bundle 清单，由内核热重载即时生效；关闭的 bundle 不参与加载，重新开启即恢复。": "Eksperimentelle funksjoner kommer fra kjernen som valgfrie bundles (programtilleggslaget) og kan slås av og på enkeltvis her. Bryteren legger til eller fjerner bundle i kjernens profile-liste; kjernen laster det varmt inn med en gang. En deaktivert bundle lastes ikke i det hele tatt, og å slå den på igjen gjenoppretter den.",
+ "跨会话搜索": "Søk på tvers av sesjoner",
+ "开启后每个 Agent 获得一组只读检索工具，可搜索并引用当前工作区更早的会话；内容索引在首次搜索时打开、全 Agent 共享，侧栏搜索行为不变。": "Når den er slått på, får hver agent et sett skrivebeskyttede søkeverktøy for å finne og sitere tidligere sesjoner i det gjeldende arbeidsområdet. Innholdsindekset åpnes ved det første søket og deles av alle agenter; sidefeltets søkefunksjon endres ikke.",
+ "多代理（Agent Teams）": "Agent-team (flere agenter)",
+ "开启后 Agent 可把任务委派给团队成员协作完成：成员名册、共享任务板与队友会话在会话内可见。注意：多代理启用期间普通 Subagent 委派按内核设计一并停用。": "Når den er slått på, kan agenten delegere oppgaver til teammedlemmer og samarbeide med dem: medlemslisten, den felles oppgavetavlen og teammedlemmenes sesjoner er synlige i sesjonen. Merk: mens agent-team er aktivert, er vanlig subagent-delegering også deaktivert ved design i kjernen.",
+ "启用跨会话搜索": "Aktiver søk på tvers av sesjoner",
+ "启用多代理": "Aktiver agent-team",
+ "回到底部": "Bla til bunnen"
 }

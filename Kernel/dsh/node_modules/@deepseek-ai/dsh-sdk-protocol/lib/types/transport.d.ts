@@ -28,10 +28,11 @@ export interface JsonRpcTransportPeer {
      * Send a request and await its response.
      * @param method - the JSON-RPC method name.
      * @param params - the request parameters object.
+     * @param signal - optional cancellation; removes the pending waiter, rejects on abort, and ignores late responses.
      * @returns the result; rejects with {@link JsonRpcResponseError} on an error
      * response, and with a plain `Error` on a write failure or closure.
      */
-    request(method: string, params: object): Promise<unknown>;
+    request(method: string, params: object, signal?: AbortSignal): Promise<unknown>;
     /**
      * Send a notification; omitted params produce no `params` member.
      * @param method - the JSON-RPC method name.
@@ -42,13 +43,16 @@ export interface JsonRpcTransportPeer {
 /**
  * Line-delimited endpoint over caller-owned streams. {@link start} attaches
  * listeners; {@link close} detaches them and rejects pending requests without
- * destroying the streams. Missing request handlers return `-32601`; handler
+ * destroying the streams. Closure, input end, and input errors permanently reject
+ * later outbound requests with the first failure; start does not reset that failure.
+ * Missing request handlers return `-32601`; handler
  * failures return `-32603`. Notifications without a handler are dropped.
  */
 export declare class JsonRpcLineTransport implements JsonRpcTransportPeer {
     private readonly input;
     private readonly output;
     private buffer;
+    private failure;
     private readonly decoder;
     private started;
     private requestHandler;
@@ -58,7 +62,8 @@ export declare class JsonRpcLineTransport implements JsonRpcTransportPeer {
     /** Attach the input listeners and begin reading frames. Idempotent. */
     start(): void;
     /**
-     * Detach listeners and reject pending requests. Safe before {@link start}.
+     * Detach listeners and reject pending and future outbound requests. Safe before
+     * {@link start}; starting again does not reset the request failure.
      */
     close(): void;
     /**

@@ -1,0 +1,45 @@
+/** Complete Spanish copy for the common namespace. */
+export declare const es: {
+    ok: string;
+    cancel: string;
+    close: string;
+    copy: string;
+    copied: string;
+    'codeBlock.title': string;
+    'codeBlock.wrap': string;
+    'codeBlock.unwrap': string;
+    'copy.failed': string;
+    'copy.value': string;
+    'copy.json': string;
+    'copy.path': string;
+    'copy.prettyJson': string;
+    'copy.compactJson': string;
+    'copy.optionsHint': string;
+    retry: string;
+    loading: string;
+    'load.failed': string;
+    submit: string;
+    submitting: string;
+    next: string;
+    previous: string;
+    skip: string;
+    delete: string;
+    edit: string;
+    save: string;
+    search: string;
+    more: string;
+    collapse: string;
+    expand: string;
+    back: string;
+    'brand.localBuild': string;
+    'workspace.defaultName': string;
+    unknown: string;
+    none: string;
+    truncated: string;
+    'json.label': string;
+    'markdown.footnotes': string;
+    'markdown.truncatedCharacters': string;
+    'number.thousand': string;
+    'number.million': string;
+};
+//# sourceMappingURL=es.d.ts.map
