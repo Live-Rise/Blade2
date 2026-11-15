@@ -36,6 +36,11 @@ pub mod nativepick;
 // #160 B 刀第一片（UC-K1）：更新检查那条腿的纯层 —— 四段版本比较、releases/latest 回执解析、WinHTTP
 // 请求描述子 + 执行腿。与 dock/filespanel 同族：只算不画 —— 接线与 toast 都在 main.rs 那一刀，本模块零 UI 调用点。
 pub mod updatecheck;
+// 附件链路的纯逻辑层：Attachment 条目、四魔数嗅探、BMP/DIB→PNG 零依赖转码（主干
+// NormalizeImageAsync 的等价物）。与 filespanel 同族：只算不画 —— 选择器/上传/UI chip 接线在 main.rs。
+pub mod attachments;
+// Base64 标准字母表零依赖编解码（附件发送 data 字段与 session/attachment 回读共用）。
+pub mod b64;
 // 托盘底座**原语**（TR1 第 1 把刀）：shell32!Shell_NotifyIconW 的 NIM_ADD / NIM_DELETE 两档 + hIcon 解析
 // （运行时 Assets/app.ico）。与 toast.rs（只发 NIM_MODIFY 的气球腿）各带一份结构体 = 设计上的两份真相，
 // 不许合并；子类化回调臂 / 原生菜单 / main.rs 接线一律归下一批（范围与备案见模块头）。

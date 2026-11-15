@@ -2659,7 +2659,8 @@ impl InteractionLedger {
 // 主干真值（`MainWindow.xaml.cs`，行号会漂 ⇒ 一律按函数名定位）：
 //   LoadSessionHistoryAsync  分页拉历史的主循环 + `session/title` 的 durable title 回填
 //   ProbeJournalCursorAsync  一发越界探测拿真实游标（越界错误自带游标），解不出才对半探测
-//   ParsePastCursorSeq       从 "… is past cursor <sourceCursor>" 里取那个数
+//   ParsePastCursorSeq       从越界错误里取那个数（旧 "is past cursor <n>" /
+//                            新 0.2.2-rc.1 "history cut <n> exceeds <cursor>" 双格式）
 //   HistoryPageMessages = 5000 / JournalProbeSeq = 1 << 30   两个常量
 //   调用点：`OpenSessionAsync` 里 `await LoadSessionHistoryAsync(vm.SessionId)`，
 //   **紧接着**才 `await FollowSessionAsync(...)` —— 先回放历史、后开实时流，主干靠这个
@@ -2669,7 +2670,8 @@ impl InteractionLedger {
 //   session/page  params = {request:{address:{kind:"session",sessionId},throughSeq,maxMessages}}
 //   回包只读 `records`，每条是 `{type:"event", event:{type,seq,time,data}}`（与 follow 流的
 //   `event` 帧同一份形状，所以分叉可以复用 `apply_journal_event` 那一台机器）。
-//   越界错误串 = `"session page through seq <n> is past cursor <sourceCursor>"`。
+//   越界错误串 = 旧 `"session page through seq <n> is past cursor <sourceCursor>"`，
+//   0.2.2-rc.1 起新 `"session history cut <n> exceeds <cursor>"`（判据两格式都认）。
 
 /// 主干 `HistoryPageMessages`：内核 `maxMessages` 只对 user/assistant 消息计数、
 /// 且只校验正整数无上限，给 5000 = 「一次拉全」，省掉大会话的几十次翻页往返。
@@ -2723,19 +2725,32 @@ impl HistoryPage {
     }
 }
 
-/// 内核那句越界错误的判据（主干 `catch (DshRpcException ex) when (ex.Message.Contains("past cursor"))`；
-/// 分叉的 `Kernel::call` 把错误拼成 `"{code}: {message}"`，同一串文本，判据同源）。
+/// 内核那句越界错误的判据（主干 `IsPastCursorMessage`，`MainWindow.xaml.cs:5416`）：
+/// 0.2.2-rc.1 起报错从 `"session page through seq <n> is past cursor <cursor>"`
+/// 改成了 `"session history cut <n> exceeds <cursor>"`——壳按旧文案匹配永远不中，
+/// 探针异常穿透后被外层 catch 静默吞掉，分页历史整体失供（「点旧会话停在最早消息」
+/// 的根因）。两种格式都认，防内核回退或混装。
 pub fn is_past_cursor(message: &str) -> bool {
-    message.contains("past cursor")
+    message.contains("past cursor") || message.contains("history cut")
 }
 
-/// 主干 `ParsePastCursorSeq`：消息形如 `"session page through seq <n> is past cursor <sourceCursor>"`，
-/// 取**最后一次**出现的 `"past cursor "`（主干 `LastIndexOf` 同一条），后面整段 trim 再解析。
-/// 解不出回 `None` = 内核版本差异，调用方回落到对半探测。
+/// 主干 `ParsePastCursorSeq`（`MainWindow.xaml.cs:5423`）：旧格式取**最后一次**出现的
+/// `"past cursor "` 之后（主干 `LastIndexOf` 同一条）；新格式取 `"exceeds "` 之后
+/// （`"session history cut 1073741824 exceeds 357"` → 357）。两种标记都在时按
+/// 主干口径取更靠后的那个；后面整段 trim 再解析，解不出回 `None` = 内核版本差异，
+/// 调用方回落到对半探测。
 pub fn parse_past_cursor_seq(message: &str) -> Option<i64> {
-    const CURSOR_MARK: &str = "past cursor ";
-    let at = message.rfind(CURSOR_MARK)?;
-    message[at + CURSOR_MARK.len()..].trim().parse().ok()
+    const OLD_MARK: &str = "past cursor ";
+    const NEW_MARK: &str = "exceeds ";
+    let old_at = message.rfind(OLD_MARK);
+    let new_at = message.rfind(NEW_MARK);
+    let (at, mark_len) = match (old_at, new_at) {
+        (Some(a), Some(b)) if b > a => (b, NEW_MARK.len()),
+        (Some(a), _) => (a, OLD_MARK.len()),
+        (None, Some(b)) => (b, NEW_MARK.len()),
+        (None, None) => return None,
+    };
+    message[at + mark_len..].trim().parse().ok()
 }
 
 /// 一页 `records` 剥掉 `{type:"event", …}` 那层信封后拿到的事件（形状不对回 `None`）。
@@ -5599,6 +5614,30 @@ mod tests {
         assert_eq!(parse_past_cursor_seq(""), None);
         assert!(is_past_cursor("session/page/bad: … is past cursor 3"));
         assert!(!is_past_cursor("gateway/unauthorized: 401"));
+    }
+
+    #[test]
+    fn history_cut_message_yields_the_real_cursor() {
+        // 内核 0.2.2-rc.1 新文案（主干 `MainWindow.xaml.cs:5410` 的实测样例）：
+        // `"session history cut <n> exceeds <cursor>"` → 游标。
+        assert_eq!(
+            parse_past_cursor_seq("session/page/bad: session history cut 1073741824 exceeds 357"),
+            Some(357)
+        );
+        assert!(is_past_cursor("session/page/bad: session history cut 1073741824 exceeds 357"));
+        // 新格式判据、旧判据对新文案不中 → is_past_cursor 靠第二支兜住（回归点）。
+        assert!(is_past_cursor("session history cut 9 exceeds -1"));
+        assert_eq!(parse_past_cursor_seq("session history cut 9 exceeds -1"), Some(-1));
+        assert_eq!(parse_past_cursor_seq("… exceeds abc"), None);
+        // 双标记都在：按主干口径取更靠后的标记（新文案里嵌了旧短语也不读错）。
+        assert_eq!(
+            parse_past_cursor_seq("is past cursor 1, retry said: history cut 7 exceeds 42"),
+            Some(42)
+        );
+        assert_eq!(
+            parse_past_cursor_seq("said: history cut 7 exceeds 42, was is past cursor 1"),
+            Some(1)
+        );
     }
 
     #[test]

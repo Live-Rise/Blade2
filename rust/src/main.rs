@@ -37,6 +37,8 @@ use blade2_rs::capabilities::{
 };
 use blade2_rs::contextmeter as cm;
 use blade2_rs::crashlog;
+// 附件链路：纯层（条目/魔数嗅探/PNG 转码/上传腿）与 base64 编解码。
+use blade2_rs::{attachments, b64};
 use blade2_rs::dock;
 use blade2_rs::i18n::Catalog;
 use blade2_rs::i18n::relative_time;
@@ -606,6 +608,16 @@ enum Msg {
     /// 点第 entry 项：先收层，再转发那一族的既有 Msg（[`Msg::ComposerAddPick`] 那臂用
     /// `self.update(...)` 转发，F-6 那发 `Msg::ErrorDialog` 是同款先例——不在臂里重写第二份动作）。
     ComposerAddPick(ComposerAddEntry),
+    /// 移除附件条第 index 项（主干 chip 上的白圆 × → `_pendingAttachments.RemoveAt`）。
+    /// 附件条（[`Shell::attachments`]）落地时新增的一族。
+    AttachmentRemove(usize),
+    /// `session/attachment` 回读回执：`data:base64` 解码后按 attachmentId 落进
+    /// [`Shell::bubble_images`] 对应气泡（找不到 = 气泡已被翻页清掉，静默丢弃——
+    /// 主干 `RenderAttachmentImageAsync` 的 anchor 判空同口径）。
+    AttachmentImageLoaded {
+        attachment_id: String,
+        bytes: Result<Vec<u8>, String>,
+    },
     // ---- #56 输入区选择器组（`AgentMode*` / `Permission*` / `Model*`）------------------------
     // 主干那三颗 `DropDownButton` 与它们的 `MenuFlyout`（`MX:1209-1295`）。三张系统级 flyout
     // 天然互斥、且「看不见 = 不入树」⇒ 分叉用**一格** [`Shell::selectors`] 表达这两条，
@@ -1611,6 +1623,41 @@ impl Bubble {
             produced: Vec::new(),
         }
     }
+}
+
+/// user 气泡的图片条目（主干 journal image 块 → `RenderAttachmentImageAsync` 那一族）。
+/// 不进 [`Bubble`]：旁表 [`Shell::bubble_images`] 按气泡键挂——主干 `_attachmentImages`
+/// 字典也是旁挂（`MainWindow.xaml.cs:2620`），同一份设计真相。
+/// 名字（journal image 块带 `name`）v1 不落结构：回读与渲染都不消费，主干拿它做
+/// UIA 名/降级重传的用途归下一刀（放大浮层）。
+#[derive(Clone)]
+struct BubbleImage {
+    /// 内核 attachmentId（回读键 + 去重键：同一张图全仓只回读一次）。
+    attachment_id: String,
+    /// 解码后的位图源；`None` = 回读还没回来（渲染 40×40 空取景框占位）。
+    thumb: Option<EncodedImage>,
+}
+
+/// journal image 块的形状判据（主干 `MainWindow.xaml.cs:6819-6822`）：
+/// `type == "image"` 且 `attachment.attachmentId` 是非空串，名缺省「图片」。
+fn journal_image_blocks(content: Option<&Vec<serde_json::Value>>) -> Vec<(String, String)> {
+    content
+        .into_iter()
+        .flatten()
+        .filter(|block| block.get("type").and_then(serde_json::Value::as_str) == Some("image"))
+        .filter_map(|block| {
+            let att = block.get("attachment")?;
+            let id = att.get("attachmentId")?.as_str()?;
+            if id.is_empty() {
+                return None;
+            }
+            let name = att
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("图片");
+            Some((id.to_string(), name.to_string()))
+        })
+        .collect()
 }
 
 /// 气泡行的寻址键：hover 提亮、「已复制」态和思考折叠都按它记（分叉没有逐气泡的对象身份）。
@@ -5517,6 +5564,15 @@ enum ComposerAddEntry {
     Cordis,
     Trajectory,
     Feedback,
+}
+
+/// 输入区附件 chip 的壳侧条目（主干 `AttachmentVm` + chip 缩略图槽的合体）。
+#[derive(Clone)]
+struct ComposerAttachment {
+    att: attachments::Attachment,
+    /// 图片 chip 的缩略图源（文件附件 None）。入列时构造一次、渲染每帧 `Clone`：
+    /// `EncodedImage` 内部 `Arc` 共享，同实例不重解码。
+    thumb: Option<EncodedImage>,
 }
 
 /// 那张 flyout 的**逐字**表：`(文案键, AutomationId, 动作档)`。文案过 `catalog.l`
@@ -11459,6 +11515,32 @@ struct Shell {
     /// 系统 `MenuFlyout`，分叉同族自绘层（scrim + 贴左下的卡）。`false` = 没开；
     /// 表体九项的成员与序见 [`COMPOSER_ADD_ITEMS`]，开关四路出口同 [`Shell::file_menu`]。
     composer_add: bool,
+    /// 输入区附件条（主干 `_pendingAttachments` + `AttachmentStrip` 的合体，0.9.0.x 对齐刀）。
+    /// 条目 = 附件纯层（[`attachments::Attachment`]）+ chip 缩略图槽：图片在入列时把
+    /// 规范化字节构造一次 [`EncodedImage`]，渲染侧每帧 `Clone` 同一实例——reactor 的
+    /// `EncodedImage` 内部是 `Arc` 共享（element.rs:19），同实例不重解码，每帧
+    /// `new` 才会。发送成功在 [`Shell::on_prompted`] 清空；失败整条保留（主干同口径：
+    /// 只有发送成功那一发才清 `_pendingAttachments`）。
+    attachments: Vec<ComposerAttachment>,
+    /// 发送已起跑、结果未落的附件（主干把 `_pendingAttachments` 留在原地等发送结果；
+    /// 分叉发送臂把附件 take 进闭包 ⇒ 落点存这一格：`Msg::Prompted(Ok)` 清空、
+    /// `Err` 原样还回输入区——主干「只有成功才清」同一口径）。
+    attachments_in_flight: Vec<ComposerAttachment>,
+    /// user 气泡的图片旁表（主干 `_attachmentImages`/`_renderedAttachmentIds` 的合体；
+    /// 键 = [`bubble_key`]）。图片不进 [`Bubble`]（`PartialEq` 派生照旧，主干同一份
+    /// 「字典旁挂」设计真相）；`rendered` 防重：同一 attachmentId 全仓只回读一次，
+    /// journal 补拉与 follow 流双路到达也不重贴。
+    ///
+    /// 偏差备案（与主干的本地回显贴图）：主干发送成功即按名把图贴在回显气泡后面
+    /// （列表级独立锚，`_localImageEchoes` 按名认领避免 journal 到达重贴）；分叉的
+    /// 回显认领要跟着 [`put_journal_user_row`] 的三种落点搬键，回声被历史格丢掉时
+    /// 列表级锚没法等价落地 ⇒ v1 一律走 journal 回读（本机内核一跳 RTT，可接受），
+    /// 升级路径 = 旁表键随认领搬移那一刀。
+    bubble_images: std::collections::HashMap<String, Vec<BubbleImage>>,
+    rendered_attachment_ids: std::collections::HashSet<String>,
+    /// 待回读队列（journal 臂只排队——那里没有 `context`；update 收尾
+    /// [`Shell::flush_attachment_reads`] 统一发起）。元组 = (sessionId, attachmentId, 气泡键)。
+    pending_attachment_reads: Vec<(String, String, String)>,
     /// #93e 那张「消息详情」浮层：`Some(键)` = 开着的是**哪一颗气泡**的详情（键 =
     /// [`details_key_of`] 那一串，与旁路表同一把）。`None` = 场上没有它 ⇒ 整棵节点不入树
     /// （reactor 没有 `Visibility`，口径同 [`Shell::file_menu`]）。
@@ -12722,7 +12804,8 @@ impl Shell {
             return;
         }
         let text = self.input.trim().to_string();
-        if text.is_empty() {
+        if text.is_empty() && self.attachments.is_empty() {
+            // 主干 `OnSendClick`：空文本+空附件早退（附件条落地后补的那一半）。
             return;
         }
         // 主干 `SubmitInputAsync` 开头那六行（MW:6883-6897）：前导 `/` 的命令名**命中会话命令目录**
@@ -12758,6 +12841,10 @@ impl Shell {
             return;
         };
         self.input.clear();
+        // 附件条：发送已经起跑 ⇒ 附件从输入区摘下（clone 进闭包）；发送失败/被拒在
+        // [`Shell::on_prompted`] 的 Err 分支原样还回（主干「只有成功才清」同一口径）。
+        self.attachments_in_flight = std::mem::take(&mut self.attachments);
+        let attachments = self.attachments_in_flight.clone();
         // #73 刀 2（D4 之一/七）：清框 = 主干那发 `InputBox.Text` 改写 ⇒ `TextChanged` 会重判
         // @ 触发（判不成 ⇒ `hide`）。分叉没有事件，手工补一发；顺序在发送那一发之前，
         // 与主干「赋值当场就重判」同刻。
@@ -12807,47 +12894,118 @@ impl Shell {
                     .unwrap_or_default(),
                 None => String::new(),
             };
-            let args = json!({ "request": {
-                "requestId": request_id(),
-                "sessionId": sid,
-                "mode": mode,
-                "content": [{ "type": "text", "text": text }],
-            }});
-            // 缺口 #68：主干 `MainWindow.xaml.cs:7269-7279` 那一发
-            // `catch (DshRpcException ex) when (IsSessionLeaseBusy(ex) && SweepOrphanKernels() > 0)`
-            // → `Task.Delay(300)` → 重发一次。分叉的等价位置就是这个后台闭包：`Kernel::call` 把内核
-            // 的错误拼成 `"{code}: {message}"`（`kernel.rs`），`SessionAlreadyOwnedError` 就在里面，
-            // 所以 `procguard::is_lease_busy_error` 判得出来（可达性已按主干那两个子串逐字对齐）。
-            // 只重发一次；扫不到残留（`killed_count() == 0`）就照旧把原错误交给 `Msg::Prompted(Err)`
-            // 走今天的失败分支 —— 与主干「扫不到就放过，照旧走下面的失败分支」同一口径。
-            // 重发点选在这里还有个理由：此刻回显已落、正文与认领登记都还没走（主干那两条注释说的
-            // 「本轮什么都还没落，重发零副作用」），所以第二发不会把同一轮写两遍。
-            let mut prompt_attempt = 0u32;
+            // 附件 content 构造（主干 `BuildContentAsync`）：文本 + 图片内联 base64 +
+            // 文件 receiptId（先 `uploadFileBinary` 换收据）。`images_as_files`：内核拒收
+            // 图片字节（`attachment-invalid`，sharp 对字节与声明类型严格比对）时的降级
+            // 重发——图片改走原始字节上传（verbatim，不过图片校验），保证消息不丢。
+            let mut images_as_files = false;
             let prompted = loop {
-                prompt_attempt += 1;
-                match kernel.call("session/prompt", args.clone()) {
-                    Ok(_) => break Ok(()),
-                    Err(error) => {
-                        // 常驻复用（0.9.0.4）之后这一发必须**点名豁免当前内核**：会话中途的
-                        // 清扫若拿零参版，眼里这颗 attach 来的常驻内核（父进程 = 上一次的死壳）
-                        // 就是孤儿 ⇒ 撞租约重发之前先把唯一能用的内核扫掉了。豁免 pid 取
-                        // `kernel.pid()`（spawn / attach 都有），`None ⇒ 0` = 不豁免（等价零参）。
-                        let swept = if prompt_attempt == 1 && procguard::is_lease_busy_error(&error) {
-                            procguard::sweep_orphan_kernels_sparing(kernel.pid().unwrap_or(0))
-                        } else {
-                            procguard::SweepOutcome::default()
-                        };
-                        if swept.killed_count() == 0 {
-                            break Err(error);
-                        }
-                        emit_line(&format!(
-                            "DIAG: 这条会话的写租约还被残留内核占着，已收掉 {} 个，300ms 后重发一次（{}）",
-                            swept.killed_count(),
-                            swept.note
-                        ));
-                        // 主干 `:7276`：等进程连同它手里那把 semaphore 一起消失。
-                        std::thread::sleep(Duration::from_millis(300));
+                let mut content = Vec::with_capacity(1 + attachments.len());
+                content.push(json!({ "type": "text", "text": text }));
+                let mut upload_error: Option<String> = None;
+                for item in &attachments {
+                    let att = &item.att;
+                    if att.is_image && !images_as_files {
+                        content.push(json!({
+                            "type": "image",
+                            "mediaType": att.media_type,
+                            "data": att.data_base64,
+                            "name": att.name,
+                        }));
+                        continue;
                     }
+                    // 文件附件（或降级重发的图片）：读字节 → 上传换 receiptId。
+                    // 收不到 receiptId 就没有内容块可发：整条消息失败（主干同款——
+                    // 「少个附件照发」= 静默丢附件的教训）。
+                    let bytes = if att.is_image {
+                        b64::decode(&att.data_base64)
+                            .ok_or_else(|| format!("附件 {} 的 base64 解不开", att.name))
+                    } else {
+                        std::fs::read(&att.file_path)
+                            .map_err(|e| format!("附件 {} 读取失败: {e}", att.name))
+                    };
+                    let bytes = match bytes {
+                        Ok(bytes) => bytes,
+                        Err(error) => {
+                            upload_error = Some(error);
+                            break;
+                        }
+                    };
+                    let ep = kernel.endpoint().clone();
+                    match attachments::upload_bytes_to_kernel(
+                        &ep.host, ep.port, &sid, &att.name, &bytes,
+                    ) {
+                        Ok(receipt) => {
+                            content.push(json!({ "type": "file", "receiptId": receipt }))
+                        }
+                        Err(error) => {
+                            upload_error =
+                                Some(format!("附件 {} 上传失败，消息未发送。{error}", att.name));
+                            break;
+                        }
+                    }
+                }
+                if let Some(error) = upload_error {
+                    break Err(error);
+                }
+                let args = json!({ "request": {
+                    "requestId": request_id(),
+                    "sessionId": sid,
+                    "mode": mode,
+                    "content": content,
+                }});
+                // 缺口 #68：主干 `MainWindow.xaml.cs:7269-7279` 那一发
+                // `catch (DshRpcException ex) when (IsSessionLeaseBusy(ex) && SweepOrphanKernels() > 0)`
+                // → `Task.Delay(300)` → 重发一次。分叉的等价位置就是这个后台闭包：`Kernel::call` 把内核
+                // 的错误拼成 `"{code}: {message}"`（`kernel.rs`），`SessionAlreadyOwnedError` 就在里面，
+                // 所以 `procguard::is_lease_busy_error` 判得出来（可达性已按主干那两个子串逐字对齐）。
+                // 只重发一次；扫不到残留（`killed_count() == 0`）就照旧把原错误交给 `Msg::Prompted(Err)`
+                // 走今天的失败分支 —— 与主干「扫不到就放过，照旧走下面的失败分支」同一口径。
+                // 重发点选在这里还有个理由：此刻回显已落、正文与认领登记都还没走（主干那两条注释说的
+                // 「本轮什么都还没落，重发零副作用」），所以第二发不会把同一轮写两遍。
+                let mut prompt_attempt = 0u32;
+                let prompt_result = loop {
+                    prompt_attempt += 1;
+                    match kernel.call("session/prompt", args.clone()) {
+                        Ok(_) => break Ok(Some(())),
+                        Err(error) => {
+                            // 降级重发（主干 `MW:8328` 的 `when …EndsWith("attachment-invalid")`）：
+                            // 图片内联被内核拒收 ⇒ 图片改走文件上传重构 content 再发一次。
+                            // 判据对两条通道同源：`Kernel::call` 与上传腿都拼成 `"{code}: {message}"`。
+                            if !images_as_files
+                                && attachments.iter().any(|item| item.att.is_image)
+                                && error.contains("attachment-invalid")
+                            {
+                                images_as_files = true;
+                                break Ok(None); // 用 None 标记「降级重跑外层」
+                            }
+                            // 常驻复用（0.9.0.4）之后这一发必须**点名豁免当前内核**：会话中途的
+                            // 清扫若拿零参版，眼里这颗 attach 来的常驻内核（父进程 = 上一次的死壳）
+                            // 就是孤儿 ⇒ 撞租约重发之前先把唯一能用的内核扫掉了。豁免 pid 取
+                            // `kernel.pid()`（spawn / attach 都有），`None ⇒ 0` = 不豁免（等价零参）。
+                            let swept = if prompt_attempt == 1 && procguard::is_lease_busy_error(&error) {
+                                procguard::sweep_orphan_kernels_sparing(kernel.pid().unwrap_or(0))
+                            } else {
+                                procguard::SweepOutcome::default()
+                            };
+                            if swept.killed_count() == 0 {
+                                break Err(error);
+                            }
+                            emit_line(&format!(
+                                "DIAG: 这条会话的写租约还被残留内核占着，已收掉 {} 个，300ms 后重发一次（{}）",
+                                swept.killed_count(),
+                                swept.note
+                            ));
+                            // 主干 `:7276`：等进程连同它手里那把 semaphore 一起消失。
+                            std::thread::sleep(Duration::from_millis(300));
+                        }
+                    }
+                };
+                match prompt_result {
+                    Ok(Some(())) => break Ok(()),
+                    // 降级标记已置位 ⇒ 外层 loop 重构 content（图片走上传）再发一轮。
+                    Ok(None) => continue,
+                    Err(error) => break Err(error),
                 }
             };
             match prompted {
@@ -15907,6 +16065,31 @@ impl Shell {
                 let model = self.header_model.clone();
                 put_journal_user_row(&mut self.bubbles, turn, seq, text, time, &model);
                 self.pending_user = Some(seq);
+                // 图片块（主干 `MW:6819-6841` 的等价位）：journal 只存 attachmentId 引用，
+                // 字节经 session/attachment 回读（旁表键 = 这一格的气泡键；v1 一律回读，
+                // 不做本地回显贴图——偏差备案在 [`Shell::bubble_images`] 的字段注释）。
+                let image_blocks = journal_image_blocks(event["data"]["content"].as_array());
+                if !image_blocks.is_empty() {
+                    let key = format!("user-{turn}-{seq}");
+                    let entry = self.bubble_images.entry(key.clone()).or_default();
+                    for (attachment_id, _name) in image_blocks {
+                        let fresh =
+                            entry.iter().all(|image| image.attachment_id != attachment_id);
+                        if fresh {
+                            entry.push(BubbleImage {
+                                attachment_id: attachment_id.clone(),
+                                thumb: None,
+                            });
+                            // 只排队不发起：回读要 `context.spawn_background`，
+                            // 这里的调用链（apply_journal_event）收不进 context。
+                            self.pending_attachment_reads.push((
+                                session.to_string(),
+                                attachment_id,
+                                key.clone(),
+                            ));
+                        }
+                    }
+                }
                 // #93d 接线 B（主干 `MessageDetails.cs:242-340` 那四条分支 + `:348-356` 的补登，
                 // 调用点 `MainWindow.xaml.cs:6142`「建完气泡才落表」）：键取**这一帧真的画出来的
                 // 那一格**，没画 ⇒ `None`。分叉这边 `put_journal_user_row` 三种落点（丢回声 /
@@ -19315,6 +19498,11 @@ impl Component for Shell {
             file_menu: None,
             tool_menu: None,
             composer_add: false,
+            attachments: Vec::new(),
+            attachments_in_flight: Vec::new(),
+            bubble_images: std::collections::HashMap::new(),
+            rendered_attachment_ids: std::collections::HashSet::new(),
+            pending_attachment_reads: Vec::new(),
             // 首屏也没有详情浮层（同一口径：`None` ⇒ 那棵节点不入树）。
             message_details: None,
             // 首屏也没有跨会话召回列表（同一口径）。
@@ -20248,10 +20436,10 @@ impl Component for Shell {
             Msg::ComposerAddPick(entry) => {
                 self.composer_add = false;
                 match entry {
-                    ComposerAddEntry::Attach => self.update(
-                        Msg::Note(self.catalog.l("附件尚未移植")),
-                        context,
-                    ),
+                    // 「添加图片或文件」（主干 `OnAttachClick` → `FileOpenPicker` →
+                    // `AddAttachmentAsync`）：选择器照 SkinImage 档先例在调用线程跑
+                    // （nativepick 模块头的线程模型裁定——真模态、owner 壳窗）。
+                    ComposerAddEntry::Attach => self.pick_attachment(context),
                     ComposerAddEntry::WorkspaceFiles => self.update(
                         Msg::Note(self.catalog.l("工作区文件面板尚未移植")),
                         context,
@@ -20267,6 +20455,33 @@ impl Component for Shell {
                     ComposerAddEntry::Feedback => self.update(Msg::SessionFeedbackToggle, context),
                 }
             }
+            // 附件 chip 的移除键（主干 chip → `_pendingAttachments.RemoveAt`）：按序号摘，
+            // 序号由渲染侧 chip 的 `on_click` 带上来（键序 = 列表序，UIA 账本也按这个序）。
+            Msg::AttachmentRemove(index) => {
+                if index < self.attachments.len() {
+                    self.attachments.remove(index);
+                }
+            }
+            // 历史图片字节到手（主干 `RenderAttachmentImageAsync` 的续腿）：入缓存、
+            // 找到挂着该 attachmentId 的气泡补上缩略源。找不到 = 气泡已被清掉，静默丢
+            // （主干 anchor 判空同口径）。
+            Msg::AttachmentImageLoaded {
+                attachment_id,
+                bytes,
+            } => match bytes {
+                Ok(bytes) => {
+                    let thumb = EncodedImage::new(bytes);
+                    for images in self.bubble_images.values_mut() {
+                        for image in images.iter_mut() {
+                            if image.attachment_id == attachment_id && image.thumb.is_none() {
+                                image.thumb = Some(thumb.clone());
+                            }
+                        }
+                    }
+                }
+                // 图裂了不挡消息流：主干 MakeBitmapAsync 的 catch 同口径（占位框留着）。
+                Err(error) => self.push_log(format!("图片回读失败: {error}")),
+            },
             // ---- #56 输入区选择器组（`AgentMode*` / `Permission*` / `Model*`）----------------
             // 主干那三张 `MenuFlyout` 是系统级、彼此天然互斥；分叉这格 [`Shell::selectors`]
             // 只能装一张，开这张先收那张就是同一条口径（互斥清单的写法同上面 `Msg::FileMenuToggle`
@@ -22372,9 +22587,19 @@ impl Component for Shell {
                 self.dock.inner_drag_end();
             }
             Msg::Prompted(result) => match result {
-                Ok((session, stream)) => self.on_prompted(&session, &stream, context),
+                Ok((session, stream)) => {
+                    // 发送成功：在途附件落地清空（主干发送成功那一发才清 `_pendingAttachments`）。
+                    self.attachments_in_flight.clear();
+                    self.on_prompted(&session, &stream, context)
+                }
                 Err(error) => {
                     self.echo = None;
+                    // 发送失败：附件原样还回输入区（主干同口径——失败不清附件条）。
+                    if !self.attachments.is_empty() {
+                        // 上一条还挂着就并入（理论不可达：take 后输入区那条必空）。
+                        self.attachments_in_flight.append(&mut self.attachments);
+                    }
+                    self.attachments = std::mem::take(&mut self.attachments_in_flight);
                     self.push_log(format!("发送失败: {error}"));
                 }
             },
@@ -23812,6 +24037,10 @@ impl Component for Shell {
         // #92 呼吸的上臂同样只有这一个点：`running` 表的三处写入点（turn/start、turn/end、
         // api-session/status）都在这个 match 里，摊到各条 arm 就等于写三遍同一件事。
         self.pump_status_pulse(context);
+        // 附件图片的回读发起放收尾统一 drain：journal 臂（回放 + follow 两路）只负责挂
+        // 旁表与排队，那里没有 `context` 可用（`apply_journal_event` 的签名收不进来）——
+        // 收尾这一发跟 `pump_status_pulse` 同一条「收尾不漏」的成规。
+        self.flush_attachment_reads(context);
     }
 
     fn view(&self, _input: &(), context: &mut ViewContext<Self>) -> View {
@@ -32533,16 +32762,17 @@ impl Shell {
             .text_wrapping(TextWrapping::Wrap)
             .is_text_selection_enabled(true);
         match bubble.role {
-            "user" => StackPanel::new()
-                .horizontal_alignment(HorizontalAlignment::Right)
-                .max_width(size::BUBBLE_MAX_WIDTH)
-                .margin(row)
-                .spacing(space::S2)
-                .children((
-                    Border::new()
+            "user" => {
+                // 气泡本体 + 可选图片行（主干 user-image 的视觉位 = 气泡下方）+ 动作行。
+                // 图片行从旁表现查（[`Shell::bubble_images_row`]），有图才入树。
+                let bubble_stack = StackPanel::new()
+                    .horizontal_alignment(HorizontalAlignment::Right)
+                    .max_width(size::BUBBLE_MAX_WIDTH)
+                    .spacing(space::S2)
+                    .children((Border::new()
                         .horizontal_alignment(HorizontalAlignment::Right)
-                        .background(p.bubble)
-                        .border_brush(p.stroke_subtle)
+                        .background(p.bubble.clone())
+                        .border_brush(p.stroke_subtle.clone())
                         .border_thickness(size::STROKE)
                         .corner_radius(CornerRadius::new(
                             radius::XLARGE,
@@ -32551,9 +32781,29 @@ impl Shell {
                             radius::XLARGE,
                         ))
                         .padding(th(pad::BUBBLE_USER))
-                        .content(body),
-                    self.bubble_actions(bubble, false, closed, p, context),
-                )),
+                        .content(body),));
+                match self.bubble_images_row(bubble, p) {
+                    Some(images) => StackPanel::new()
+                        .horizontal_alignment(HorizontalAlignment::Right)
+                        .max_width(size::BUBBLE_MAX_WIDTH)
+                        .margin(row)
+                        .spacing(space::S2)
+                        .children((
+                            bubble_stack,
+                            images,
+                            self.bubble_actions(bubble, false, closed, p, context),
+                        )),
+                    None => StackPanel::new()
+                        .horizontal_alignment(HorizontalAlignment::Right)
+                        .max_width(size::BUBBLE_MAX_WIDTH)
+                        .margin(row)
+                        .spacing(space::S2)
+                        .children((
+                            bubble_stack,
+                            self.bubble_actions(bubble, false, closed, p, context),
+                        )),
+                }
+            }
             // 主线 `AppendSystemMessage` 的 Role=system 在模板选择器里落到 default ⇒ 同一个 `ToolTpl`
             // （`BubbleTemplateSelector.cs:22-32`）：无图标、无摘要的灰行。分叉给它单独一个 role 值，
             // 是为了让 `hero_state()` 把它当「非对话内容」排除掉（MW:4374 同口径）。
@@ -33617,7 +33867,6 @@ impl Shell {
     /// #57 在这一格里追加**第四枚** keyed 槽（键 `"context-meter"`），排在 `permission` 之后。
     fn composer_band(&self, context: &mut ViewContext<Shell>) -> View {
         // #240 收形：带 = 主干 composer 列的本位成员（`MX:1209-1300` col 2-6）。两族曾因
-        // 「宿主未落地」暂挂在这条带上，本刀都送回本位：
         // · 任务徽标 → 会话头动作区（主干 `EnsureTodosUiEntry` 的本位 `SS:634-637`；批 M4
         //   那条「分叉没有会话头 ⇒ 挂输入区」的偏差随 [`Shell::chat_session_header`] 落地收口）；
         // · 计划（只读）/ 技能 / Cordis 插件 / 轨迹 / 会话反馈五族 → 「+」那张
@@ -34063,6 +34312,9 @@ impl Shell {
                         StackPanel::new()
                             .orientation(Orientation::Vertical)
                             .children((
+                                // 附件条（主干 `AttachmentStrip`）：composer 列第 1 格，
+                                // 非空才出墨（[`Shell::attachment_strip`] 空态给零墨迹节点）。
+                                self.attachment_strip(context, p),
                                 Border::new()
                                     .padding(th(pad::COMPOSER_INPUT))
                                     // 焦点证据（正向）：框架里只有 `Border` 挂了 `PointerPressed`，
@@ -34257,6 +34509,246 @@ impl Shell {
     /// 四颗 `automation_id` 逐字取自 `MainWindow.xaml:757-762` 的 `x:Name`（WinUI 由 x:Name 生成
     /// AutomationId）：面板本体 + Mark + 那两行文案 + 重试钮。面板的 `AutomationProperties.Name`
     /// 是「内核启动状态」（`MX:758`），原先那句「内核加载进度」是主干没有的说法，一并收掉。
+    // ==================== 输入区附件条（主干 AttachmentStrip + AttachmentVm 那一族） ====================
+
+    /// 输入区「＋ → 添加图片或文件」（主干 `OnAttachClick` → `FileOpenPicker` →
+    /// `AddAttachmentAsync`）。选择器照 SkinImage 档先例在调用线程跑模态
+    /// （nativepick 模块头的线程模型裁定，owner = 壳窗 HWND）；取消/失败静默（主干同款）。
+    fn pick_attachment(&mut self, context: &ComponentContext<Shell>) {
+        let Some(path) = mw2_skin_pick(nativepick::PickerId::Attachment) else {
+            return;
+        };
+        self.add_attachment_from_path(path, context);
+    }
+
+    /// 主干 `AddAttachmentAsync`：图片候选扩展名（bmp/dib/tif/ico 等壳能解的都收）先按
+    /// 字节规范化——嗅探命中直入图片附件、BMP/DIB 转 PNG；规范化失败（HEIC/损坏）或
+    /// 其余扩展名落文件附件，消息照常能发（模型拿到的是文件而非图片，主干同一口径）。
+    fn add_attachment_from_path(&mut self, path: String, context: &ComponentContext<Shell>) {
+        let name = std::path::Path::new(&path)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.clone());
+        let ext = std::path::Path::new(&path)
+            .extension()
+            .map(|e| e.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        let maybe_image = matches!(
+            ext.as_str(),
+            "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "dib" | "tif" | "tiff" | "ico"
+        );
+        if maybe_image {
+            match std::fs::read(&path) {
+                Ok(bytes) => {
+                    if let Some((norm, media_type, norm_name)) =
+                        attachments::normalize_image(&bytes, &name)
+                    {
+                        // 缩略图与发送字节同源：构造一次 EncodedImage（Arc 共享），
+                        // 渲染每帧 Clone 同一实例 ⇒ 原生侧不重解码。
+                        let thumb = EncodedImage::new(norm.clone());
+                        self.attachments.push(ComposerAttachment {
+                            att: attachments::Attachment::image(norm_name, media_type, &norm),
+                            thumb: Some(thumb),
+                        });
+                        return;
+                    }
+                    // 壳解不了/已损坏：落文件附件分支（主干同一口径，不弹错误）。
+                }
+                Err(error) => {
+                    // 主干读盘失败走 catch 静默保附件条原样；分叉如实记日志 + 一发 Note。
+                    self.push_log(format!("附件读取失败: {error}"));
+                    self.update(
+                        Msg::Note(self.catalog.lf("图片读取失败，未添加附件：{0}", &[name])),
+                        context,
+                    );
+                    return;
+                }
+            }
+        }
+        self.attachments.push(ComposerAttachment {
+            att: attachments::Attachment::file(name, path),
+            thumb: None,
+        });
+    }
+
+    /// 附件条（主干 `AttachmentStrip`，composer 列第 1 格）：空 = 空节点零墨迹
+    /// （reactor 没有 `Visibility` 的本仓口径），非空 = 输入框上方一行水平 chips。
+    /// 图片 chip = 40×40 取景框里的缩略图（UniformToFill）+ 移除键；
+    /// 文件 chip = 「FILE 字形 + 名 + 移除键」（主干「📄 名 + 移除键」同构）。
+    fn attachment_strip(&self, context: &mut ViewContext<Shell>, p: Palette) -> View {
+        if self.attachments.is_empty() {
+            return Border::new().into();
+        }
+        let chips: Vec<KeyedView> = self
+            .attachments
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                KeyedView::new(
+                    format!("attach-{index}"),
+                    self.attachment_chip(index, item, p, context),
+                )
+            })
+            .collect();
+        StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .spacing(6.0)
+            .automation_id("AttachmentStrip")
+            .automation_name(self.catalog.l("添加附件或操作"))
+            .keyed_children(chips)
+    }
+
+    /// 单枚附件 chip（主干 `AddPendingAttachment` 的 chip 构造）。移除键的
+    /// automation name = 「移除附件 {0}」（主干同键）。
+    fn attachment_chip(
+        &self,
+        index: usize,
+        item: &ComposerAttachment,
+        p: Palette,
+        context: &mut ViewContext<Shell>,
+    ) -> View {
+        // 取景框（图片）或「FILE 字形 + 名」（文件）：分支二选一，形态同主干 chip 前段。
+        // ⚠ `content()` 收尾即转 `View`（ContentControl 扩展）⇒ on_click/automation_name
+        // 必须排在 content 之前（仓内 pill_button 调用点的同一口径）。
+        let lead: View = if let Some(thumb) = &item.thumb {
+            Border::new()
+                .width(40.0)
+                .height(40.0)
+                .corner_radius(radius::SMALL)
+                .border_brush(p.stroke)
+                .border_thickness(size::STROKE)
+                .content(
+                    Image::new()
+                        .source_data(thumb.clone())
+                        .stretch(Stretch::UniformToFill)
+                        .width(38.0)
+                        .height(38.0),
+                )
+        } else {
+            StackPanel::new()
+                .orientation(Orientation::Horizontal)
+                .spacing(4.0)
+                .vertical_alignment(VerticalAlignment::Center)
+                .children((
+                    mark_size(glyph::FILE, size::GLYPH_BODY),
+                    TextBlock::new()
+                        .text(item.att.name.clone())
+                        .vertical_alignment(VerticalAlignment::Center),
+                ))
+        };
+        StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .spacing(6.0)
+            .children((
+                lead,
+                Button::new()
+                    .on_click(context.message(Msg::AttachmentRemove(index)))
+                    .automation_name(
+                        self.catalog.lf("移除附件 {0}", &[item.att.name.clone()]),
+                    )
+                    .content(mark_size(glyph::CLOSE, size::GLYPH_CAPTION)),
+            ))
+    }
+
+    /// `session/attachment` 回读发起（主干 `RenderAttachmentImageAsync` 的 RPC 腿）。
+    /// 去重闸在此：同一 attachmentId 只发一发，journal 补拉与 follow 双路到达也不重贴。
+    fn request_attachment_image(
+        &mut self,
+        session: &str,
+        attachment_id: String,
+        context: &ComponentContext<Shell>,
+    ) {
+        if !self.rendered_attachment_ids.insert(attachment_id.clone()) {
+            return;
+        }
+        let Some(shared) = self.kernel.clone() else {
+            // 常驻内核不在手：把去重闸退回去，后续臂重试（主干 rpc null 的静默同口径）。
+            self.rendered_attachment_ids.remove(&attachment_id);
+            return;
+        };
+        let session = session.to_string();
+        let attachment_id_for_call = attachment_id.clone();
+        context.spawn_background(move |_token| {
+            let mut kernel = match shared.lock() {
+                Ok(guard) => guard,
+                Err(_) => {
+                    return Msg::AttachmentImageLoaded {
+                        attachment_id,
+                        bytes: Err("内核状态不可用".to_string()),
+                    }
+                }
+            };
+            let bytes = kernel
+                .call(
+                    "session/attachment",
+                    json!({ "request": {
+                        "sessionId": session,
+                        "attachmentId": attachment_id_for_call,
+                    } }),
+                )
+                .and_then(|value| {
+                    value
+                        .get("data")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                        .ok_or_else(|| "回执里没有 data:base64".to_string())
+                })
+                .and_then(|data| {
+                    b64::decode(&data).ok_or_else(|| "data:base64 解不开".to_string())
+                });
+            Msg::AttachmentImageLoaded { attachment_id, bytes }
+        });
+    }
+
+    /// update 收尾统一发起待回读队列（成规同 `pump_status_pulse`——「收尾不漏」）。
+    fn flush_attachment_reads(&mut self, context: &ComponentContext<Shell>) {
+        let reads = std::mem::take(&mut self.pending_attachment_reads);
+        for (session, attachment_id, _key) in reads {
+            self.request_attachment_image(&session, attachment_id, context);
+        }
+    }
+
+    /// user 气泡的图片行（主干 user-image 气泡的行内化）：旁表有图才入树，
+    /// 每张 40×40 取景框 + UniformToFill，右对齐贴在气泡下方。
+    fn bubble_images_row(&self, bubble: &Bubble, p: Palette) -> Option<View> {
+        let images = self.bubble_images.get(&bubble_key(bubble))?;
+        if images.is_empty() {
+            return None;
+        }
+        let cells: Vec<KeyedView> = images
+            .iter()
+            .enumerate()
+            .map(|(index, image)| {
+                let frame: View = match &image.thumb {
+                    Some(thumb) => Image::new()
+                        .source_data(thumb.clone())
+                        .stretch(Stretch::UniformToFill)
+                        .width(38.0)
+                        .height(38.0)
+                        .into(),
+                    None => Border::new().into(),
+                };
+                KeyedView::new(
+                    format!("att-{index}"),
+                    Border::new()
+                        .width(40.0)
+                        .height(40.0)
+                        .corner_radius(radius::SMALL)
+                        .border_brush(p.stroke)
+                        .border_thickness(size::STROKE)
+                        .content(frame),
+                )
+            })
+            .collect();
+        Some(
+            StackPanel::new()
+                .orientation(Orientation::Horizontal)
+                .spacing(6.0)
+                .horizontal_alignment(HorizontalAlignment::Right)
+                .keyed_children(cells),
+        )
+    }
+
     fn kernel_boot_panel(&self, context: &mut ViewContext<Shell>, p: Palette) -> View {
         // 这张卡只在失败态上屏 ⇒ 两行文案全从那份原文现算（主干 `RefreshKernelBootTexts` KC:65-76
         // 同一条：语言切换时按当前语言整卡重算，判据只有 `Visibility` 与 `(ReasonKey, Detail)`）。
@@ -66866,7 +67358,12 @@ mod subagent_header_tests {
             .find(concat!("if self.subagent_", "readonly() {"))
             .expect("发送兜底那道守卫没了");
         let empty = send
-            .find(concat!("if text.is_", "empty() {"))
+            .find(concat!(
+                "if text.is_",
+                // 附件条落地后这一发扩成「空文本 **且** 空附件」双条件（主干同口径），
+                // 锚取前半段仍然钉住「早退在守卫之后、清框之前」的次序。
+                "empty() && self.attachments"
+            ))
             .expect("空文本早退没了");
         let clear = send
             .find(concat!("self.input.", "clear();"))
