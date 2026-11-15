@@ -1,0 +1,31 @@
+diff --git a/desktop/Library_sofficeapp.mk b/desktop/Library_sofficeapp.mk
+--- a/desktop/Library_sofficeapp.mk
++++ b/desktop/Library_sofficeapp.mk
+@@ -135,6 +135,12 @@
+ ))
+ 
+ # LibreOfficeKit bits
++ifeq ($(DISABLE_DYNLOADING),TRUE)
++$(eval $(call gb_Library_add_exception_objects,sofficeapp,\
++    desktop/source/lib/dsh_slideshow_probe \
++    desktop/source/lib/dsh_editor_session \
++))
++endif
+ ifneq ($(filter $(OS),ANDROID iOS MACOSX WNT),)
+ $(eval $(call gb_Library_add_exception_objects,sofficeapp,\
+ 	desktop/source/lib/init \
+diff --git a/canvas/source/vcl/spritecanvas.cxx b/canvas/source/vcl/spritecanvas.cxx
+--- a/canvas/source/vcl/spritecanvas.cxx
++++ b/canvas/source/vcl/spritecanvas.cxx
+@@ -93,6 +93,11 @@
+         else
+             pOutDevProvider = std::make_shared<OutDevHolder>(*pOutDev);
+ 
++        // A virtual device has no window visibility event; its owner explicitly
++        // requests each offscreen refresh through updateScreen().
++        if (!xParentWindow.is())
++            mbIsVisible = true;
++
+         // setup helper
+         maDeviceHelper.init( pOutDevProvider );
+         setWindow( xParentWindow.is()

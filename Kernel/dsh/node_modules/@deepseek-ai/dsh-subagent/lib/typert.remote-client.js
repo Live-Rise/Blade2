@@ -3,22 +3,16 @@ import { z } from 'zod'
 
 import { createTypertRemoteInfo } from '@deepseek-ai/dsh-typert-protocol/remote-info'
 
-let _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_0$schema$value
-const _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_0$schema = () => (_deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_0$schema$value ??= z.string())
-let _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_1$schema$value
-const _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_1$schema = () => (_deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_1$schema$value ??= z.string())
-let _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_2$schema$value
-const _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_2$schema = () => (_deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_2$schema$value ??= z.literal("continuable"))
-let _deepseek_ai_dsh_subagent_subagents_interruptByParent_result$schema$value
-const _deepseek_ai_dsh_subagent_subagents_interruptByParent_result$schema = () => (_deepseek_ai_dsh_subagent_subagents_interruptByParent_result$schema$value ??= z.object({
+let _deepseek_ai_dsh_subagent_subagents_interruptByUser_parameter_0$schema$value
+const _deepseek_ai_dsh_subagent_subagents_interruptByUser_parameter_0$schema = () => (_deepseek_ai_dsh_subagent_subagents_interruptByUser_parameter_0$schema$value ??= z.string())
+let _deepseek_ai_dsh_subagent_subagents_interruptByUser_result$schema$value
+const _deepseek_ai_dsh_subagent_subagents_interruptByUser_result$schema = () => (_deepseek_ai_dsh_subagent_subagents_interruptByUser_result$schema$value ??= z.object({
   'accepted': z.literal(true).readonly(),
 }))
 let _deepseek_ai_dsh_subagent_subagents_prompt_parameter_0$schema$value
 const _deepseek_ai_dsh_subagent_subagents_prompt_parameter_0$schema = () => (_deepseek_ai_dsh_subagent_subagents_prompt_parameter_0$schema$value ??= z.object({
   'requestId': z.string().readonly().describe('Identity persisted on the accepted message, minted before the call.'),
-  'parentSessionId': z.string().readonly(),
   'childSessionId': z.string().readonly(),
-  'mode': z.literal("continuable").readonly().describe('Required discriminator retained from the browser control address.'),
   'delivery': z.union([z.literal("queue"), z.literal("steer")]).readonly().describe('Whether this message queues a later turn or targets the nearest step.'),
   'content': z.array(z.union([z.object({
   'type': z.literal("text").readonly(),
@@ -35,18 +29,12 @@ let _deepseek_ai_dsh_subagent_subagents_prompt_result$schema$value
 const _deepseek_ai_dsh_subagent_subagents_prompt_result$schema = () => (_deepseek_ai_dsh_subagent_subagents_prompt_result$schema$value ??= z.object({
   'messageId': z.string().readonly(),
 }))
-let _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_0_strict$schema$value
-const _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_0_strict$schema = () => (_deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_0_strict$schema$value ??= z.string())
-let _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_1_strict$schema$value
-const _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_1_strict$schema = () => (_deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_1_strict$schema$value ??= z.string())
-let _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_2_strict$schema$value
-const _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_2_strict$schema = () => (_deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_2_strict$schema$value ??= z.literal("continuable"))
+let _deepseek_ai_dsh_subagent_subagents_interruptByUser_parameter_0_strict$schema$value
+const _deepseek_ai_dsh_subagent_subagents_interruptByUser_parameter_0_strict$schema = () => (_deepseek_ai_dsh_subagent_subagents_interruptByUser_parameter_0_strict$schema$value ??= z.string())
 let _deepseek_ai_dsh_subagent_subagents_prompt_parameter_0_strict$schema$value
 const _deepseek_ai_dsh_subagent_subagents_prompt_parameter_0_strict$schema = () => (_deepseek_ai_dsh_subagent_subagents_prompt_parameter_0_strict$schema$value ??= z.strictObject({
   'requestId': z.string().readonly().describe('Identity persisted on the accepted message, minted before the call.'),
-  'parentSessionId': z.string().readonly(),
   'childSessionId': z.string().readonly(),
-  'mode': z.literal("continuable").readonly().describe('Required discriminator retained from the browser control address.'),
   'delivery': z.union([z.literal("queue"), z.literal("steer")]).readonly().describe('Whether this message queues a later turn or targets the nearest step.'),
   'content': z.array(z.union([z.strictObject({
   'type': z.literal("text").readonly(),
@@ -63,9 +51,9 @@ const _deepseek_ai_dsh_subagent_subagents_prompt_parameter_0_strict$schema = () 
 export const TYPERT_REMOTE = createTypertRemoteInfo({
   package: '@deepseek-ai/dsh-subagent',
   methods: {
-    'subagents/interruptByParent': {
+    'subagents/interruptByUser': {
       service: 'subagents',
-      description: 'Remote face of {@link interrupt} under one durable parent address. No catalog, history, persistence, or parent Agent lookup runs: the core primitive alone authorizes the address against the live Activation, which is what keeps a live child interruptible while its parent Agent is offline. Absent, idle, and already-completed targets are accepted no-ops there.',
+      description: 'Remote face of {@link interrupt}, authorized on the target Session by the Gateway. No catalog, history, persistence, or parent Agent lookup runs. Absent, idle, and already-completed targets are accepted no-ops there.',
       invocation: { kind: 'direct' },
       parameters: [
         {
@@ -75,80 +63,46 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
           codec: {
             mode: 'strict',
             typeSymbol: '@deepseek-ai/dsh-session/types#SessionId',
-            create: _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_0$schema,
+            create: _deepseek_ai_dsh_subagent_subagents_interruptByUser_parameter_0$schema,
             jsonSchema: {"type":"string"},
           },
           strictCodec: {
             mode: 'strict',
             typeSymbol: '@deepseek-ai/dsh-session/types#SessionId',
-            create: _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_0_strict$schema,
+            create: _deepseek_ai_dsh_subagent_subagents_interruptByUser_parameter_0_strict$schema,
             jsonSchema: {"type":"string"},
-          },
-        },
-        {
-          name: 'parentSessionId',
-          description: 'durable direct parent whose authority is claimed.',
-          source: 'json',
-          codec: {
-            mode: 'strict',
-            typeSymbol: '@deepseek-ai/dsh-session/types#SessionId',
-            create: _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_1$schema,
-            jsonSchema: {"type":"string"},
-          },
-          strictCodec: {
-            mode: 'strict',
-            typeSymbol: '@deepseek-ai/dsh-session/types#SessionId',
-            create: _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_1_strict$schema,
-            jsonSchema: {"type":"string"},
-          },
-        },
-        {
-          name: 'mode',
-          description: 'required continuable-address discriminator.',
-          source: 'json',
-          codec: {
-            mode: 'strict',
-            typeSymbol: '@deepseek-ai/dsh-subagent#subagents/interruptByParent:mode',
-            create: _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_2$schema,
-            jsonSchema: {"type":"string","const":"continuable"},
-          },
-          strictCodec: {
-            mode: 'strict',
-            typeSymbol: '@deepseek-ai/dsh-subagent#subagents/interruptByParent:mode',
-            create: _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_2_strict$schema,
-            jsonSchema: {"type":"string","const":"continuable"},
           },
         },
       ],
       result: {
         mode: 'strict',
         typeSymbol: '@deepseek-ai/dsh-subagent/client#SubagentInterruptReceipt',
-        create: _deepseek_ai_dsh_subagent_subagents_interruptByParent_result$schema,
+        create: _deepseek_ai_dsh_subagent_subagents_interruptByUser_result$schema,
         description: 'acknowledgement that the cancel signal was admitted, not that the target is quiescent.',
         jsonSchema: {"type":"object","properties":{"accepted":{"type":"boolean","const":true}},"required":["accepted"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/subagent/subagent/src/index.ts","line":519,"column":3},
+      sourceLocation: {"file":"packages/subagent/subagent/src/index.ts","line":504,"column":3},
     },
     'subagents/prompt': {
       service: 'subagents',
-      description: 'Deliver one browser-authored message to a continuable child through the exact live direct parent, retaining the caller-minted request identity and validated browser zone on the accepted message. Success identifies the message the child\'s inbox accepted; later execution is independent of this call. Queue delivery targets a later turn; steer delivery targets the nearest step and retains the Agent loop\'s best-effort fallback semantics. Image parts are admitted and persisted through the attachment store before delivery, and the child\'s model must accept image input. Cold resume at capacity rejects with `subagent/delivery-unavailable`.',
+      description: 'Deliver one browser-authored message to a continuable child through its live subagent tree root, retaining the caller-minted request identity and validated browser zone on the accepted message. Success identifies the message the child\'s inbox accepted; later execution is independent of this call. Queue delivery targets a later turn; steer delivery targets the nearest step and retains the Agent loop\'s best-effort fallback semantics. Image parts are admitted and persisted through the attachment store before delivery, and the child\'s model must accept image input. Cold resume at capacity rejects with `subagent/delivery-unavailable`. Access is checked on the target Session before attachment admission or restoration.',
       invocation: { kind: 'direct' },
       parameters: [
         {
           name: 'request',
-          description: 'durable address, delivery, minted identity, content, and optional browser zone.',
+          description: 'target id, delivery, minted identity, content, and optional browser zone.',
           source: 'json',
           codec: {
             mode: 'strict',
             typeSymbol: '@deepseek-ai/dsh-subagent/client#SubagentPromptRequest',
             create: _deepseek_ai_dsh_subagent_subagents_prompt_parameter_0$schema,
-            jsonSchema: {"type":"object","properties":{"requestId":{"type":"string","description":"Identity persisted on the accepted message, minted before the call."},"parentSessionId":{"type":"string"},"childSessionId":{"type":"string"},"mode":{"type":"string","const":"continuable","description":"Required discriminator retained from the browser control address."},"delivery":{"type":"string","enum":["queue","steer"],"description":"Whether this message queues a later turn or targets the nearest step."},"content":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"type":{"type":"string","const":"text"},"text":{"type":"string"}},"required":["type","text"],"additionalProperties":true},{"type":"object","properties":{"type":{"type":"string","const":"image"},"mediaType":{"type":"string","enum":["image/png","image/jpeg","image/webp","image/gif"]},"data":{"type":"string"},"name":{"type":"string"}},"required":["type","mediaType","data"],"additionalProperties":true}]},"description":"Browser prompt parts delivered as the child's user message. The Host admits and persists image parts before delivery, so the wire never carries a durable attachment reference the caller could fabricate."},"clientTimeZone":{"type":"string","description":"Optional browser zone sampled for this exact human prompt."}},"required":["requestId","parentSessionId","childSessionId","mode","delivery","content"],"additionalProperties":true},
+            jsonSchema: {"type":"object","properties":{"requestId":{"type":"string","description":"Identity persisted on the accepted message, minted before the call."},"childSessionId":{"type":"string"},"delivery":{"type":"string","enum":["queue","steer"],"description":"Whether this message queues a later turn or targets the nearest step."},"content":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"type":{"type":"string","const":"text"},"text":{"type":"string"}},"required":["type","text"],"additionalProperties":true},{"type":"object","properties":{"type":{"type":"string","const":"image"},"mediaType":{"type":"string","enum":["image/png","image/jpeg","image/webp","image/gif"]},"data":{"type":"string"},"name":{"type":"string"}},"required":["type","mediaType","data"],"additionalProperties":true}]},"description":"Browser prompt parts delivered as the child's user message. The Host admits and persists image parts before delivery, so the wire never carries a durable attachment reference the caller could fabricate."},"clientTimeZone":{"type":"string","description":"Optional browser zone sampled for this exact human prompt."}},"required":["requestId","childSessionId","delivery","content"],"additionalProperties":true},
           },
           strictCodec: {
             mode: 'strict',
             typeSymbol: '@deepseek-ai/dsh-subagent/client#SubagentPromptRequest',
             create: _deepseek_ai_dsh_subagent_subagents_prompt_parameter_0_strict$schema,
-            jsonSchema: {"type":"object","properties":{"requestId":{"type":"string","description":"Identity persisted on the accepted message, minted before the call."},"parentSessionId":{"type":"string"},"childSessionId":{"type":"string"},"mode":{"type":"string","const":"continuable","description":"Required discriminator retained from the browser control address."},"delivery":{"type":"string","enum":["queue","steer"],"description":"Whether this message queues a later turn or targets the nearest step."},"content":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"type":{"type":"string","const":"text"},"text":{"type":"string"}},"required":["type","text"],"additionalProperties":false},{"type":"object","properties":{"type":{"type":"string","const":"image"},"mediaType":{"type":"string","enum":["image/png","image/jpeg","image/webp","image/gif"]},"data":{"type":"string"},"name":{"type":"string"}},"required":["type","mediaType","data"],"additionalProperties":false}]},"description":"Browser prompt parts delivered as the child's user message. The Host admits and persists image parts before delivery, so the wire never carries a durable attachment reference the caller could fabricate."},"clientTimeZone":{"type":"string","description":"Optional browser zone sampled for this exact human prompt."}},"required":["requestId","parentSessionId","childSessionId","mode","delivery","content"],"additionalProperties":false},
+            jsonSchema: {"type":"object","properties":{"requestId":{"type":"string","description":"Identity persisted on the accepted message, minted before the call."},"childSessionId":{"type":"string"},"delivery":{"type":"string","enum":["queue","steer"],"description":"Whether this message queues a later turn or targets the nearest step."},"content":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"type":{"type":"string","const":"text"},"text":{"type":"string"}},"required":["type","text"],"additionalProperties":false},{"type":"object","properties":{"type":{"type":"string","const":"image"},"mediaType":{"type":"string","enum":["image/png","image/jpeg","image/webp","image/gif"]},"data":{"type":"string"},"name":{"type":"string"}},"required":["type","mediaType","data"],"additionalProperties":false}]},"description":"Browser prompt parts delivered as the child's user message. The Host admits and persists image parts before delivery, so the wire never carries a durable attachment reference the caller could fabricate."},"clientTimeZone":{"type":"string","description":"Optional browser zone sampled for this exact human prompt."}},"required":["requestId","childSessionId","delivery","content"],"additionalProperties":false},
           },
         },
       ],
@@ -160,7 +114,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'the accepted message\'s inbox identity.',
         jsonSchema: {"type":"object","properties":{"messageId":{"type":"string"}},"required":["messageId"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/subagent/subagent/src/index.ts","line":450,"column":9},
+      sourceLocation: {"file":"packages/subagent/subagent/src/index.ts","line":451,"column":9},
     },
   },
 }, z)

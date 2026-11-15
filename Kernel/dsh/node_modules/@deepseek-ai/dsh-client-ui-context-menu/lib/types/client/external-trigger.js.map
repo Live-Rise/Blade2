@@ -1,0 +1,1 @@
+{"version":3,"file":"external-trigger.js","sourceRoot":"","sources":["../../../src/client/external-trigger.ts"],"names":[],"mappings":"AAAA,kFAAkF;AAElF;;;;GAIG;AACH,MAAM,UAAU,oBAAoB,CAAC,IAAU;IAC7C,MAAM,OAAO,GAAG,IAAI,YAAY,OAAO,CAAC,CAAC,CAAC,IAAI,CAAC,CAAC,CAAC,IAAI,CAAC,aAAa,CAAA;IACnE,OAAO,OAAO,EAAE,OAAO,CAAC,6BAA6B,CAAC,IAAI,IAAI,CAAA;AAChE,CAAC"}

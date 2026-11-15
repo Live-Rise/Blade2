@@ -8,6 +8,7 @@ import type { PromptContentPart } from '@deepseek-ai/dsh-attachment/types';
 import type { Branded } from '@deepseek-ai/dsh-brand';
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand';
 import type { SessionId } from '@deepseek-ai/dsh-session/types';
+import type { KnownSubagentCatalogFields } from './projection-types.ts';
 /**
  * Client-minted identity of one browser prompt, persisted on the exact accepted
  * message. It carries the Session Controller's `session-request-id` brand so a
@@ -25,22 +26,7 @@ export type SubagentCatalogRow = {
      * does not encode a durable outcome or guarantee continuation delivery.
      */
     readonly activity: 'running' | 'inactive';
-} & ({
-    /** A terminal one-shot child. */
-    readonly mode: 'one-shot';
-    /** Optional durable creation label from the parent catalog. */
-    readonly label?: string;
-} | {
-    /** An external execution without a local child Session. */
-    readonly mode: 'external';
-    /** Optional durable creation label from the parent catalog. */
-    readonly label?: string;
-} | {
-    /** A resumable conversation. */
-    readonly mode: 'continuable';
-    /** Durable creation label from the parent catalog. */
-    readonly label: string;
-});
+} & KnownSubagentCatalogFields;
 /**
  * One recursive catalog row. Traversal may also return diagnostics for
  * unknown catalog modes or unreadable child catalogs.
@@ -72,18 +58,15 @@ export type SubagentAddress = {
 } | {
     readonly mode: 'unknown';
 });
-/** One Agent inbox destination, as the prompt request selects it. */
-export type SubagentDelivery = SubagentPromptRequest['delivery'];
-/** One human message addressed to a continuable direct child. */
+/** One Agent inbox destination for a continuation message. */
+export type SubagentDelivery = 'queue' | 'steer';
+/** One human message addressed to a continuable subagent. */
 export interface SubagentPromptRequest {
     /** Identity persisted on the accepted message, minted before the call. */
     readonly requestId: SubagentPromptRequestId;
-    readonly parentSessionId: SessionId;
     readonly childSessionId: SessionId;
-    /** Required discriminator retained from the browser control address. */
-    readonly mode: 'continuable';
     /** Whether this message queues a later turn or targets the nearest step. */
-    readonly delivery: 'queue' | 'steer';
+    readonly delivery: SubagentDelivery;
     /**
      * Browser prompt parts delivered as the child's user message. The Host
      * admits and persists image parts before delivery, so the wire never
@@ -117,15 +100,11 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
         'subagent/invalid-time-zone': {
             readonly value: string;
         };
-        /** No live Agent carries the addressed parent session. */
-        'subagent/parent-unavailable': {
-            readonly parentSessionId: SessionId;
-        };
         /** The addressed child cannot take a continuation. */
         'subagent/not-resumable': {
             readonly childSessionId: SessionId;
         };
-        /** The claimed parent does not own the addressed child. */
+        /** The supplied address or live subagent-tree identity could not be verified. */
         'subagent/unauthorized': {
             readonly childSessionId: SessionId;
         };

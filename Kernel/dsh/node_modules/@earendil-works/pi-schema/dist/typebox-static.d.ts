@@ -11,6 +11,8 @@ interface Primitives {
     Integer: number;
     Boolean: boolean;
     Null: null;
+    BigInt: bigint;
+    Undefined: undefined;
     Unknown: unknown;
     Any: any;
 }
@@ -24,7 +26,13 @@ type KindStatic<S, K> = K extends keyof Primitives ? Primitives[K] : K extends "
     readonly anyOf: readonly (infer B)[];
 } ? Static<B> : unknown : K extends "Record" ? S extends {
     readonly patternProperties: infer P;
-} ? Record<RecordKey<keyof P>, Static<P[keyof P]>> : unknown : unknown;
+} ? Record<RecordKey<keyof P>, Static<P[keyof P]>> : unknown : K extends "Enum" ? S extends {
+    readonly enum: readonly (infer V)[];
+} ? V : unknown : K extends "Tuple" ? S extends {
+    readonly items: infer I extends readonly unknown[];
+} ? {
+    -readonly [N in keyof I]: Static<I[N]>;
+} : unknown : unknown;
 type Optional = {
     readonly "~optional": true;
 };

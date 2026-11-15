@@ -1,0 +1,12 @@
+--- a/svx/source/table/tablelayouter.cxx
++++ b/svx/source/table/tablelayouter.cxx
+@@ -1070,7 +1070,8 @@
+         for( aPos.mnCol = 0; aPos.mnCol < nColCount; aPos.mnCol++ )
+         {
+             CellRef xCell( getCell( aPos ) );
+-            if( !xCell.is() )
++            // Covered cells have no independent borders inside the merged cell.
++            if( !xCell.is() || xCell->isMerged() )
+                 continue;
+ 
+             const SvxBoxItem* pThisAttr = xCell->GetItemSet().GetItem<SvxBoxItem>( SDRATTR_TABLE_BORDER );

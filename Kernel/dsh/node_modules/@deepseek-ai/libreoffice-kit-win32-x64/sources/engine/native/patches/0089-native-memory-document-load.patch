@@ -1,0 +1,70 @@
+diff --git a/desktop/source/lib/init.cxx b/desktop/source/lib/init.cxx
+--- a/desktop/source/lib/init.cxx
++++ b/desktop/source/lib/init.cxx
+@@ -8,6 +8,7 @@
+  */
+ 
+ #include <sfx2/lokhelper.hxx>
++#include <comphelper/seqstream.hxx>
+ #include <sal/types.h>
+ #include <svx/sdr/contact/viewcontact.hxx>
+ #include <svx/svdpage.hxx>
+@@ -2822,7 +2823,8 @@
+     return lo_documentLoadWithOptions(pThis, pURL, nullptr);
+ }
+ 
+-static LibreOfficeKitDocument* lo_documentLoadWithOptions(LibreOfficeKit* pThis, const char* pURL, const char* pOptions)
++static LibreOfficeKitDocument* lo_documentLoadWithStream(LibreOfficeKit* pThis, const char* pURL, const char* pOptions,
++    const uno::Reference<io::XInputStream>& xInput)
+ {
+     comphelper::ProfileZone aZone("lo_documentLoadWithOptions");
+ 
+@@ -2833,7 +2835,7 @@
+     LibLibreOffice_Impl* pLib = static_cast<LibLibreOffice_Impl*>(pThis);
+     pLib->maLastExceptionMsg.clear();
+ 
+-    const OUString aURL(getAbsoluteURL(pURL));
++    const OUString aURL(xInput.is() ? u"private:stream"_ustr : getAbsoluteURL(pURL));
+     if (aURL.isEmpty())
+     {
+         pLib->maLastExceptionMsg = u"Filename to load was not provided."_ustr;
+@@ -2972,6 +2974,13 @@
+             comphelper::makePropertyValue(u"AsTemplate"_ustr, false),
+             comphelper::makePropertyValue(u"Silent"_ustr, !aBatch.isEmpty())
+         };
++
++        if (xInput.is())
++        {
++            const sal_Int32 nCount = aFilterOptions.getLength();
++            aFilterOptions.realloc(nCount + 1);
++            aFilterOptions.getArray()[nCount] = comphelper::makePropertyValue(u"InputStream"_ustr, xInput);
++        }
+ 
+         OutputDevice::StartTrackingFontMappingUse();
+ 
+@@ -3109,6 +3118,25 @@
+     }
+ 
+     return nullptr;
++}
++
++static LibreOfficeKitDocument* lo_documentLoadWithOptions(LibreOfficeKit* pThis, const char* pURL, const char* pOptions)
++{
++    return lo_documentLoadWithStream(pThis, pURL, pOptions, {});
++}
++
++// The seekable stream owns its bytes for as long as the document retains it.
++extern "C" SAL_DLLPUBLIC_EXPORT LibreOfficeKitDocument* dsh_native_document_load_bytes(
++    LibreOfficeKit* pThis, const unsigned char* pBytes, int nLength, const char* pOptions)
++{
++    if (!pBytes || nLength <= 0)
++    {
++        static_cast<LibLibreOffice_Impl*>(pThis)->maLastExceptionMsg = u"Document bytes are empty."_ustr;
++        return nullptr;
++    }
++    uno::Sequence<sal_Int8> aBytes(reinterpret_cast<const sal_Int8*>(pBytes), nLength);
++    uno::Reference<io::XInputStream> xInput = new comphelper::SequenceInputStream(aBytes);
++    return lo_documentLoadWithStream(pThis, "private:stream", pOptions, xInput);
+ }
+ 
+ static int lo_runMacro(LibreOfficeKit* pThis, const char *pURL)

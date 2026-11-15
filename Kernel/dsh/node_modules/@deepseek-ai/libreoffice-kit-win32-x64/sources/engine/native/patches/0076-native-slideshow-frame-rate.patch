@@ -1,0 +1,48 @@
+--- a/slideshow/source/engine/slideshowimpl.cxx
++++ b/slideshow/source/engine/slideshowimpl.cxx
+@@ -20,6 +20,7 @@
+ 
+ #include <config_features.h>
+ #include <comphelper/diagnose_ex.hxx>
++#include <comphelper/lok.hxx>
+ 
+ #include <cppuhelper/basemutex.hxx>
+ #include <cppuhelper/compbase.hxx>
+@@ -143,6 +144,11 @@
+     */
+     void Synchronize();
+ 
++    void SetFrameRate(sal_Int32 framesPerSecond)
++    {
++        mnFrameDuration = 1.0 / framesPerSecond; MarkCurrentFrame();
++    }
++
+     /** Activate frame synchronization when an animation is active and
+         frames are to be displayed in a steady rate.  While active
+         Synchronize() will wait until the frame duration time has passed.
+@@ -164,7 +170,7 @@
+     /** Time between the display of frames.  Enforced only when mbIsActive
+         is <TRUE/>.
+     */
+-    const double mnFrameDuration;
++    double mnFrameDuration;
+     /** Time (of maTimer) when the next frame shall be displayed.
+         Synchronize() will wait until this time.
+     */
+@@ -1703,6 +1709,16 @@
+     // precondition: must only be called from the main thread!
+     DBG_TESTSOLARMUTEX();
+ 
++    if (rProperty.Name == "LOKPreferredFramesPerSecond")
++    {
++        sal_Int32 framesPerSecond = 0;
++        if (!comphelper::LibreOfficeKit::isActive() || !(rProperty.Value >>= framesPerSecond)
++            || framesPerSecond < 1 || framesPerSecond > 240)
++            return false;
++        maFrameSynchronization.SetFrameRate(framesPerSecond);
++        return true;
++    }
++
+     // tdf#160669 IASS: if hint is about PrefetchSlide, flush it to avoid errors
+     if ( rProperty.Name == "HintSlideChanged" )
+     {

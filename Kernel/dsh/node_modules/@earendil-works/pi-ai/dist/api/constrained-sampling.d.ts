@@ -5,8 +5,6 @@ export type UnsupportedStrictSchemaKeywordCheck = (key: string, value: unknown) 
 export declare function makeStrictJsonSchema(schema: Tool["parameters"], isUnsupportedKeyword?: UnsupportedStrictSchemaKeywordCheck): Record<string, unknown>;
 /** Returns true for a tool that asks for strict JSON-schema sampling only when possible (`strict: "prefer"`). */
 export declare function prefersJsonSchemaStrictSampling(tool: Tool): boolean;
-/** Returns true when a provider error message says the request's strict tools exceed the provider's limits. */
-export declare function isStrictToolLimitErrorMessage(message: string): boolean;
 export declare function getJsonSchemaToolParameters(tool: Tool, strict: boolean | undefined): Tool["parameters"];
 export interface GrammarConstrainedSampling {
     format: "lark" | "regex";

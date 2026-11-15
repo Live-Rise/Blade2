@@ -14,8 +14,9 @@ import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { ToolCallArgumentsStream } from "../utils/streaming-json.js";
 import { getSystemMessageText } from "../utils/text.js";
 import { collapseSystemMessages, getCurrentTools, getInitialSystemMessage, withoutInitialSystemMessage, } from "../utils/transcript.js";
-import { getJsonSchemaToolParameters, isStrictToolLimitErrorMessage, prefersJsonSchemaStrictSampling, resolveJsonSchemaStrictSampling, } from "./constrained-sampling.js";
+import { getJsonSchemaToolParameters, prefersJsonSchemaStrictSampling, resolveJsonSchemaStrictSampling, } from "./constrained-sampling.js";
 import { adjustMaxTokensForThinking, buildBaseOptions, clampMaxTokensToContext, clampReasoning, } from "./simple-options.js";
+import { hasExceededStrictToolLimits, isStrictToolLimitErrorMessage, markStrictToolLimitsExceeded, } from "./strict-tool-limits.js";
 import { splitErrorToolResultImages, transformMessages } from "./transform-messages.js";
 const EMPTY_TEXT_PLACEHOLDER = "<empty>";
 const THINKING_BINDING_CONTROLS_BETA = "thinking-binding-controls-2026-08-01";
@@ -145,7 +146,7 @@ export const stream = (model, context, options = {}) => {
             const inferenceMaxTokens = options.maxTokens ?? (isAnthropicClaudeModel(model) ? model.maxTokens : undefined);
             const initialSystemMessage = getInitialSystemMessage(normalizedContext.messages);
             const initialSystemPrompt = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : undefined;
-            let disablePreferredStrictTools = false;
+            let disablePreferredStrictTools = hasExceededStrictToolLimits(options.sessionId);
             let response;
             for (;;) {
                 const tools = convertToolConfig(getCurrentTools(normalizedContext.messages), options.toolChoice, supportsStrictMode, disablePreferredStrictTools);
@@ -180,6 +181,7 @@ export const stream = (model, context, options = {}) => {
                         throw error;
                     }
                     disablePreferredStrictTools = true;
+                    markStrictToolLimitsExceeded(options.sessionId);
                     appendAssistantMessageDiagnostic(output, {
                         type: "bedrock_strict_tools_fallback",
                         timestamp: Date.now(),

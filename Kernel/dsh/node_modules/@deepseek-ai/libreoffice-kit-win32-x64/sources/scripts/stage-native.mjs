@@ -1,5 +1,6 @@
 /** Preserve Core's installed relative layout and record every redistributed byte. */
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { frameForwardingSdkFiles, verifyFrameForwardingSdkBuildSources } from '../engine/native/frame-forwarding-sdk.mjs';
+import { chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { publicBuildValue } from '../engine/build-identity.mjs';
@@ -11,6 +12,14 @@ import { assert, sha256, verifyEnginePackage } from './verify-artifacts.mjs';
 import { stageLinuxRuntime } from './stage-linux-runtime.mjs';
 import { pruneNativePayload, stripNativePayload } from './slim-native.mjs';
 import { assertUiCoreRevision } from '../engine/ui-resource-policy.mjs';
+
+/** Publish build inputs without exposing the host Python installation directory. */
+export function publicWebGpuReceipt(receipt, paths) {
+  return publicBuildValue({ ...receipt, configure: receipt.configure.map(argument =>
+    argument.startsWith('-DPython3_EXECUTABLE=')
+      ? '-DPython3_EXECUTABLE=/build/libreoffice-kit/tools/python'
+      : argument) }, paths);
+}
 
 export function stageNative({ platform, core, build, repo = root }) {
   assert(targets[platform], `Unknown native platform: ${platform}`);
@@ -58,7 +67,7 @@ export function stageNative({ platform, core, build, repo = root }) {
     }
   }
   copyInstalled(instdir, join(dir, 'program'));
-  copyFileSync(join(build, `libreoffice-kit${targets[platform].os === 'win32' ? '.exe' : ''}`), join(dir, prebuild.engine.executable));
+  copyFileSync(join(build, `dsoffice${targets[platform].os === 'win32' ? '.exe' : ''}`), join(dir, prebuild.engine.executable));
   if (targets[platform].os !== 'win32') chmodSync(join(dir, prebuild.engine.executable), 0o755);
   copyFileSync(join(core, 'COPYING.MPL'), join(dir, 'licenses/LibreOffice-MPL-2.0.txt'));
   copyFileSync(join(repo, 'NOTICE'), join(dir, 'licenses/DeepSeek-Harness-MIT.txt'));
@@ -69,11 +78,29 @@ export function stageNative({ platform, core, build, repo = root }) {
     resources: pruneNativePayload(dir, platform, `program/${relativeLibrary}`, { staticLibraries }),
     symbols: stripNativePayload(dir, platform),
   };
-  const sourceFiles = ['engine/build-identity.mjs', 'engine/core-source.mjs', 'engine/document-operations.hxx', 'engine/ui-resource-policy.mjs', 'engine/native/worker.cxx', 'engine/native/configure.mjs', 'engine/native/core-patches.mjs', 'engine/native/bootstrap-windows.ps1', 'engine/native/build-helper.mjs', 'engine/native/build-platform.mjs', 'engine/native/core-environment.mjs', 'engine/native/glibc-minimum.mjs',
+  const sourceFiles = ['engine/build-identity.mjs', 'engine/core-source.mjs', 'engine/document-operations.hxx', 'engine/ui-resource-policy.mjs', 'engine/native/worker.cxx', 'engine/native/load-diagnostics.hxx', 'engine/native/slideshow-probe.cxx', 'engine/native/editor-session.cxx', 'engine/native/editor-pixels.hxx', 'engine/native/editor-render.hxx', 'engine/native/graphite.hxx', 'engine/native/graphite.cxx', 'engine/native/ganesh.hxx', 'engine/native/ganesh.cxx', 'engine/native/ganesh-metal.mm', 'engine/native/ganesh-vulkan.cxx', 'engine/native/frame-forwarding-sdk.mjs', ...frameForwardingSdkFiles(repo), 'engine/native/configure.mjs', 'engine/native/core-patches.mjs', 'engine/native/bootstrap-windows.ps1', 'engine/native/build-helper.mjs', 'engine/native/build-platform.mjs', 'engine/native/core-environment.mjs', 'engine/native/glibc-minimum.mjs',
     'scripts/checkout-core.mjs', 'scripts/core-checkout.mjs',
     'scripts/build-native.mjs', 'scripts/rebuild-native-helper.mjs', 'scripts/stage-native.mjs', 'scripts/slim-native.mjs', 'scripts/stage-linux-runtime.mjs', 'scripts/pack-utils.mjs', 'scripts/platform-matrix.mjs', 'scripts/verify-artifacts.mjs',
     ...corePatchFiles(repo)];
   const packagedSource = [];
+  const webgpuLicenses = [];
+  if (/^(darwin|win32)-(arm64|x64)$/.test(platform)) {
+    const prefix = join(build, 'dsh-webgpu');
+    const receipt = readJson(join(prefix, 'receipt.json'));
+    verifyFrameForwardingSdkBuildSources(repo, receipt);
+    const dependencies = readJson(join(repo, 'packages/frame-forwarding/webgpu-dependencies.json'));
+    assert(receipt.platform === platform, 'WebGPU build target differs from the engine');
+    assert(receipt.sourceManifestSha256 === sha256(join(repo, 'packages/frame-forwarding/webgpu-dependencies.json')), 'WebGPU source manifest differs from the engine recipe');
+    for (const [file, hash] of Object.entries(receipt.artifacts))
+      assert(sha256(join(prefix, file)) === hash, `WebGPU installed artifact changed: ${file}`);
+    cpSync(join(prefix, 'licenses'), join(dir, 'licenses/webgpu'), { recursive: true });
+    for (const name of Object.keys(dependencies.dependencies))
+      for (const file of Object.keys(receipt.artifacts).filter(file => file.startsWith(`licenses/${name}/`)))
+        webgpuLicenses.push({ component: `WebGPU ${name}`, spdx: 'LicenseRef-WebGPU-Third-Party', path: `licenses/webgpu/${file.slice('licenses/'.length)}` });
+    const destination = 'sources/webgpu-build.json';
+    writeFileSync(join(dir, destination), `${JSON.stringify(publicWebGpuReceipt(receipt, { workspace: repo, source: core, build }), null, 2)}\n`);
+    packagedSource.push(destination);
+  }
   for (const file of sourceFiles) {
     const destination = `sources/${file}`;
     mkdirSync(join(dir, destination, '..'), { recursive: true });
@@ -108,6 +135,7 @@ export function stageNative({ platform, core, build, repo = root }) {
       ? join(relativeLibrary, '..', 'Resources').replaceAll('\\', '/') : relativeLibrary}` },
     source: { ...source, version, files: packagedSource },
     licenses: [
+      ...webgpuLicenses,
       { component: 'LibreOffice', spdx: 'MPL-2.0', path: 'licenses/LibreOffice-MPL-2.0.txt' },
       { component: 'DeepSeek Harness', spdx: 'MIT', path: 'licenses/DeepSeek-Harness-MIT.txt' },
       { component: 'LibreOffice bundled dependencies', spdx: 'LicenseRef-LibreOffice-Third-Party', path: 'licenses/LibreOffice-third-party.html' },

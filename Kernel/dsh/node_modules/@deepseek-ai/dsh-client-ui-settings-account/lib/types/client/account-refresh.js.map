@@ -1,0 +1,1 @@
+{"version":3,"file":"account-refresh.js","sourceRoot":"","sources":["../../../src/client/account-refresh.ts"],"names":[],"mappings":"AAAA,yEAAyE;AAEzE;;;;;GAKG;AACH,MAAM,CAAC,KAAK,UAAU,kBAAkB,CAAC,OAAkC,EAAE,OAA4B;IACvG,IAAI,CAAC;QAAC,MAAM,OAAO,CAAA;IAAC,CAAC;IACrB,OAAO,MAAM,EAAE,CAAC;QACd,gFAAgF;IAClF,CAAC;IACD,MAAM,OAAO,EAAE,CAAA;AACjB,CAAC"}

@@ -1,0 +1,12 @@
+diff --git a/desktop/source/lib/init.cxx b/desktop/source/lib/init.cxx
+--- a/desktop/source/lib/init.cxx
++++ b/desktop/source/lib/init.cxx
+@@ -4291,3 +4291,7 @@
+-    // Set background to transparent by default.
++#if defined(MACOSX) || (defined(_WIN32) && !USE_HEADLESS_CODE)
++    // Native bitmap readback has no alpha channel for unpainted page margins.
++    pDevice->SetBackground(Wallpaper(COL_WHITE));
++#else
+     pDevice->SetBackground(Wallpaper(COL_TRANSPARENT));
++#endif
+ 

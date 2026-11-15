@@ -1,1 +1,1 @@
-{"version":3,"file":"github-copilot.d.ts","sourceRoot":"","sources":["../../src/providers/github-copilot.ts"],"names":[],"mappings":"AAKA,OAAO,EAAkB,KAAK,QAAQ,EAAE,MAAM,cAAc,CAAC;AAG7D,wBAAgB,qBAAqB,IAAI,QAAQ,CAAC,oBAAoB,GAAG,oBAAoB,GAAG,kBAAkB,CAAC,CAyBlH"}
+{"version":3,"file":"github-copilot.d.ts","sourceRoot":"","sources":["../../src/providers/github-copilot.ts"],"names":[],"mappings":"AAMA,OAAO,EAAkB,KAAK,QAAQ,EAAE,MAAM,cAAc,CAAC;AAI7D,KAAK,gBAAgB,GAAG,oBAAoB,GAAG,oBAAoB,GAAG,kBAAkB,CAAC;AAazF,wBAAgB,qBAAqB,IAAI,QAAQ,CAAC,gBAAgB,CAAC,CA0BlE"}

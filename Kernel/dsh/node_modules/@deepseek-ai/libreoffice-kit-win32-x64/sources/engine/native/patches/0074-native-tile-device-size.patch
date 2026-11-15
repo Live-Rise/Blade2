@@ -1,0 +1,23 @@
+diff --git a/desktop/source/lib/init.cxx b/desktop/source/lib/init.cxx
+--- a/desktop/source/lib/init.cxx
++++ b/desktop/source/lib/init.cxx
+@@ -4296,9 +4296,19 @@
+     pDevice->SetBackground(Wallpaper(COL_TRANSPARENT));
+ #endif
+ 
++#if defined(MACOSX) || (defined(_WIN32) && !USE_HEADLESS_CODE)
++    // Native devices allocate their own backing store; LOK buffer binding is unsupported.
++    pDevice->SetOutputSizePixel(Size(nCanvasWidth, nCanvasHeight));
++#if defined(_WIN32)
++    // Tiled document mapping uses 96 DPI independently of the Windows display.
++    pDevice->SetReferenceDevice(96, 96);
++    pDevice->EnableOutput(true);
++#endif
++#else
+     pDevice->SetOutputSizePixelScaleOffsetAndLOKBuffer(
+                 Size(nCanvasWidth, nCanvasHeight), 1.0, Point(),
+                 pBuffer);
++#endif
+ 
+     pDoc->paintTile(*pDevice, nCanvasWidth, nCanvasHeight,
+                     nTilePosX, nTilePosY, nTileWidth, nTileHeight);

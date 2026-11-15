@@ -1,0 +1,1 @@
+{"version":3,"file":"fixed.d.ts","sourceRoot":"","sources":["../../../src/client/fixed.ts"],"names":[],"mappings":"AAAA,qFAAqF;AACrF,OAAO,KAAK,EAAE,oBAAoB,EAAqB,MAAM,0CAA0C,CAAA;AACvG,OAAO,KAAK,EAAE,WAAW,EAAE,MAAM,kCAAkC,CAAA;AAEnE;;;;GAIG;AACH,wBAAgB,aAAa,CAAC,CAAC,EAAE,WAAW,CAAC,WAAW,CAAC,CAAC,GAAG,CAAC,GAAG,SAAS,oBAAoB,EAAE,CAO/F"}

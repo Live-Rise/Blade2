@@ -1,0 +1,17 @@
+Ensure the version writer has its own order-only directory prerequisite.
+The preparation and unpacked targets already require this directory, but their
+prerequisites may run first (or concurrently). A fresh workdir_for_build can
+therefore reach the version recipe's printf before UnpackedTarball exists.
+Keep the existing directory recipe and version-content comparison unchanged.
+
+diff --git a/solenv/gbuild/UnpackedTarball.mk b/solenv/gbuild/UnpackedTarball.mk
+--- a/solenv/gbuild/UnpackedTarball.mk
++++ b/solenv/gbuild/UnpackedTarball.mk
+@@ -209,6 +209,7 @@ define gb_UnpackedTarball_UnpackedTarball_internal
+ 
+ $(call gb_UnpackedTarball_get_preparation_target,$(1)) : $(gb_Module_CURRENTMAKEFILE) \
+ 	$(call gb_UnpackedTarball_get_version_target,$(1))
++$(call gb_UnpackedTarball_get_version_target,$(1)) :| $(dir $(call gb_UnpackedTarball_get_target,$(1))).dir
+ $(call gb_UnpackedTarball_get_preparation_target,$(1)) :| $(dir $(call gb_UnpackedTarball_get_target,$(1))).dir
+ $(call gb_UnpackedTarball_get_target,$(1)) :| $(dir $(call gb_UnpackedTarball_get_target,$(1))).dir
+ $(call gb_UnpackedTarball_get_final_target,$(1)) : $(call gb_UnpackedTarball_get_target,$(1))

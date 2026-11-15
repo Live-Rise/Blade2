@@ -1,22 +1,20 @@
 /**
- * Lifecycle-edge publication for managed subagent activations.
+ * Contained lifecycle notifications for subagents.
  *
- * Public event payloads live in `./types.ts`; the package-private observer
- * retains only the identity shared by each start/end pair.
+ * The service owns scoped dispatch and listener containment; the manager
+ * supplies event payloads from each activation.
  *
  * @module @deepseek-ai/dsh-subagent/lifecycle
  */
-import { randomUUID } from 'node:crypto';
 import { foldConsumedWork } from '@deepseek-ai/dsh-agent';
-import { SubagentRunId } from "./types.js";
 /**
  * Build the contained lifecycle emitter this seam publishes every edge through.
  * Every listener is independently contained: a synchronous throw or a rejected
  * returned promise is logged without starving peer listeners, changing the run,
  * or — for provider removal, which fires from a disposer — breaking teardown.
  * @param ctx - the service's own context, owning dispatch and the logger.
- * @param carrier - resolve the scoped dispatch carrier for one delegating parent.
- * @returns the emitter both observers and the provider registry publish through.
+ * @param carrier - resolve the scoped dispatch carrier for one subagent tree root.
+ * @returns the emitter the manager and provider registry publish through.
  */
 export function createLifecycleEmitter(ctx, carrier) {
     return (name, info, parent) => {
@@ -34,30 +32,6 @@ export function createLifecycleEmitter(ctx, carrier) {
                 ctx.logger.warn(`subagent: ${name} listener threw: ${renderThrown(error)}`);
             }
         }
-    };
-}
-/**
- * Build the observer for one local or external activation's residency epoch. Creation failure before residency emits no lifecycle edge.
- * @param emit - the contained lifecycle emitter.
- * @param provider - the provider name recorded in the durable descriptor.
- * @param childId - the durable child session id.
- * @param parent - the exact live direct parent keying scoped dispatch.
- * @returns the observer whose edges this epoch publishes.
- */
-export function createActivationObserver(emit, provider, childId, parent) {
-    const identity = { runId: SubagentRunId(randomUUID()), provider, id: childId, local: false };
-    return {
-        start: (child) => {
-            identity.local = child !== undefined;
-            emit('subagent/start', identity, parent);
-        },
-        settle: ({ stopReason, output }) => {
-            emit('subagent/end', {
-                ...identity,
-                stopReason,
-                ...output.length === 0 ? {} : { lastAssistantMessage: output },
-            }, parent);
-        },
     };
 }
 /**

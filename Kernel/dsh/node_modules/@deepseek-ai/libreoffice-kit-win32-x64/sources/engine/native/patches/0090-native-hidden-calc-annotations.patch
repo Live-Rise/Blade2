@@ -1,0 +1,74 @@
+diff --git a/sc/source/ui/view/gridwin4.cxx b/sc/source/ui/view/gridwin4.cxx
+--- a/sc/source/ui/view/gridwin4.cxx
++++ b/sc/source/ui/view/gridwin4.cxx
+@@ -981,7 +981,9 @@
+     DrawButtons(nX1, nX2, rTableInfo, pContentDev, pLokRTLCtxt.get());          // Pixel
+ 
+     // Show Note Mark
+-    if (rOpts.GetOption(sc::ViewOption::NOTES))
++    if (rOpts.GetOption(sc::ViewOption::NOTES)
++        && (!comphelper::LibreOfficeKit::isActive()
++            || comphelper::LibreOfficeKit::isTiledAnnotations()))
+         aOutputData.DrawNoteMarks(*pContentDev);
+ 
+     pContentDev->SetMapMode(MapMode(MapUnit::MapPixel));
+@@ -1029,6 +1031,7 @@
+ 
+     DrawRedraw( aOutputData, SC_LAYER_FRONT );
+-    DrawRedraw( aOutputData, SC_LAYER_INTERN );
++    if (!bIsTiledRendering || comphelper::LibreOfficeKit::isTiledAnnotations())
++        DrawRedraw( aOutputData, SC_LAYER_INTERN );
+     DrawSdrGrid( aDrawingRectLogic, pContentDev );
+ 
+     if (bIsTiledRendering)
+diff --git a/sc/source/ui/view/gridwin5.cxx b/sc/source/ui/view/gridwin5.cxx
+--- a/sc/source/ui/view/gridwin5.cxx
++++ b/sc/source/ui/view/gridwin5.cxx
+@@ -20,6 +20,7 @@
+  */
+ 
+ #include <editeng/flditem.hxx>
++#include <comphelper/lok.hxx>
+ 
+ #include <svx/fmpage.hxx>
+ #include <svx/svdobj.hxx>
+@@ -45,6 +46,10 @@
+ 
+ bool ScGridWindow::ShowNoteMarker( SCCOL nPosX, SCROW nPosY, bool bKeyboard )
+ {
++    if (comphelper::LibreOfficeKit::isActive()
++        && !comphelper::LibreOfficeKit::isTiledAnnotations())
++        return false;
++
+     bool bDone = false;
+ 
+     ScDocument& rDoc = mrViewData.GetDocument();
+diff --git a/sc/source/ui/view/drawview.cxx b/sc/source/ui/view/drawview.cxx
+--- a/sc/source/ui/view/drawview.cxx
++++ b/sc/source/ui/view/drawview.cxx
+@@ -95,7 +95,12 @@
+         SetLayerLocked( pLayer->GetName(), bProt || !bEx );
+     pLayer = rAdmin.GetLayerPerID(SC_LAYER_INTERN);
+     if (pLayer)
++    {
+         SetLayerLocked( pLayer->GetName() );
++        if (comphelper::LibreOfficeKit::isActive()
++            && !comphelper::LibreOfficeKit::isTiledAnnotations())
++            SetLayerVisible(pLayer->GetName(), false);
++    }
+     pLayer = rAdmin.GetLayerPerID(SC_LAYER_FRONT);
+     if (pLayer)
+     {
+diff --git a/sc/source/core/data/postit.cxx b/sc/source/core/data/postit.cxx
+--- a/sc/source/core/data/postit.cxx
++++ b/sc/source/core/data/postit.cxx
+@@ -81,6 +81,9 @@
+ 
+ void ScCaptionUtil::SetCaptionLayer( SdrCaptionObj& rCaption, bool bShown )
+ {
++    if (comphelper::LibreOfficeKit::isActive()
++        && !comphelper::LibreOfficeKit::isTiledAnnotations())
++        rCaption.SetVisible(false);
+     SdrLayerID nLayer = bShown ? SC_LAYER_INTERN : SC_LAYER_HIDDEN;
+     if( nLayer != rCaption.GetLayer() )
+         rCaption.SetLayer( nLayer );

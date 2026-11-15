@@ -1,0 +1,1 @@
+{"version":3,"file":"AccountAvatar.d.ts","sourceRoot":"","sources":["../../../src/client/AccountAvatar.tsx"],"names":[],"mappings":"AAEA,OAAO,KAAK,EAAE,qBAAqB,EAAE,MAAM,qBAAqB,CAAA;AAGhE;;;;GAIG;AACH,wBAAgB,aAAa,CAAC,EAAE,MAAM,EAAE,YAAY,EAAE,EAAE;IACtD,MAAM,EAAE,qBAAqB,GAAG,SAAS,CAAA;IACzC,YAAY,EAAE,CAAC,QAAQ,EAAE,qBAAqB,KAAK,IAAI,CAAA;CACxD,+BAKA"}

@@ -1,0 +1,22 @@
+diff --git a/desktop/source/lib/init.cxx b/desktop/source/lib/init.cxx
+--- a/desktop/source/lib/init.cxx
++++ b/desktop/source/lib/init.cxx
+@@ -198,7 +198,7 @@
+ #include <vcl/ITiledRenderable.hxx>
+ #include <vcl/dialoghelper.hxx>
+-#if defined(_WIN32) && !USE_HEADLESS_CODE
++#if defined(MACOSX) || (defined(_WIN32) && !USE_HEADLESS_CODE)
+ #include <vcl/BitmapTools.hxx>
+ #endif
+ #include <unicode/uchar.h>
+ #include <unotools/fontdefs.hxx>
+@@ -4313,7 +4313,7 @@
+     }
+ 
+-#if defined(_WIN32) && !USE_HEADLESS_CODE
+-    // pBuffer was not used there
++#if defined(MACOSX) || (defined(_WIN32) && !USE_HEADLESS_CODE)
++    // Aqua and native Windows devices do not draw into the LOK buffer.
+     pDevice->EnableMapMode(false);
+     Bitmap aBmp(pDevice->GetBitmap({ 0, 0 }, { nCanvasWidth, nCanvasHeight }));
+     vcl::bitmap::fillWithData(pBuffer, aBmp);

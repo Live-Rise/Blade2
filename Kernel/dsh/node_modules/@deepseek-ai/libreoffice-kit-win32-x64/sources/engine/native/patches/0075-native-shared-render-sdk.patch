@@ -1,0 +1,21 @@
+diff --git a/desktop/Library_sofficeapp.mk b/desktop/Library_sofficeapp.mk
+--- a/desktop/Library_sofficeapp.mk
++++ b/desktop/Library_sofficeapp.mk
+@@ -162,3 +162,17 @@
+ endif
+ 
+ # vim: set ts=4 sw=4 et:
++
++ifeq ($(DISABLE_DYNLOADING),TRUE)
++$(eval $(call gb_Library_add_exception_objects,sofficeapp,\
++    desktop/source/lib/dsh_frame_forwarding_transport \
++    desktop/source/lib/dsh_frame_forwarding_producer \
++))
++ifeq ($(OS),MACOSX)
++$(eval $(call gb_Library_use_system_darwin_frameworks,sofficeapp,IOSurface CoreFoundation))
++$(eval $(call gb_Library_add_libs,sofficeapp,-lbsm))
++endif
++ifeq ($(OS),WNT)
++$(eval $(call gb_Library_use_system_win32_libs,sofficeapp,d3d11 dxgi advapi32))
++endif
++endif

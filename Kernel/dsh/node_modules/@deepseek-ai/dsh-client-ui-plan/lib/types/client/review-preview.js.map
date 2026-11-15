@@ -1,0 +1,1 @@
+{"version":3,"file":"review-preview.js","sourceRoot":"","sources":["../../../src/client/review-preview.ts"],"names":[],"mappings":"AAWA;;;;;GAKG;AACH,MAAM,UAAU,oBAAoB,CAAC,SAAoB,EAAE,UAAkB;IAC3E,OAAO,8BAA8B,kBAAkB,CAAC,SAAS,CAAC,IAAI,kBAAkB,CAAC,UAAU,CAAC,EAAE,CAAA;AACxG,CAAC;AAED;;;;GAIG;AACH,MAAM,UAAU,sBAAsB,CAAC,OAAe;IACpD,OAAO,kDAAkD,CAAC,IAAI,CAAC,OAAO,CAAC,CAAA;AACzE,CAAC"}

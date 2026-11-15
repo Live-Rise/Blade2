@@ -1,0 +1,1 @@
+{"version":3,"file":"errors.js","sourceRoot":"","sources":["../../../../src/client/pdf/errors.ts"],"names":[],"mappings":"AAAA,uFAAuF;AACvF,MAAM,OAAO,gBAAiB,SAAQ,KAAK;IACzC,oFAAoF;IAC3E,IAAI,GAAG,QAAQ,CAAA;IAExB,mFAAmF;IACnF,YAAY,KAAY;QACtB,KAAK,CAAC,SAAS,EAAE,EAAE,KAAK,EAAE,CAAC,CAAA;QAC3B,IAAI,CAAC,IAAI,GAAG,kBAAkB,CAAA;IAChC,CAAC;CACF"}

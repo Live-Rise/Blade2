@@ -1,0 +1,25 @@
+{
+  "package": "@deepseek-ai/libreoffice-kit",
+  "version": "0.2.3",
+  "protocolVersion": 1,
+  "capabilities": [
+    "transferable-tx",
+    "producer-local-handles"
+  ],
+  "files": {
+    "LICENSE": "ebb4f09972aee8608be255debaf78451a68e95c290f55c240dec2ecfa16ea6be",
+    "CMakeLists.txt": "90e821d3718037a60d989b80bc156cb4cc267d66487139e81cf568cb8a54d344",
+    "sdk.json": "b749f12a3371b259c8c98a22dad1b83b85b394dfeecb27581f88f9623a42a4b5",
+    "scripts/metadata.mjs": "a4848f50df31eb905dba1feb5d7df9fed60af4213c14f6ace7f40c5d066ab20c",
+    "webgpu-dependencies.json": "99fd5b4763f3621ffe72290ca5ddaa9c26f8d2404b54c9158f20f6fd29a403c2",
+    "scripts/build-webgpu.mjs": "919d40e78b7f5d3e2a7de6d5d2e46ca4a26bcce18f98abc1220c59f8cb79ebdd",
+    "include/dsh_frame_forwarding.h": "20990b72d6da7494b5abd44a0146767b85d9ba9d8d4ace7fe24e6bbf944a06b2",
+    "src/graphite-interop-internal.hxx": "012bba82e8e0e49f8ed9e62a357d61d5932d248582eafbcd914358d46711bfab",
+    "src/producer.cc": "8e90a7d0ee173e2c62823d4962288581e34fb3567cf6e8942aa3fa9935dc0e21",
+    "src/producer-internal.h": "7ebe4756fa7d693567be6fbff3b25e6c29a3be474f0ac42fd51986ecdd14bc72",
+    "src/transport.cc": "6927d4f7424ae80b155fb5b83cf4455c17c132cf292437b6c3e8a6b3caceadcc",
+    "src/transport.h": "4ca800c74069e11d3a58ef9261cc003af115ea7b6cfcfa2950473e82e0f79a1e",
+    "src/relay-transport.inc": "3e96b42414c3397ed59fc3323ee29de040f9889c0c474c277e02fd077a92c607",
+    "src/graphite-interop.cc": "4f2de8e9ad4bd1aef9220c95d3660937980893f12af006116bed720e7dfaf013"
+  }
+}

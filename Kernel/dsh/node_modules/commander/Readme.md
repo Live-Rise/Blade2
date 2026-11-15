@@ -44,7 +44,6 @@ Read this in other languages: English | [简体中文](./Readme_zh-CN.md)
   - [Bits and pieces](#bits-and-pieces)
     - [.parse() and .parseAsync()](#parse-and-parseasync)
     - [Parsing Configuration](#parsing-configuration)
-    - [Legacy options as properties](#legacy-options-as-properties)
     - [TypeScript](#typescript)
     - [createCommand()](#createcommand)
     - [Node options such as `--harmony`](#node-options-such-as---harmony)
@@ -54,7 +53,6 @@ Read this in other languages: English | [简体中文](./Readme_zh-CN.md)
     - [Override exit and output handling](#override-exit-and-output-handling)
     - [Additional documentation](#additional-documentation)
   - [Support](#support)
-    - [Commander for enterprise](#commander-for-enterprise)
 
 For information about terms used in this document see: [terminology](./docs/terminology.md)
 
@@ -367,7 +365,8 @@ Example file: [options-variadic.js](./examples/options-variadic.js)
 ```js
 program
   .option('-n, --number <numbers...>', 'specify numbers')
-  .option('-l, --letter [letters...]', 'specify letters');
+  .option('-l, --letter [letters...]', 'specify letters')
+  .argument('[operand]');
 
 program.parse();
 
@@ -380,10 +379,10 @@ $ collect -n 1 2 3 --letter a b c
 Options:  { number: [ '1', '2', '3' ], letter: [ 'a', 'b', 'c' ] }
 Remaining arguments:  []
 $ collect --letter=A -n80 operand
-Options:  { number: [ '80' ], letter: [ 'A' ] }
+Options:  { letter: [ 'A' ], number: [ '80' ] }
 Remaining arguments:  [ 'operand' ]
 $ collect --letter -n 1 -n 2 3 -- operand
-Options:  { number: [ '1', '2', '3' ], letter: true }
+Options:  { letter: true, number: [ '1', '2', '3' ] }
 Remaining arguments:  [ 'operand' ]
 ```
 
@@ -670,7 +669,7 @@ Example file: [action-this.js](./examples/action-this.js)
 program
   .command('serve')
   .argument('<script>')
-  .option('-p, --port <number>', 'port number', 80)
+  .option('-p, --port <number>', 'port number', '80')
   .action(function() {
     console.error('Run script %s on port %s', this.args[0], this.opts().port);
   });
@@ -1016,25 +1015,6 @@ By default, the option processing shows an error for an unknown option. To have 
 By default, the argument processing displays an error for more command-arguments than expected.
 To suppress the error for excess arguments, use `.allowExcessArguments()`.
 
-### Legacy options as properties
-
-Before Commander 7, the option values were stored as properties on the command.
-This was convenient to code, but the downside was possible clashes with
-existing properties of `Command`. 
-
-You can revert to the old behaviour to run unmodified legacy code by using `.storeOptionsAsProperties()`.
-
-```js
-program
-  .storeOptionsAsProperties()
-  .option('-d, --debug')
-  .action((commandAndOptions) => {
-    if (commandAndOptions.debug) {
-      console.error(`Called ${commandAndOptions.name()}`);
-    }
-  });
-```
-
 ### TypeScript
 
 **extra-typings:** There is an optional project to infer extra type information from the option and argument definitions.
@@ -1075,7 +1055,7 @@ You can enable `--harmony` option in two ways:
 
 An executable subcommand is launched as a separate child process.
 
-If you are using the node inspector for [debugging](https://nodejs.org/en/docs/guides/debugging-getting-started/) executable subcommands using `node --inspect` et al.,
+If you are using the node inspector for [debugging](https://nodejs.org/en/learn/getting-started/debugging) executable subcommands using `node --inspect` et al.,
 the inspector port is incremented by 1 for the spawned subcommand.
 
 If you are using VSCode to debug executable subcommands you need to set the `"autoAttachChildProcesses": true` flag in your `launch.json` configuration.
@@ -1164,9 +1144,3 @@ The current version of Commander is fully supported on Long Term Support version
 Older major versions of Commander receive security updates for 12 months. For more see: [Release Policy](./docs/release-policy.md).
 
 The main forum for free and community support is the project [Issues](https://github.com/tj/commander.js/issues) on GitHub.
-
-### Commander for enterprise
-
-Available as part of the Tidelift Subscription
-
-The maintainers of Commander and thousands of other packages are working with Tidelift to deliver commercial support and maintenance for the open source dependencies you use to build your applications. Save time, reduce risk, and improve code health, while paying the maintainers of the exact dependencies you use. [Learn more.](https://tidelift.com/subscription/pkg/npm-commander?utm_source=npm-commander&utm_medium=referral&utm_campaign=enterprise&utm_term=repo)

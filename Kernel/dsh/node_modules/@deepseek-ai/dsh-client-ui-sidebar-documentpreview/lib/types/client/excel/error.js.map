@@ -1,0 +1,1 @@
+{"version":3,"file":"error.js","sourceRoot":"","sources":["../../../../src/client/excel/error.ts"],"names":[],"mappings":"AAAA,gEAAgE;AAChE,MAAM,OAAO,iBAAkB,SAAQ,KAAK;IAErB;IADrB,oDAAoD;IACpD,YAAqB,IAAqD,EAAE,OAAsB;QAChG,KAAK,CAAC,IAAI,EAAE,OAAO,CAAC,CAAA;QADD,SAAI,GAAJ,IAAI,CAAiD;QAExE,IAAI,CAAC,IAAI,GAAG,mBAAmB,CAAA;IACjC,CAAC;CACF"}

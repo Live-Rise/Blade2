@@ -1,0 +1,204 @@
+--- a/vcl/inc/skia/gdiimpl.hxx
++++ b/vcl/inc/skia/gdiimpl.hxx
+@@ -40,6 +40,8 @@
+ public:
+     SkiaSalGraphicsImpl(SalGraphics& pParent, SalGeometryProvider* pProvider);
+     virtual ~SkiaSalGraphicsImpl() override;
++    // Flush VCL drawing without reading the offscreen GPU image.
++    sk_sp<SkSurface> ganeshOutputSurface();
+     void bindGraphiteTarget(sk_sp<SkSurface> surface);
+     void finishGraphiteTarget();
+     void releaseGraphiteTarget();
+--- a/vcl/skia/gdiimpl.cxx
++++ b/vcl/skia/gdiimpl.cxx
+@@ -20,6 +20,7 @@
+ #include <skia/gdiimpl.hxx>
+ #include <stdexcept>
+ #include <skia/dsh_graphite.hxx>
++#include <skia/dsh_ganesh.hxx>
+ 
+ #include <salgdi.hxx>
+ #include <skia/salbmp.hxx>
+@@ -315,6 +316,16 @@
+     assert(!mWindowContext);
+ }
+ 
++sk_sp<SkSurface> SkiaSalGraphicsImpl::ganeshOutputSurface()
++{
++    SkiaZone zone;
++    checkSurface();
++    flushDrawing();
++    if (!isOffscreen() || !mSurface || !mSurface->recordingContext())
++        throw std::runtime_error("Ganesh output requires an offscreen GPU surface");
++    return mSurface;
++}
++
+ void SkiaSalGraphicsImpl::bindGraphiteTarget(sk_sp<SkSurface> surface)
+ {
+     if (!isOffscreen() || !surface || !surface->getCanvas()->recorder()
+@@ -1421,6 +1432,7 @@
+     // TODO makeImageSnapshot(rect) may copy the data, which may be a waste if this is used
+     // e.g. for VirtualDevice's lame alpha blending, in which case the image will eventually end up
+     // in blendAlphaBitmap(), where we could simply use the proper rect of the image.
++    office_ganesh::observeBitmapExtraction(mSurface.get());
+     sk_sp<SkImage> image = makeCheckedImageSnapshot(
+         mSurface, scaleRect(SkIRect::MakeXYWH(nX, nY, nWidth, nHeight), mScaling));
+     std::shared_ptr<SkiaSalBitmap> bitmap = std::make_shared<SkiaSalBitmap>(image, bWithoutAlpha);
+--- a/vcl/Library_vcl.mk
++++ b/vcl/Library_vcl.mk
+@@ -879,3 +879,13 @@
+ ifneq ($(filter MACOSX WNT,$(OS)),)
+ $(eval $(call gb_Library_add_exception_objects,vcl,vcl/skia/dsh_graphite))
+ endif
++
++ifneq ($(filter MACOSX WNT,$(OS)),)
++$(eval $(call gb_Library_add_exception_objects,vcl,vcl/skia/dsh_ganesh))
++ifeq ($(OS),MACOSX)
++$(eval $(call gb_Library_add_objcxxobjects,vcl,vcl/skia/dsh_ganesh_metal))
++else
++$(eval $(call gb_Library_add_exception_objects,vcl,vcl/skia/dsh_ganesh_vulkan))
++$(eval $(call gb_Library_use_system_win32_libs,vcl,d3d11 dxgi))
++endif
++endif
+--- a/desktop/source/lib/init.cxx
++++ b/desktop/source/lib/init.cxx
+@@ -198,8 +198,10 @@
+ #include <vcl/virdev.hxx>
+ #ifdef SK_GRAPHITE
+ #include <skia/dsh_graphite.hxx>
++#include <skia/dsh_ganesh.hxx>
+ #else
+ using WGPUTexture = void*;
++namespace office_ganesh { struct Target; }
+ #endif
+ #include <vcl/ImageTree.hxx>
+ #include <vcl/ITiledRenderable.hxx>
+@@ -4238,7 +4240,8 @@
+                           unsigned char* pBuffer,
+                           const int nCanvasWidth, const int nCanvasHeight,
+                           const int nTilePosX, const int nTilePosY,
+-                          const int nTileWidth, const int nTileHeight, WGPUTexture texture)
++                          const int nTileWidth, const int nTileHeight, WGPUTexture texture,
++                          const office_ganesh::Target* ganesh = nullptr)
+ {
+     comphelper::ProfileZone aZone("doc_paintTile");
+ 
+@@ -4318,6 +4321,8 @@
+ #endif
+ 
+ #ifdef SK_GRAPHITE
++    std::unique_ptr<office_ganesh::OutputScope> ganeshOutput;
++    if (ganesh) ganeshOutput = std::make_unique<office_ganesh::OutputScope>(*pDevice);
+     std::unique_ptr<office_graphite::Target> target;
+     if (texture)
+     {
+@@ -4343,7 +4348,7 @@
+ 
+ #if defined(MACOSX) || (defined(_WIN32) && !USE_HEADLESS_CODE)
+     // Aqua and native Windows devices do not draw into the LOK buffer.
+-    if (!texture)
++    if (!texture && !ganesh)
+     {
+     pDevice->EnableMapMode(false);
+     Bitmap aBmp(pDevice->GetBitmap({ 0, 0 }, { nCanvasWidth, nCanvasHeight }));
+@@ -4351,6 +4356,7 @@
+     }
+ #ifdef SK_GRAPHITE
+     if (target) target->finish();
++    if (ganesh) office_ganesh::copy(*pDevice, *ganesh);
+ #endif
+ #endif
+ #endif
+@@ -4377,6 +4383,13 @@
+ 
+ 
+ #ifdef SK_GRAPHITE
++extern "C" SAL_DLLPUBLIC_EXPORT void dsh_native_paint_ganesh(LibreOfficeKitDocument* document,
++    const office_ganesh::Target* target, int width, int height, int x, int y, int tileWidth, int tileHeight)
++{
++    if (!target) throw std::runtime_error("Ganesh tile output requires an acquired shared image");
++    paintTileOutput(document, nullptr, width, height, x, y, tileWidth, tileHeight, nullptr, target);
++}
++
+ extern "C" SAL_DLLPUBLIC_EXPORT void dsh_native_paint_graphite(LibreOfficeKitDocument* document,
+     WGPUTexture texture, int width, int height, int x, int y, int tileWidth, int tileHeight)
+ {
+--- a/external/skia/UnpackedTarball_skia.mk
++++ b/external/skia/UnpackedTarball_skia.mk
+@@ -43,6 +43,7 @@
+     msvc-unknown-attributes.patch.1 \
+ 	fix-semaphore-include.patch.1 \
+ 	fix-xputimage-depth.patch.1 \
++    ganesh-shared-image.patch.1 \
+ 
+ ifneq ($(MSYSTEM),)
+ # use binary flag so patch from git-bash won't choke on mixed line-endings in patches
+--- /dev/null
++++ b/external/skia/ganesh-shared-image.patch.1
+@@ -0,0 +1,44 @@
++--- a/tools/gpu/vk/VkTestUtils.cpp
+++++ b/tools/gpu/vk/VkTestUtils.cpp
++@@ -209,6 +209,8 @@
++             // just listing the strings these macros are defined to. This really shouldn't cause
++             // any long term issues as the chances of the strings connected to the name macros
++             // changing is next to zero.
+++            "VK_KHR_external_memory_win32",
+++            "VK_KHR_win32_keyed_mutex",
++             "VK_KHR_win32_surface",  // VK_KHR_WIN32_SURFACE_EXTENSION_NAME
++             "VK_KHR_xcb_surface",    // VK_KHR_XCB_SURFACE_EXTENSION_NAME,
++             "VK_KHR_android_surface",  // VK_KHR_ANDROID_SURFACE_EXTENSION_NAME,
++--- a/tools/window/VulkanWindowContext.h
+++++ b/tools/window/VulkanWindowContext.h
++@@ -26,6 +26,10 @@
++     ~VulkanWindowContext() override;
++ 
++     static GrDirectContext* getSharedGrDirectContext() { return fGlobalShared ? fGlobalShared->fContext.get() : nullptr; }
+++
+++    static const skgpu::VulkanBackendContext* getSharedImageBackendContext() {
+++        return fGlobalShared && fGlobalShared->sharedImageInterop ? &fGlobalShared->backendContext : nullptr;
+++    }
++ 
++     sk_sp<SkSurface> getBackbufferSurface() override;
++ 
++@@ -146,6 +150,7 @@
++     VkPhysicalDeviceProperties physDeviceProperties;
++ 
++     skgpu::VulkanBackendContext backendContext;
+++    bool sharedImageInterop = false;
++     
++     /* Vulkan driver structs + info */
++     uint32_t fGraphicsQueueIndex;
++--- a/tools/window/VulkanWindowContext.cpp
+++++ b/tools/window/VulkanWindowContext.cpp
++@@ -81,6 +81,9 @@
++         fGlobalShared.reset();
++         return;
++     }
+++
+++    d->sharedImageInterop = extensions.hasExtension("VK_KHR_external_memory_win32", 1)
+++        && extensions.hasExtension("VK_KHR_win32_keyed_mutex", 1);
++ 
++     if (!extensions.hasExtension(VK_KHR_SURFACE_EXTENSION_NAME, 25) ||
++         !extensions.hasExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME, 68)) {
+--- a/include/vcl/skia/SkiaHelper.hxx
++++ b/include/vcl/skia/SkiaHelper.hxx
+@@ -32,6 +32,8 @@
+ };
+ 
+ VCL_DLLPUBLIC RenderMethod renderMethodToUse();
++// Select CPU rendering before any document surfaces are created.
++VCL_DLLPUBLIC void forceRasterRenderMethod();
+ 
+ // Clean up before exit.
+ VCL_DLLPUBLIC void cleanup();
+--- a/vcl/skia/SkiaHelper.cxx
++++ b/vcl/skia/SkiaHelper.cxx
+@@ -286,7 +286,7 @@
+ 
+ RenderMethod renderMethodToUse() { return accessRenderMethodToUse(); }
+ 
+-static void forceRasterRenderMethod() { accessRenderMethodToUse() = RenderRaster; }
++void forceRasterRenderMethod() { accessRenderMethodToUse() = RenderRaster; }
+ 
+ static void checkDeviceDenylisted(bool blockDisable)
+ {

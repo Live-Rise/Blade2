@@ -102,24 +102,18 @@ internal static class DshPluginBootstrap
     internal const string SessionSearchBundle = "@deepseek-ai/dsh-experimental-session-search";
 
     /// <summary>
-    /// 多代理（Agent Teams）bundle（内核 OPTIONAL_BUNDLES，出厂关闭）：一层选入团队
-    /// 协作域、spawn_teammate 委派工具与 Web 成员/任务板 UI。注意它是普通 subagent
-    /// 委派的官方替代——选入后 subagent/subagent_fork 工具与重叠的全局子代理控制一并
-    /// 停用（Workflow 的 spawn 不受影响）。同为内核 bundle 依赖，shell 不必 pnpm add。
-    /// </summary>
-    internal const string AgentTeamBundle = "@deepseek-ai/dsh-experimental-agent-team-profile";
-
-    /// <summary>
     /// 随对话更新的标题 bundle（内核 OPTIONAL_BUNDLES）：按会话的全部消息生成标题，
     /// 主要任务变化时自动更新，而不是只按第一条消息定名（内核 locale 元数据的说法是
     /// 「随对话更新的标题」）。同为内核 bundle 依赖，shell 不必 pnpm add。
     /// </summary>
     internal const string SessionTitlesBundle = "@deepseek-ai/dsh-experimental-session-titles-bundle";
 
-    /// <summary>内核 OPTIONAL_BUNDLES 的其余条目（0.2.2-rc.1 家族）。展示文案读各包自带的
+    /// <summary>内核 OPTIONAL_BUNDLES 的其余条目（0.2.2-rc.3 家族）。展示文案读各包自带的
     /// locale 元数据（<c>locale/&lt;locale&gt;.json</c> 的 meta.title/description），壳不另写
     /// 文案——内核加包/改说法，设置页跟着变。同为 installAnchor 可解析的安装依赖。</summary>
     internal const string PersonalizedRecommendationsBundle = "@deepseek-ai/dsh-personalized-recommendations";
+    internal const string CuaBundle = "@deepseek-ai/dsh-cua-bundle";
+    internal const string ChatImportBundle = "@deepseek-ai/dsh-deepseek-chat-import";
     internal const string RalphBundle = "@deepseek-ai/dsh-experimental-ralph-bundle";
     internal const string TerminalBundle = "@deepseek-ai/dsh-experimental-terminal-bundle";
     internal const string BadgeSkillBundle = "@deepseek-ai/dsh-experimental-badge-skill-bundle";
@@ -1306,10 +1300,11 @@ internal static class DshPluginBootstrap
     {
         (AutoReviewBundle, true),
         (SessionSearchBundle, true),
-        (AgentTeamBundle, true),
         // 随对话更新的标题：默认选入（用户口径——标题要跟着对话走，不要停在第一条消息）。
         (SessionTitlesBundle, true),
         (PersonalizedRecommendationsBundle, false),
+        (CuaBundle, false),
+        (ChatImportBundle, false),
         (RalphBundle, false),
         (TerminalBundle, false),
         (BadgeSkillBundle, false),

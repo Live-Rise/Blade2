@@ -1,0 +1,15 @@
+--- a/desktop/source/lib/init.cxx
++++ b/desktop/source/lib/init.cxx
+@@ -4673,6 +4673,12 @@
+         }
+ 
+         pDoc->initializeForTiledRendering(comphelper::containerToSequence(aArgs));
++        // Hidden native frames need an explicit target for UNO command dispatch.
++        const uno::Reference<frame::XModel> xModel(
++            static_cast<LibLODocument_Impl*>(pThis)->mxComponent, uno::UNO_QUERY_THROW);
++        const uno::Reference<frame::XDesktop2> xDesktop =
++            frame::Desktop::create(comphelper::getProcessComponentContext());
++        xDesktop->setActiveFrame(xModel->getCurrentController()->getFrame());
+     }
+ }
+ 

@@ -18,8 +18,6 @@ export declare const JUMP_PAGE_MESSAGES = 200;
 export interface SessionOptions {
     /** Catalog-discovered address selecting non-activating subagent transport. */
     address?: SubagentAddress;
-    /** Whether the exact direct parent Agent is available in Host summaries; absent until known. */
-    parentAvailable?: boolean;
     /**
      * Publish each accepted prompt to the Manager, including after this Session
      * object is replaced. Acceptance converts display state, but does not
@@ -45,13 +43,16 @@ export declare class Session implements SessionFace {
     private readonly options;
     private baseSeq;
     private hasMore;
+    private historyWasPartial;
     private openState;
     private openError;
     private openPromise;
     /** Bumped by stream replacement to invalidate an in-flight doOpen. Stale
      *  passes drop all writes once the generation moves on. */
     private openGeneration;
-    private loadingOlder;
+    private get loadingOlder();
+    private historyLoadStatus;
+    private olderRequest;
     /** Shared low-water target of the running jump loop; null when no jump is paging. */
     private jumpTargetSeq;
     /** The running jump loop's completion, shared by retargeting callers. */
@@ -61,7 +62,6 @@ export declare class Session implements SessionFace {
     private readonly assistantStream;
     private running;
     private address;
-    private parentAvailable;
     /**
      * Sticky send marker, private input of the composerPhase derivation: set
      * when the Host accepts a prompt, never reset — the blank → engaging edge of
@@ -175,8 +175,8 @@ export declare class Session implements SessionFace {
     /**
      * Stop the active turn while the Host preserves pending inbox work; failures
      * land in promptError (same error-strip display slot). A subagent address
-     * routes through `subagents.interruptByParent`, whose durable parent-address
-     * authority works without a live parent Agent.
+     * routes through `subagents.interruptByUser`, authorized on the target Session
+     * without requiring a live parent Agent.
      * @returns the cancel result.
      */
     cancel(): Promise<RemoteResult<{
@@ -207,8 +207,14 @@ export declare class Session implements SessionFace {
     }>>;
     /** First open: pull the tail page (idempotent — in-flight/already-open returns the existing promise). */
     open(): Promise<void>;
-    /** Prepend one Turn-aligned page: at least 50 messages and two Turn starts, capped at 500 messages. */
-    loadOlder(): Promise<void>;
+    /** @inheritdoc */
+    loadOlder(options?: {
+        deferConsumption?: boolean;
+    }): Promise<void>;
+    private prepareOlder;
+    /** @inheritdoc */
+    consumeOlder(): boolean;
+    private clearOlderHistory;
     /** Jump loader: page backwards until the window covers seq (see ISession.loadThrough). */
     loadThrough(seq: SessionSeq): Promise<void>;
     /** Rebuild an opened history source after address replacement.
@@ -235,14 +241,8 @@ export declare class Session implements SessionFace {
      * Install or clear the catalog-discovered transport address. A changed
      * address rebuilds an already-open window through its new history route.
      * @param address - direct parent/child address, or undefined for ordinary transport.
-     * @param parentAvailable - latest exact-parent availability hint, or undefined before a catalog read.
      */
-    configureSubagent(address: SubagentAddress | undefined, parentAvailable?: boolean): void;
-    /**
-     * Update only the parent availability hint from a catalog refresh.
-     * @param available - whether the exact direct parent is live.
-     */
-    handleSubagentParentAvailable(available: boolean): void;
+    configureSubagent(address: SubagentAddress | undefined): void;
     /**
      * Apply the Manager's effective display blank, further reconciled with the
      * current `sessionListMetadata` projection. Local send attempts and current

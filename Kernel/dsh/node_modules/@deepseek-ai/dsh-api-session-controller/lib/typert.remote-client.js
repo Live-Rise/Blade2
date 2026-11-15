@@ -94,42 +94,41 @@ const _deepseek_ai_dsh_api_session_controller_session_control_result$schema = ()
 })).readonly().readonly(),
 }).optional().describe('Action card proposals and decisions for the currently open Session.'),
   'agentPreset': z.union([z.literal(null), z.string()]).optional().describe('Preset the Session runs, or null when the deployment composes none.'),
-  'title': z.union([z.literal(null), z.string()]).optional().describe('The session\'s current normalized title — the latest `session/title` event\'s text (last-wins), or `null` before the first title lands. A plain string: the shape the client list rows consume.'),
-  'todos': z.union([z.literal(null), z.array(z.object({
-  'content': z.string().describe('What this task is — a short imperative line shown in the UI.'),
-  'status': z.union([z.literal("completed"), z.literal("pending"), z.literal("in_progress")]).describe('Lifecycle state. `in_progress` marks a task being worked now; parallel work may mark several.'),
-}))]).optional().describe('The agent\'s current whole todo list (the latest `todo/write` snapshot), or `null` before the first write. Whole-value rule: every `todo/write` carries the complete replacement list, so the fold is last-wins. Excluded from Session summary payloads, with `null` kept outside the exclusion mark so the pre-first-write value stays expressible.'),
-  'sessionListMetadata': z.object({
-  'blank': z.boolean().readonly().describe('Whether the folded prefix contains no turn.'),
-  'lastPromptAt': z.union([z.literal(null), z.number()]).readonly().describe('Latest human-authored prompt time in the folded prefix.'),
-}).optional().describe('Persisted facts used to summarize a Session without activating it.'),
-  'imageLimits': z.object({
-  'maxImageBytes': z.number(),
-  'maxImagesPerMessage': z.number(),
-  'maxMessageImageBytes': z.number(),
-  'maxImagePixels': z.number(),
-  'maxImageDimension': z.number().describe('Maximum intrinsic width and maximum intrinsic height in pixels for one image.'),
-  'mediaTypes': z.array(z.union([z.literal("image/png"), z.literal("image/jpeg"), z.literal("image/webp"), z.literal("image/gif")])),
-}).optional().describe('Image-intake limits enforced by the Session prompt endpoint. Boot constant, excluded from Session summary payloads: every Session shares it, so a list row would repeat one host-wide fact.'),
+  'agentTeam': z.object({
+  'enabled': z.boolean().readonly(),
+  'tasks': z.array(z.object({
+  'id': z.string().readonly(),
+  'revision': z.number().readonly(),
+  'subject': z.string().readonly(),
+  'description': z.string().readonly(),
+  'status': z.union([z.literal("completed"), z.literal("pending"), z.literal("in_progress"), z.literal("deleted")]).readonly(),
+  'blockedBy': z.array(z.string()).readonly(),
+  'writeScopes': z.array(z.string()).readonly(),
+  'ownerId': z.string().readonly().optional(),
+  'ownerName': z.string().readonly().optional().describe('Immutable agent path captured at assignment; absent on unnamed historical owners.'),
+  'ready': z.boolean().readonly(),
+  'writeScopeWarnings': z.array(z.string()).readonly(),
+})).readonly(),
+  'failure': z.string().readonly().optional(),
+}).optional().describe('Saved selection and non-deleted task board of the Team rooted at the projected Session.'),
   'workingDirectory': z.union([z.literal(null), z.string()]).optional().describe('Recorded current directory for Session observations, or null when none is recorded.'),
-  'permissions': z.object({
-  'currentValue': z.string().describe('The effective current value: a configured preset key, `auto`, or `custom`.'),
-}).optional().describe('The session\'s current permission, folded from the three whole-value knob events (`permission/preset`, `sandbox/mode`, `approval/policy`) over the composition defaults. Selectable options come from the process-level catalog Remote. Key absence means no permission service is composed — clients hide the control.'),
   'subagentCatalog': z.array(z.union([z.object({
   'id': z.string().readonly(),
   'createdAt': z.number().readonly(),
-  'mode': z.literal("one-shot").readonly(),
-  'label': z.string().readonly().optional(),
+  'mode': z.literal("one-shot").readonly().describe('A terminal one-shot child.'),
+  'label': z.string().readonly().optional().describe('Optional durable creation label from the parent catalog.'),
 }), z.object({
   'id': z.string().readonly(),
   'createdAt': z.number().readonly(),
-  'mode': z.literal("external").readonly(),
-  'label': z.string().readonly().optional(),
+  'mode': z.literal("external").readonly().describe('An external execution without a local child Session.'),
+  'label': z.string().readonly().optional().describe('Optional durable creation label from the parent catalog.'),
+  'name': z.string().readonly().optional().describe('Name unique among the parent\'s children; absent on historical entries.'),
 }), z.object({
   'id': z.string().readonly(),
   'createdAt': z.number().readonly(),
-  'mode': z.literal("continuable").readonly(),
-  'label': z.string().readonly(),
+  'mode': z.literal("continuable").readonly().describe('A resumable conversation.'),
+  'label': z.string().readonly().describe('Durable creation label from the parent catalog.'),
+  'name': z.string().readonly().optional().describe('Name unique among the parent\'s children; absent on historical entries.'),
 }), z.object({
   'id': z.string().readonly(),
   'createdAt': z.number().readonly(),
@@ -153,6 +152,27 @@ const _deepseek_ai_dsh_api_session_controller_session_control_result$schema = ()
   'label': z.string().describe('Durable creation label from the child\'s descriptor.'),
   'seq': z.number().describe('Seq of the folded descriptor event; see the one-shot arm for the own-suffix proof.'),
 })]).optional().describe('Identity of a descriptor-backed subagent session. `null` ⟺ no valid descriptor (missing, malformed, or unrecognized-version — deliberately undistinguished). The sentinel is deliberately serializable: a value pushed over JSON transports must survive `JSON.stringify` losslessly, where an `undefined` field would be dropped and a stale identity would survive on the receiving side. The entry itself stays non-optional.'),
+  'title': z.union([z.literal(null), z.string()]).optional().describe('The session\'s current normalized title — the latest `session/title` event\'s text (last-wins), or `null` before the first title lands. A plain string: the shape the client list rows consume.'),
+  'todos': z.union([z.literal(null), z.array(z.object({
+  'content': z.string().describe('What this task is — a short imperative line shown in the UI.'),
+  'status': z.union([z.literal("completed"), z.literal("pending"), z.literal("in_progress")]).describe('Lifecycle state. `in_progress` marks a task being worked now; parallel work may mark several.'),
+}))]).optional().describe('The agent\'s current whole todo list (the latest `todo/write` snapshot), or `null` before the first write. Whole-value rule: every `todo/write` carries the complete replacement list, so the fold is last-wins. Excluded from Session summary payloads, with `null` kept outside the exclusion mark so the pre-first-write value stays expressible.'),
+  'permissions': z.object({
+  'currentValue': z.string().describe('The effective current value: a configured preset key, `auto`, or `custom`.'),
+}).optional().describe('The session\'s current permission, folded from the three whole-value knob events (`permission/preset`, `sandbox/mode`, `approval/policy`) over the composition defaults. Selectable options come from the process-level catalog Remote. Key absence means no permission service is composed — clients hide the control.'),
+  'conversationContinuation': z.union([z.literal(null), z.number()]).optional().describe('Eligible latest failed turn/end for an empty prompt, or null.'),
+  'sessionListMetadata': z.object({
+  'blank': z.boolean().readonly().describe('Whether the folded prefix contains no turn.'),
+  'lastPromptAt': z.union([z.literal(null), z.number()]).readonly().describe('Latest human-authored prompt time in the folded prefix.'),
+}).optional().describe('Persisted facts used to summarize a Session without activating it.'),
+  'imageLimits': z.object({
+  'maxImageBytes': z.number(),
+  'maxImagesPerMessage': z.number(),
+  'maxMessageImageBytes': z.number(),
+  'maxImagePixels': z.number(),
+  'maxImageDimension': z.number().describe('Maximum intrinsic width and maximum intrinsic height in pixels for one image.'),
+  'mediaTypes': z.array(z.union([z.literal("image/png"), z.literal("image/jpeg"), z.literal("image/webp"), z.literal("image/gif")])),
+}).optional().describe('Image-intake limits enforced by the Session prompt endpoint. Boot constant, excluded from Session summary payloads: every Session shares it, so a list row would repeat one host-wide fact.'),
   'tokenUsage': z.object({
   'uncachedInputTokens': z.number(),
   'outputTokens': z.number(),
@@ -219,28 +239,6 @@ const _deepseek_ai_dsh_api_session_controller_session_control_result$schema = ()
 })).readonly().describe('The recorded batch, one entry per question; empty when the late reply carried none.'),
 })).readonly().describe('Calls an answer settled, in settlement order.'),
 }).optional().describe('Timed questions that remain answerable in this Session, and the ones a late reply settled.'),
-  'agentTeam': z.object({
-  'members': z.array(z.object({
-  'id': z.string().readonly(),
-  'name': z.string().readonly(),
-  'role': z.union([z.literal("lead"), z.literal("teammate")]).readonly(),
-  'phase': z.union([z.literal("failed"), z.literal("provisioning"), z.literal("active")]).readonly().describe('Durable lifecycle; the Lead row is always `active`. Turn activity comes from Session status.'),
-  'error': z.string().readonly().optional(),
-})).readonly(),
-  'tasks': z.array(z.object({
-  'id': z.string().readonly(),
-  'revision': z.number().readonly(),
-  'subject': z.string().readonly(),
-  'description': z.string().readonly(),
-  'status': z.union([z.literal("completed"), z.literal("pending"), z.literal("in_progress"), z.literal("deleted")]).readonly(),
-  'blockedBy': z.array(z.string()).readonly(),
-  'writeScopes': z.array(z.string()).readonly(),
-  'ownerName': z.string().readonly().optional(),
-  'ready': z.boolean().readonly(),
-  'writeScopeWarnings': z.array(z.string()).readonly(),
-})).readonly(),
-  'failure': z.string().readonly().optional(),
-}).optional().describe('Durable roster and non-deleted task board of the Team rooted at the projected Session.'),
   'forgeChangeRequests': z.array(z.object({
   'url': z.string().readonly().describe('Web URL as first recorded.'),
   'origin': z.union([z.literal("created"), z.literal("referenced"), z.literal("discovered"), z.literal("tracked")]).readonly().describe('How the change request became bound.'),
@@ -253,6 +251,15 @@ const _deepseek_ai_dsh_api_session_controller_session_control_result$schema = ()
   'baseCommit': z.string().readonly().describe('Commit object name the branch started from.'),
   'repositoryRoot': z.string().readonly().describe('Canonical root of the source checkout.'),
 })]).optional().describe('The worktree the panel created for the Session while the Session works in it, else null.'),
+  'worktree': z.array(z.object({
+  'worktree': z.object({
+  'path': z.string().describe('Canonical absolute checkout directory in the filesystem provider\'s execution world.'),
+  'branch': z.string().describe('Newly created branch name.'),
+  'baseCommit': z.string().describe('Resolved commit object name; repository-local replacement refs can change its checked-out content.'),
+  'repositoryRoot': z.string().describe('Canonical root of the source checkout.'),
+}).readonly(),
+  'owned': z.boolean().readonly().describe('False for a creation inside the fork-inherited prefix.'),
+})).optional().describe('Checkouts recorded in the Session\'s log, in creation order.'),
   'forkLineage': z.object({
   'origin': z.literal("fork").readonly().describe('How the Session came to exist; only `fork` is published under this key.'),
   'sourceSessionId': z.string().readonly().describe('Session the branch was cut from.'),
@@ -433,42 +440,41 @@ const _deepseek_ai_dsh_api_session_controller_session_follow_result$schema = () 
 })).readonly().readonly(),
 }).optional().describe('Action card proposals and decisions for the currently open Session.'),
   'agentPreset': z.union([z.literal(null), z.string()]).optional().describe('Preset the Session runs, or null when the deployment composes none.'),
-  'title': z.union([z.literal(null), z.string()]).optional().describe('The session\'s current normalized title — the latest `session/title` event\'s text (last-wins), or `null` before the first title lands. A plain string: the shape the client list rows consume.'),
-  'todos': z.union([z.literal(null), z.array(z.object({
-  'content': z.string().describe('What this task is — a short imperative line shown in the UI.'),
-  'status': z.union([z.literal("completed"), z.literal("pending"), z.literal("in_progress")]).describe('Lifecycle state. `in_progress` marks a task being worked now; parallel work may mark several.'),
-}))]).optional().describe('The agent\'s current whole todo list (the latest `todo/write` snapshot), or `null` before the first write. Whole-value rule: every `todo/write` carries the complete replacement list, so the fold is last-wins. Excluded from Session summary payloads, with `null` kept outside the exclusion mark so the pre-first-write value stays expressible.'),
-  'sessionListMetadata': z.object({
-  'blank': z.boolean().readonly().describe('Whether the folded prefix contains no turn.'),
-  'lastPromptAt': z.union([z.literal(null), z.number()]).readonly().describe('Latest human-authored prompt time in the folded prefix.'),
-}).optional().describe('Persisted facts used to summarize a Session without activating it.'),
-  'imageLimits': z.object({
-  'maxImageBytes': z.number(),
-  'maxImagesPerMessage': z.number(),
-  'maxMessageImageBytes': z.number(),
-  'maxImagePixels': z.number(),
-  'maxImageDimension': z.number().describe('Maximum intrinsic width and maximum intrinsic height in pixels for one image.'),
-  'mediaTypes': z.array(z.union([z.literal("image/png"), z.literal("image/jpeg"), z.literal("image/webp"), z.literal("image/gif")])),
-}).optional().describe('Image-intake limits enforced by the Session prompt endpoint. Boot constant, excluded from Session summary payloads: every Session shares it, so a list row would repeat one host-wide fact.'),
+  'agentTeam': z.object({
+  'enabled': z.boolean().readonly(),
+  'tasks': z.array(z.object({
+  'id': z.string().readonly(),
+  'revision': z.number().readonly(),
+  'subject': z.string().readonly(),
+  'description': z.string().readonly(),
+  'status': z.union([z.literal("completed"), z.literal("pending"), z.literal("in_progress"), z.literal("deleted")]).readonly(),
+  'blockedBy': z.array(z.string()).readonly(),
+  'writeScopes': z.array(z.string()).readonly(),
+  'ownerId': z.string().readonly().optional(),
+  'ownerName': z.string().readonly().optional().describe('Immutable agent path captured at assignment; absent on unnamed historical owners.'),
+  'ready': z.boolean().readonly(),
+  'writeScopeWarnings': z.array(z.string()).readonly(),
+})).readonly(),
+  'failure': z.string().readonly().optional(),
+}).optional().describe('Saved selection and non-deleted task board of the Team rooted at the projected Session.'),
   'workingDirectory': z.union([z.literal(null), z.string()]).optional().describe('Recorded current directory for Session observations, or null when none is recorded.'),
-  'permissions': z.object({
-  'currentValue': z.string().describe('The effective current value: a configured preset key, `auto`, or `custom`.'),
-}).optional().describe('The session\'s current permission, folded from the three whole-value knob events (`permission/preset`, `sandbox/mode`, `approval/policy`) over the composition defaults. Selectable options come from the process-level catalog Remote. Key absence means no permission service is composed — clients hide the control.'),
   'subagentCatalog': z.array(z.union([z.object({
   'id': z.string().readonly(),
   'createdAt': z.number().readonly(),
-  'mode': z.literal("one-shot").readonly(),
-  'label': z.string().readonly().optional(),
+  'mode': z.literal("one-shot").readonly().describe('A terminal one-shot child.'),
+  'label': z.string().readonly().optional().describe('Optional durable creation label from the parent catalog.'),
 }), z.object({
   'id': z.string().readonly(),
   'createdAt': z.number().readonly(),
-  'mode': z.literal("external").readonly(),
-  'label': z.string().readonly().optional(),
+  'mode': z.literal("external").readonly().describe('An external execution without a local child Session.'),
+  'label': z.string().readonly().optional().describe('Optional durable creation label from the parent catalog.'),
+  'name': z.string().readonly().optional().describe('Name unique among the parent\'s children; absent on historical entries.'),
 }), z.object({
   'id': z.string().readonly(),
   'createdAt': z.number().readonly(),
-  'mode': z.literal("continuable").readonly(),
-  'label': z.string().readonly(),
+  'mode': z.literal("continuable").readonly().describe('A resumable conversation.'),
+  'label': z.string().readonly().describe('Durable creation label from the parent catalog.'),
+  'name': z.string().readonly().optional().describe('Name unique among the parent\'s children; absent on historical entries.'),
 }), z.object({
   'id': z.string().readonly(),
   'createdAt': z.number().readonly(),
@@ -492,6 +498,27 @@ const _deepseek_ai_dsh_api_session_controller_session_follow_result$schema = () 
   'label': z.string().describe('Durable creation label from the child\'s descriptor.'),
   'seq': z.number().describe('Seq of the folded descriptor event; see the one-shot arm for the own-suffix proof.'),
 })]).optional().describe('Identity of a descriptor-backed subagent session. `null` ⟺ no valid descriptor (missing, malformed, or unrecognized-version — deliberately undistinguished). The sentinel is deliberately serializable: a value pushed over JSON transports must survive `JSON.stringify` losslessly, where an `undefined` field would be dropped and a stale identity would survive on the receiving side. The entry itself stays non-optional.'),
+  'title': z.union([z.literal(null), z.string()]).optional().describe('The session\'s current normalized title — the latest `session/title` event\'s text (last-wins), or `null` before the first title lands. A plain string: the shape the client list rows consume.'),
+  'todos': z.union([z.literal(null), z.array(z.object({
+  'content': z.string().describe('What this task is — a short imperative line shown in the UI.'),
+  'status': z.union([z.literal("completed"), z.literal("pending"), z.literal("in_progress")]).describe('Lifecycle state. `in_progress` marks a task being worked now; parallel work may mark several.'),
+}))]).optional().describe('The agent\'s current whole todo list (the latest `todo/write` snapshot), or `null` before the first write. Whole-value rule: every `todo/write` carries the complete replacement list, so the fold is last-wins. Excluded from Session summary payloads, with `null` kept outside the exclusion mark so the pre-first-write value stays expressible.'),
+  'permissions': z.object({
+  'currentValue': z.string().describe('The effective current value: a configured preset key, `auto`, or `custom`.'),
+}).optional().describe('The session\'s current permission, folded from the three whole-value knob events (`permission/preset`, `sandbox/mode`, `approval/policy`) over the composition defaults. Selectable options come from the process-level catalog Remote. Key absence means no permission service is composed — clients hide the control.'),
+  'conversationContinuation': z.union([z.literal(null), z.number()]).optional().describe('Eligible latest failed turn/end for an empty prompt, or null.'),
+  'sessionListMetadata': z.object({
+  'blank': z.boolean().readonly().describe('Whether the folded prefix contains no turn.'),
+  'lastPromptAt': z.union([z.literal(null), z.number()]).readonly().describe('Latest human-authored prompt time in the folded prefix.'),
+}).optional().describe('Persisted facts used to summarize a Session without activating it.'),
+  'imageLimits': z.object({
+  'maxImageBytes': z.number(),
+  'maxImagesPerMessage': z.number(),
+  'maxMessageImageBytes': z.number(),
+  'maxImagePixels': z.number(),
+  'maxImageDimension': z.number().describe('Maximum intrinsic width and maximum intrinsic height in pixels for one image.'),
+  'mediaTypes': z.array(z.union([z.literal("image/png"), z.literal("image/jpeg"), z.literal("image/webp"), z.literal("image/gif")])),
+}).optional().describe('Image-intake limits enforced by the Session prompt endpoint. Boot constant, excluded from Session summary payloads: every Session shares it, so a list row would repeat one host-wide fact.'),
   'tokenUsage': z.object({
   'uncachedInputTokens': z.number(),
   'outputTokens': z.number(),
@@ -558,28 +585,6 @@ const _deepseek_ai_dsh_api_session_controller_session_follow_result$schema = () 
 })).readonly().describe('The recorded batch, one entry per question; empty when the late reply carried none.'),
 })).readonly().describe('Calls an answer settled, in settlement order.'),
 }).optional().describe('Timed questions that remain answerable in this Session, and the ones a late reply settled.'),
-  'agentTeam': z.object({
-  'members': z.array(z.object({
-  'id': z.string().readonly(),
-  'name': z.string().readonly(),
-  'role': z.union([z.literal("lead"), z.literal("teammate")]).readonly(),
-  'phase': z.union([z.literal("failed"), z.literal("provisioning"), z.literal("active")]).readonly().describe('Durable lifecycle; the Lead row is always `active`. Turn activity comes from Session status.'),
-  'error': z.string().readonly().optional(),
-})).readonly(),
-  'tasks': z.array(z.object({
-  'id': z.string().readonly(),
-  'revision': z.number().readonly(),
-  'subject': z.string().readonly(),
-  'description': z.string().readonly(),
-  'status': z.union([z.literal("completed"), z.literal("pending"), z.literal("in_progress"), z.literal("deleted")]).readonly(),
-  'blockedBy': z.array(z.string()).readonly(),
-  'writeScopes': z.array(z.string()).readonly(),
-  'ownerName': z.string().readonly().optional(),
-  'ready': z.boolean().readonly(),
-  'writeScopeWarnings': z.array(z.string()).readonly(),
-})).readonly(),
-  'failure': z.string().readonly().optional(),
-}).optional().describe('Durable roster and non-deleted task board of the Team rooted at the projected Session.'),
   'forgeChangeRequests': z.array(z.object({
   'url': z.string().readonly().describe('Web URL as first recorded.'),
   'origin': z.union([z.literal("created"), z.literal("referenced"), z.literal("discovered"), z.literal("tracked")]).readonly().describe('How the change request became bound.'),
@@ -592,6 +597,15 @@ const _deepseek_ai_dsh_api_session_controller_session_follow_result$schema = () 
   'baseCommit': z.string().readonly().describe('Commit object name the branch started from.'),
   'repositoryRoot': z.string().readonly().describe('Canonical root of the source checkout.'),
 })]).optional().describe('The worktree the panel created for the Session while the Session works in it, else null.'),
+  'worktree': z.array(z.object({
+  'worktree': z.object({
+  'path': z.string().describe('Canonical absolute checkout directory in the filesystem provider\'s execution world.'),
+  'branch': z.string().describe('Newly created branch name.'),
+  'baseCommit': z.string().describe('Resolved commit object name; repository-local replacement refs can change its checked-out content.'),
+  'repositoryRoot': z.string().describe('Canonical root of the source checkout.'),
+}).readonly(),
+  'owned': z.boolean().readonly().describe('False for a creation inside the fork-inherited prefix.'),
+})).optional().describe('Checkouts recorded in the Session\'s log, in creation order.'),
   'forkLineage': z.object({
   'origin': z.literal("fork").readonly().describe('How the Session came to exist; only `fork` is published under this key.'),
   'sourceSessionId': z.string().readonly().describe('Session the branch was cut from.'),
@@ -719,30 +733,41 @@ const _deepseek_ai_dsh_api_session_controller_session_list_result$schema = () =>
 })]).readonly().describe('Selection the next model step uses; null while the Agent\'s initial options supply the route.'),
 }).optional().describe('Recorded model selection for the next model step and the latest request.'),
   'agentPreset': z.union([z.literal(null), z.string()]).optional().describe('Preset the Session runs, or null when the deployment composes none.'),
-  'title': z.union([z.literal(null), z.string()]).optional().describe('The session\'s current normalized title — the latest `session/title` event\'s text (last-wins), or `null` before the first title lands. A plain string: the shape the client list rows consume.'),
-  'sessionListMetadata': z.object({
-  'blank': z.boolean().readonly().describe('Whether the folded prefix contains no turn.'),
-  'lastPromptAt': z.union([z.literal(null), z.number()]).readonly().describe('Latest human-authored prompt time in the folded prefix.'),
-}).optional().describe('Persisted facts used to summarize a Session without activating it.'),
+  'agentTeam': z.object({
+  'enabled': z.boolean().readonly(),
+  'tasks': z.array(z.object({
+  'id': z.string().readonly(),
+  'revision': z.number().readonly(),
+  'subject': z.string().readonly(),
+  'description': z.string().readonly(),
+  'status': z.union([z.literal("completed"), z.literal("pending"), z.literal("in_progress"), z.literal("deleted")]).readonly(),
+  'blockedBy': z.array(z.string()).readonly(),
+  'writeScopes': z.array(z.string()).readonly(),
+  'ownerId': z.string().readonly().optional(),
+  'ownerName': z.string().readonly().optional().describe('Immutable agent path captured at assignment; absent on unnamed historical owners.'),
+  'ready': z.boolean().readonly(),
+  'writeScopeWarnings': z.array(z.string()).readonly(),
+})).readonly(),
+  'failure': z.string().readonly().optional(),
+}).optional().describe('Saved selection and non-deleted task board of the Team rooted at the projected Session.'),
   'workingDirectory': z.union([z.literal(null), z.string()]).optional().describe('Recorded current directory for Session observations, or null when none is recorded.'),
-  'permissions': z.object({
-  'currentValue': z.string().describe('The effective current value: a configured preset key, `auto`, or `custom`.'),
-}).optional().describe('The session\'s current permission, folded from the three whole-value knob events (`permission/preset`, `sandbox/mode`, `approval/policy`) over the composition defaults. Selectable options come from the process-level catalog Remote. Key absence means no permission service is composed — clients hide the control.'),
   'subagentCatalog': z.array(z.union([z.object({
   'id': z.string().readonly(),
   'createdAt': z.number().readonly(),
-  'mode': z.literal("one-shot").readonly(),
-  'label': z.string().readonly().optional(),
+  'mode': z.literal("one-shot").readonly().describe('A terminal one-shot child.'),
+  'label': z.string().readonly().optional().describe('Optional durable creation label from the parent catalog.'),
 }), z.object({
   'id': z.string().readonly(),
   'createdAt': z.number().readonly(),
-  'mode': z.literal("external").readonly(),
-  'label': z.string().readonly().optional(),
+  'mode': z.literal("external").readonly().describe('An external execution without a local child Session.'),
+  'label': z.string().readonly().optional().describe('Optional durable creation label from the parent catalog.'),
+  'name': z.string().readonly().optional().describe('Name unique among the parent\'s children; absent on historical entries.'),
 }), z.object({
   'id': z.string().readonly(),
   'createdAt': z.number().readonly(),
-  'mode': z.literal("continuable").readonly(),
-  'label': z.string().readonly(),
+  'mode': z.literal("continuable").readonly().describe('A resumable conversation.'),
+  'label': z.string().readonly().describe('Durable creation label from the parent catalog.'),
+  'name': z.string().readonly().optional().describe('Name unique among the parent\'s children; absent on historical entries.'),
 }), z.object({
   'id': z.string().readonly(),
   'createdAt': z.number().readonly(),
@@ -757,6 +782,15 @@ const _deepseek_ai_dsh_api_session_controller_session_list_result$schema = () =>
 }).optional().describe('Same-cut bounds of the currently open turn, when one has not reached `turn/end`.'),
   'lastTurnCompleted': z.boolean().optional().describe('Whether the latest closed turn after the child\'s own descriptor completed normally; absent while a turn is open or before one closes.'),
 }).optional().describe('Active-turn duration and latest closed-turn completion for a descriptor-backed subagent session.'),
+  'title': z.union([z.literal(null), z.string()]).optional().describe('The session\'s current normalized title — the latest `session/title` event\'s text (last-wins), or `null` before the first title lands. A plain string: the shape the client list rows consume.'),
+  'permissions': z.object({
+  'currentValue': z.string().describe('The effective current value: a configured preset key, `auto`, or `custom`.'),
+}).optional().describe('The session\'s current permission, folded from the three whole-value knob events (`permission/preset`, `sandbox/mode`, `approval/policy`) over the composition defaults. Selectable options come from the process-level catalog Remote. Key absence means no permission service is composed — clients hide the control.'),
+  'conversationContinuation': z.union([z.literal(null), z.number()]).optional().describe('Eligible latest failed turn/end for an empty prompt, or null.'),
+  'sessionListMetadata': z.object({
+  'blank': z.boolean().readonly().describe('Whether the folded prefix contains no turn.'),
+  'lastPromptAt': z.union([z.literal(null), z.number()]).readonly().describe('Latest human-authored prompt time in the folded prefix.'),
+}).optional().describe('Persisted facts used to summarize a Session without activating it.'),
   'tokenUsage': z.object({
   'uncachedInputTokens': z.number(),
   'outputTokens': z.number(),
@@ -813,28 +847,6 @@ const _deepseek_ai_dsh_api_session_controller_session_list_result$schema = () =>
 })).readonly().describe('The recorded batch, one entry per question; empty when the late reply carried none.'),
 })).readonly().describe('Calls an answer settled, in settlement order.'),
 }).optional().describe('Timed questions that remain answerable in this Session, and the ones a late reply settled.'),
-  'agentTeam': z.object({
-  'members': z.array(z.object({
-  'id': z.string().readonly(),
-  'name': z.string().readonly(),
-  'role': z.union([z.literal("lead"), z.literal("teammate")]).readonly(),
-  'phase': z.union([z.literal("failed"), z.literal("provisioning"), z.literal("active")]).readonly().describe('Durable lifecycle; the Lead row is always `active`. Turn activity comes from Session status.'),
-  'error': z.string().readonly().optional(),
-})).readonly(),
-  'tasks': z.array(z.object({
-  'id': z.string().readonly(),
-  'revision': z.number().readonly(),
-  'subject': z.string().readonly(),
-  'description': z.string().readonly(),
-  'status': z.union([z.literal("completed"), z.literal("pending"), z.literal("in_progress"), z.literal("deleted")]).readonly(),
-  'blockedBy': z.array(z.string()).readonly(),
-  'writeScopes': z.array(z.string()).readonly(),
-  'ownerName': z.string().readonly().optional(),
-  'ready': z.boolean().readonly(),
-  'writeScopeWarnings': z.array(z.string()).readonly(),
-})).readonly(),
-  'failure': z.string().readonly().optional(),
-}).optional().describe('Durable roster and non-deleted task board of the Team rooted at the projected Session.'),
   'forgeChangeRequests': z.array(z.object({
   'url': z.string().readonly().describe('Web URL as first recorded.'),
   'origin': z.union([z.literal("created"), z.literal("referenced"), z.literal("discovered"), z.literal("tracked")]).readonly().describe('How the change request became bound.'),
@@ -847,6 +859,15 @@ const _deepseek_ai_dsh_api_session_controller_session_list_result$schema = () =>
   'baseCommit': z.string().readonly().describe('Commit object name the branch started from.'),
   'repositoryRoot': z.string().readonly().describe('Canonical root of the source checkout.'),
 })]).optional().describe('The worktree the panel created for the Session while the Session works in it, else null.'),
+  'worktree': z.array(z.object({
+  'worktree': z.object({
+  'path': z.string().describe('Canonical absolute checkout directory in the filesystem provider\'s execution world.'),
+  'branch': z.string().describe('Newly created branch name.'),
+  'baseCommit': z.string().describe('Resolved commit object name; repository-local replacement refs can change its checked-out content.'),
+  'repositoryRoot': z.string().describe('Canonical root of the source checkout.'),
+}).readonly(),
+  'owned': z.boolean().readonly().describe('False for a creation inside the fork-inherited prefix.'),
+})).optional().describe('Checkouts recorded in the Session\'s log, in creation order.'),
   'forkLineage': z.object({
   'origin': z.literal("fork").readonly().describe('How the Session came to exist; only `fork` is published under this key.'),
   'sourceSessionId': z.string().readonly().describe('Session the branch was cut from.'),
@@ -1060,42 +1081,41 @@ const _deepseek_ai_dsh_api_session_controller_session_projections_result$schema 
 })).readonly().readonly(),
 }).optional().describe('Action card proposals and decisions for the currently open Session.'),
   'agentPreset': z.union([z.literal(null), z.string()]).optional().describe('Preset the Session runs, or null when the deployment composes none.'),
-  'title': z.union([z.literal(null), z.string()]).optional().describe('The session\'s current normalized title — the latest `session/title` event\'s text (last-wins), or `null` before the first title lands. A plain string: the shape the client list rows consume.'),
-  'todos': z.union([z.literal(null), z.array(z.object({
-  'content': z.string().describe('What this task is — a short imperative line shown in the UI.'),
-  'status': z.union([z.literal("completed"), z.literal("pending"), z.literal("in_progress")]).describe('Lifecycle state. `in_progress` marks a task being worked now; parallel work may mark several.'),
-}))]).optional().describe('The agent\'s current whole todo list (the latest `todo/write` snapshot), or `null` before the first write. Whole-value rule: every `todo/write` carries the complete replacement list, so the fold is last-wins. Excluded from Session summary payloads, with `null` kept outside the exclusion mark so the pre-first-write value stays expressible.'),
-  'sessionListMetadata': z.object({
-  'blank': z.boolean().readonly().describe('Whether the folded prefix contains no turn.'),
-  'lastPromptAt': z.union([z.literal(null), z.number()]).readonly().describe('Latest human-authored prompt time in the folded prefix.'),
-}).optional().describe('Persisted facts used to summarize a Session without activating it.'),
-  'imageLimits': z.object({
-  'maxImageBytes': z.number(),
-  'maxImagesPerMessage': z.number(),
-  'maxMessageImageBytes': z.number(),
-  'maxImagePixels': z.number(),
-  'maxImageDimension': z.number().describe('Maximum intrinsic width and maximum intrinsic height in pixels for one image.'),
-  'mediaTypes': z.array(z.union([z.literal("image/png"), z.literal("image/jpeg"), z.literal("image/webp"), z.literal("image/gif")])),
-}).optional().describe('Image-intake limits enforced by the Session prompt endpoint. Boot constant, excluded from Session summary payloads: every Session shares it, so a list row would repeat one host-wide fact.'),
+  'agentTeam': z.object({
+  'enabled': z.boolean().readonly(),
+  'tasks': z.array(z.object({
+  'id': z.string().readonly(),
+  'revision': z.number().readonly(),
+  'subject': z.string().readonly(),
+  'description': z.string().readonly(),
+  'status': z.union([z.literal("completed"), z.literal("pending"), z.literal("in_progress"), z.literal("deleted")]).readonly(),
+  'blockedBy': z.array(z.string()).readonly(),
+  'writeScopes': z.array(z.string()).readonly(),
+  'ownerId': z.string().readonly().optional(),
+  'ownerName': z.string().readonly().optional().describe('Immutable agent path captured at assignment; absent on unnamed historical owners.'),
+  'ready': z.boolean().readonly(),
+  'writeScopeWarnings': z.array(z.string()).readonly(),
+})).readonly(),
+  'failure': z.string().readonly().optional(),
+}).optional().describe('Saved selection and non-deleted task board of the Team rooted at the projected Session.'),
   'workingDirectory': z.union([z.literal(null), z.string()]).optional().describe('Recorded current directory for Session observations, or null when none is recorded.'),
-  'permissions': z.object({
-  'currentValue': z.string().describe('The effective current value: a configured preset key, `auto`, or `custom`.'),
-}).optional().describe('The session\'s current permission, folded from the three whole-value knob events (`permission/preset`, `sandbox/mode`, `approval/policy`) over the composition defaults. Selectable options come from the process-level catalog Remote. Key absence means no permission service is composed — clients hide the control.'),
   'subagentCatalog': z.array(z.union([z.object({
   'id': z.string().readonly(),
   'createdAt': z.number().readonly(),
-  'mode': z.literal("one-shot").readonly(),
-  'label': z.string().readonly().optional(),
+  'mode': z.literal("one-shot").readonly().describe('A terminal one-shot child.'),
+  'label': z.string().readonly().optional().describe('Optional durable creation label from the parent catalog.'),
 }), z.object({
   'id': z.string().readonly(),
   'createdAt': z.number().readonly(),
-  'mode': z.literal("external").readonly(),
-  'label': z.string().readonly().optional(),
+  'mode': z.literal("external").readonly().describe('An external execution without a local child Session.'),
+  'label': z.string().readonly().optional().describe('Optional durable creation label from the parent catalog.'),
+  'name': z.string().readonly().optional().describe('Name unique among the parent\'s children; absent on historical entries.'),
 }), z.object({
   'id': z.string().readonly(),
   'createdAt': z.number().readonly(),
-  'mode': z.literal("continuable").readonly(),
-  'label': z.string().readonly(),
+  'mode': z.literal("continuable").readonly().describe('A resumable conversation.'),
+  'label': z.string().readonly().describe('Durable creation label from the parent catalog.'),
+  'name': z.string().readonly().optional().describe('Name unique among the parent\'s children; absent on historical entries.'),
 }), z.object({
   'id': z.string().readonly(),
   'createdAt': z.number().readonly(),
@@ -1119,6 +1139,27 @@ const _deepseek_ai_dsh_api_session_controller_session_projections_result$schema 
   'label': z.string().describe('Durable creation label from the child\'s descriptor.'),
   'seq': z.number().describe('Seq of the folded descriptor event; see the one-shot arm for the own-suffix proof.'),
 })]).optional().describe('Identity of a descriptor-backed subagent session. `null` ⟺ no valid descriptor (missing, malformed, or unrecognized-version — deliberately undistinguished). The sentinel is deliberately serializable: a value pushed over JSON transports must survive `JSON.stringify` losslessly, where an `undefined` field would be dropped and a stale identity would survive on the receiving side. The entry itself stays non-optional.'),
+  'title': z.union([z.literal(null), z.string()]).optional().describe('The session\'s current normalized title — the latest `session/title` event\'s text (last-wins), or `null` before the first title lands. A plain string: the shape the client list rows consume.'),
+  'todos': z.union([z.literal(null), z.array(z.object({
+  'content': z.string().describe('What this task is — a short imperative line shown in the UI.'),
+  'status': z.union([z.literal("completed"), z.literal("pending"), z.literal("in_progress")]).describe('Lifecycle state. `in_progress` marks a task being worked now; parallel work may mark several.'),
+}))]).optional().describe('The agent\'s current whole todo list (the latest `todo/write` snapshot), or `null` before the first write. Whole-value rule: every `todo/write` carries the complete replacement list, so the fold is last-wins. Excluded from Session summary payloads, with `null` kept outside the exclusion mark so the pre-first-write value stays expressible.'),
+  'permissions': z.object({
+  'currentValue': z.string().describe('The effective current value: a configured preset key, `auto`, or `custom`.'),
+}).optional().describe('The session\'s current permission, folded from the three whole-value knob events (`permission/preset`, `sandbox/mode`, `approval/policy`) over the composition defaults. Selectable options come from the process-level catalog Remote. Key absence means no permission service is composed — clients hide the control.'),
+  'conversationContinuation': z.union([z.literal(null), z.number()]).optional().describe('Eligible latest failed turn/end for an empty prompt, or null.'),
+  'sessionListMetadata': z.object({
+  'blank': z.boolean().readonly().describe('Whether the folded prefix contains no turn.'),
+  'lastPromptAt': z.union([z.literal(null), z.number()]).readonly().describe('Latest human-authored prompt time in the folded prefix.'),
+}).optional().describe('Persisted facts used to summarize a Session without activating it.'),
+  'imageLimits': z.object({
+  'maxImageBytes': z.number(),
+  'maxImagesPerMessage': z.number(),
+  'maxMessageImageBytes': z.number(),
+  'maxImagePixels': z.number(),
+  'maxImageDimension': z.number().describe('Maximum intrinsic width and maximum intrinsic height in pixels for one image.'),
+  'mediaTypes': z.array(z.union([z.literal("image/png"), z.literal("image/jpeg"), z.literal("image/webp"), z.literal("image/gif")])),
+}).optional().describe('Image-intake limits enforced by the Session prompt endpoint. Boot constant, excluded from Session summary payloads: every Session shares it, so a list row would repeat one host-wide fact.'),
   'tokenUsage': z.object({
   'uncachedInputTokens': z.number(),
   'outputTokens': z.number(),
@@ -1185,28 +1226,6 @@ const _deepseek_ai_dsh_api_session_controller_session_projections_result$schema 
 })).readonly().describe('The recorded batch, one entry per question; empty when the late reply carried none.'),
 })).readonly().describe('Calls an answer settled, in settlement order.'),
 }).optional().describe('Timed questions that remain answerable in this Session, and the ones a late reply settled.'),
-  'agentTeam': z.object({
-  'members': z.array(z.object({
-  'id': z.string().readonly(),
-  'name': z.string().readonly(),
-  'role': z.union([z.literal("lead"), z.literal("teammate")]).readonly(),
-  'phase': z.union([z.literal("failed"), z.literal("provisioning"), z.literal("active")]).readonly().describe('Durable lifecycle; the Lead row is always `active`. Turn activity comes from Session status.'),
-  'error': z.string().readonly().optional(),
-})).readonly(),
-  'tasks': z.array(z.object({
-  'id': z.string().readonly(),
-  'revision': z.number().readonly(),
-  'subject': z.string().readonly(),
-  'description': z.string().readonly(),
-  'status': z.union([z.literal("completed"), z.literal("pending"), z.literal("in_progress"), z.literal("deleted")]).readonly(),
-  'blockedBy': z.array(z.string()).readonly(),
-  'writeScopes': z.array(z.string()).readonly(),
-  'ownerName': z.string().readonly().optional(),
-  'ready': z.boolean().readonly(),
-  'writeScopeWarnings': z.array(z.string()).readonly(),
-})).readonly(),
-  'failure': z.string().readonly().optional(),
-}).optional().describe('Durable roster and non-deleted task board of the Team rooted at the projected Session.'),
   'forgeChangeRequests': z.array(z.object({
   'url': z.string().readonly().describe('Web URL as first recorded.'),
   'origin': z.union([z.literal("created"), z.literal("referenced"), z.literal("discovered"), z.literal("tracked")]).readonly().describe('How the change request became bound.'),
@@ -1219,6 +1238,15 @@ const _deepseek_ai_dsh_api_session_controller_session_projections_result$schema 
   'baseCommit': z.string().readonly().describe('Commit object name the branch started from.'),
   'repositoryRoot': z.string().readonly().describe('Canonical root of the source checkout.'),
 })]).optional().describe('The worktree the panel created for the Session while the Session works in it, else null.'),
+  'worktree': z.array(z.object({
+  'worktree': z.object({
+  'path': z.string().describe('Canonical absolute checkout directory in the filesystem provider\'s execution world.'),
+  'branch': z.string().describe('Newly created branch name.'),
+  'baseCommit': z.string().describe('Resolved commit object name; repository-local replacement refs can change its checked-out content.'),
+  'repositoryRoot': z.string().describe('Canonical root of the source checkout.'),
+}).readonly(),
+  'owned': z.boolean().readonly().describe('False for a creation inside the fork-inherited prefix.'),
+})).optional().describe('Checkouts recorded in the Session\'s log, in creation order.'),
   'forkLineage': z.object({
   'origin': z.literal("fork").readonly().describe('How the Session came to exist; only `fork` is published under this key.'),
   'sourceSessionId': z.string().readonly().describe('Session the branch was cut from.'),
@@ -1283,42 +1311,41 @@ const _deepseek_ai_dsh_api_session_controller_session_projections_result$schema 
 })).readonly().readonly(),
 }).optional().describe('Action card proposals and decisions for the currently open Session.'),
   'agentPreset': z.union([z.literal(null), z.string()]).optional().describe('Preset the Session runs, or null when the deployment composes none.'),
-  'title': z.union([z.literal(null), z.string()]).optional().describe('The session\'s current normalized title — the latest `session/title` event\'s text (last-wins), or `null` before the first title lands. A plain string: the shape the client list rows consume.'),
-  'todos': z.union([z.literal(null), z.array(z.object({
-  'content': z.string().describe('What this task is — a short imperative line shown in the UI.'),
-  'status': z.union([z.literal("completed"), z.literal("pending"), z.literal("in_progress")]).describe('Lifecycle state. `in_progress` marks a task being worked now; parallel work may mark several.'),
-}))]).optional().describe('The agent\'s current whole todo list (the latest `todo/write` snapshot), or `null` before the first write. Whole-value rule: every `todo/write` carries the complete replacement list, so the fold is last-wins. Excluded from Session summary payloads, with `null` kept outside the exclusion mark so the pre-first-write value stays expressible.'),
-  'sessionListMetadata': z.object({
-  'blank': z.boolean().readonly().describe('Whether the folded prefix contains no turn.'),
-  'lastPromptAt': z.union([z.literal(null), z.number()]).readonly().describe('Latest human-authored prompt time in the folded prefix.'),
-}).optional().describe('Persisted facts used to summarize a Session without activating it.'),
-  'imageLimits': z.object({
-  'maxImageBytes': z.number(),
-  'maxImagesPerMessage': z.number(),
-  'maxMessageImageBytes': z.number(),
-  'maxImagePixels': z.number(),
-  'maxImageDimension': z.number().describe('Maximum intrinsic width and maximum intrinsic height in pixels for one image.'),
-  'mediaTypes': z.array(z.union([z.literal("image/png"), z.literal("image/jpeg"), z.literal("image/webp"), z.literal("image/gif")])),
-}).optional().describe('Image-intake limits enforced by the Session prompt endpoint. Boot constant, excluded from Session summary payloads: every Session shares it, so a list row would repeat one host-wide fact.'),
+  'agentTeam': z.object({
+  'enabled': z.boolean().readonly(),
+  'tasks': z.array(z.object({
+  'id': z.string().readonly(),
+  'revision': z.number().readonly(),
+  'subject': z.string().readonly(),
+  'description': z.string().readonly(),
+  'status': z.union([z.literal("completed"), z.literal("pending"), z.literal("in_progress"), z.literal("deleted")]).readonly(),
+  'blockedBy': z.array(z.string()).readonly(),
+  'writeScopes': z.array(z.string()).readonly(),
+  'ownerId': z.string().readonly().optional(),
+  'ownerName': z.string().readonly().optional().describe('Immutable agent path captured at assignment; absent on unnamed historical owners.'),
+  'ready': z.boolean().readonly(),
+  'writeScopeWarnings': z.array(z.string()).readonly(),
+})).readonly(),
+  'failure': z.string().readonly().optional(),
+}).optional().describe('Saved selection and non-deleted task board of the Team rooted at the projected Session.'),
   'workingDirectory': z.union([z.literal(null), z.string()]).optional().describe('Recorded current directory for Session observations, or null when none is recorded.'),
-  'permissions': z.object({
-  'currentValue': z.string().describe('The effective current value: a configured preset key, `auto`, or `custom`.'),
-}).optional().describe('The session\'s current permission, folded from the three whole-value knob events (`permission/preset`, `sandbox/mode`, `approval/policy`) over the composition defaults. Selectable options come from the process-level catalog Remote. Key absence means no permission service is composed — clients hide the control.'),
   'subagentCatalog': z.array(z.union([z.object({
   'id': z.string().readonly(),
   'createdAt': z.number().readonly(),
-  'mode': z.literal("one-shot").readonly(),
-  'label': z.string().readonly().optional(),
+  'mode': z.literal("one-shot").readonly().describe('A terminal one-shot child.'),
+  'label': z.string().readonly().optional().describe('Optional durable creation label from the parent catalog.'),
 }), z.object({
   'id': z.string().readonly(),
   'createdAt': z.number().readonly(),
-  'mode': z.literal("external").readonly(),
-  'label': z.string().readonly().optional(),
+  'mode': z.literal("external").readonly().describe('An external execution without a local child Session.'),
+  'label': z.string().readonly().optional().describe('Optional durable creation label from the parent catalog.'),
+  'name': z.string().readonly().optional().describe('Name unique among the parent\'s children; absent on historical entries.'),
 }), z.object({
   'id': z.string().readonly(),
   'createdAt': z.number().readonly(),
-  'mode': z.literal("continuable").readonly(),
-  'label': z.string().readonly(),
+  'mode': z.literal("continuable").readonly().describe('A resumable conversation.'),
+  'label': z.string().readonly().describe('Durable creation label from the parent catalog.'),
+  'name': z.string().readonly().optional().describe('Name unique among the parent\'s children; absent on historical entries.'),
 }), z.object({
   'id': z.string().readonly(),
   'createdAt': z.number().readonly(),
@@ -1342,6 +1369,27 @@ const _deepseek_ai_dsh_api_session_controller_session_projections_result$schema 
   'label': z.string().describe('Durable creation label from the child\'s descriptor.'),
   'seq': z.number().describe('Seq of the folded descriptor event; see the one-shot arm for the own-suffix proof.'),
 })]).optional().describe('Identity of a descriptor-backed subagent session. `null` ⟺ no valid descriptor (missing, malformed, or unrecognized-version — deliberately undistinguished). The sentinel is deliberately serializable: a value pushed over JSON transports must survive `JSON.stringify` losslessly, where an `undefined` field would be dropped and a stale identity would survive on the receiving side. The entry itself stays non-optional.'),
+  'title': z.union([z.literal(null), z.string()]).optional().describe('The session\'s current normalized title — the latest `session/title` event\'s text (last-wins), or `null` before the first title lands. A plain string: the shape the client list rows consume.'),
+  'todos': z.union([z.literal(null), z.array(z.object({
+  'content': z.string().describe('What this task is — a short imperative line shown in the UI.'),
+  'status': z.union([z.literal("completed"), z.literal("pending"), z.literal("in_progress")]).describe('Lifecycle state. `in_progress` marks a task being worked now; parallel work may mark several.'),
+}))]).optional().describe('The agent\'s current whole todo list (the latest `todo/write` snapshot), or `null` before the first write. Whole-value rule: every `todo/write` carries the complete replacement list, so the fold is last-wins. Excluded from Session summary payloads, with `null` kept outside the exclusion mark so the pre-first-write value stays expressible.'),
+  'permissions': z.object({
+  'currentValue': z.string().describe('The effective current value: a configured preset key, `auto`, or `custom`.'),
+}).optional().describe('The session\'s current permission, folded from the three whole-value knob events (`permission/preset`, `sandbox/mode`, `approval/policy`) over the composition defaults. Selectable options come from the process-level catalog Remote. Key absence means no permission service is composed — clients hide the control.'),
+  'conversationContinuation': z.union([z.literal(null), z.number()]).optional().describe('Eligible latest failed turn/end for an empty prompt, or null.'),
+  'sessionListMetadata': z.object({
+  'blank': z.boolean().readonly().describe('Whether the folded prefix contains no turn.'),
+  'lastPromptAt': z.union([z.literal(null), z.number()]).readonly().describe('Latest human-authored prompt time in the folded prefix.'),
+}).optional().describe('Persisted facts used to summarize a Session without activating it.'),
+  'imageLimits': z.object({
+  'maxImageBytes': z.number(),
+  'maxImagesPerMessage': z.number(),
+  'maxMessageImageBytes': z.number(),
+  'maxImagePixels': z.number(),
+  'maxImageDimension': z.number().describe('Maximum intrinsic width and maximum intrinsic height in pixels for one image.'),
+  'mediaTypes': z.array(z.union([z.literal("image/png"), z.literal("image/jpeg"), z.literal("image/webp"), z.literal("image/gif")])),
+}).optional().describe('Image-intake limits enforced by the Session prompt endpoint. Boot constant, excluded from Session summary payloads: every Session shares it, so a list row would repeat one host-wide fact.'),
   'tokenUsage': z.object({
   'uncachedInputTokens': z.number(),
   'outputTokens': z.number(),
@@ -1408,28 +1456,6 @@ const _deepseek_ai_dsh_api_session_controller_session_projections_result$schema 
 })).readonly().describe('The recorded batch, one entry per question; empty when the late reply carried none.'),
 })).readonly().describe('Calls an answer settled, in settlement order.'),
 }).optional().describe('Timed questions that remain answerable in this Session, and the ones a late reply settled.'),
-  'agentTeam': z.object({
-  'members': z.array(z.object({
-  'id': z.string().readonly(),
-  'name': z.string().readonly(),
-  'role': z.union([z.literal("lead"), z.literal("teammate")]).readonly(),
-  'phase': z.union([z.literal("failed"), z.literal("provisioning"), z.literal("active")]).readonly().describe('Durable lifecycle; the Lead row is always `active`. Turn activity comes from Session status.'),
-  'error': z.string().readonly().optional(),
-})).readonly(),
-  'tasks': z.array(z.object({
-  'id': z.string().readonly(),
-  'revision': z.number().readonly(),
-  'subject': z.string().readonly(),
-  'description': z.string().readonly(),
-  'status': z.union([z.literal("completed"), z.literal("pending"), z.literal("in_progress"), z.literal("deleted")]).readonly(),
-  'blockedBy': z.array(z.string()).readonly(),
-  'writeScopes': z.array(z.string()).readonly(),
-  'ownerName': z.string().readonly().optional(),
-  'ready': z.boolean().readonly(),
-  'writeScopeWarnings': z.array(z.string()).readonly(),
-})).readonly(),
-  'failure': z.string().readonly().optional(),
-}).optional().describe('Durable roster and non-deleted task board of the Team rooted at the projected Session.'),
   'forgeChangeRequests': z.array(z.object({
   'url': z.string().readonly().describe('Web URL as first recorded.'),
   'origin': z.union([z.literal("created"), z.literal("referenced"), z.literal("discovered"), z.literal("tracked")]).readonly().describe('How the change request became bound.'),
@@ -1442,6 +1468,15 @@ const _deepseek_ai_dsh_api_session_controller_session_projections_result$schema 
   'baseCommit': z.string().readonly().describe('Commit object name the branch started from.'),
   'repositoryRoot': z.string().readonly().describe('Canonical root of the source checkout.'),
 })]).optional().describe('The worktree the panel created for the Session while the Session works in it, else null.'),
+  'worktree': z.array(z.object({
+  'worktree': z.object({
+  'path': z.string().describe('Canonical absolute checkout directory in the filesystem provider\'s execution world.'),
+  'branch': z.string().describe('Newly created branch name.'),
+  'baseCommit': z.string().describe('Resolved commit object name; repository-local replacement refs can change its checked-out content.'),
+  'repositoryRoot': z.string().describe('Canonical root of the source checkout.'),
+}).readonly(),
+  'owned': z.boolean().readonly().describe('False for a creation inside the fork-inherited prefix.'),
+})).optional().describe('Checkouts recorded in the Session\'s log, in creation order.'),
   'forkLineage': z.object({
   'origin': z.literal("fork").readonly().describe('How the Session came to exist; only `fork` is published under this key.'),
   'sourceSessionId': z.string().readonly().describe('Session the branch was cut from.'),
@@ -1472,7 +1507,7 @@ const _deepseek_ai_dsh_api_session_controller_session_projections_result$schema 
 })]))
 let _deepseek_ai_dsh_api_session_controller_session_prompt_parameter_0$schema$value
 const _deepseek_ai_dsh_api_session_controller_session_prompt_parameter_0$schema = () => (_deepseek_ai_dsh_api_session_controller_session_prompt_parameter_0$schema$value ??= z.object({
-  'requestId': z.string().readonly().describe('Client-minted identity persisted on the exact accepted user message.'),
+  'requestId': z.string().readonly().describe('Client-minted identity persisted on the accepted inbox input, including empty continuation.'),
   'sessionId': z.string().readonly(),
   'mode': z.union([z.literal("queue"), z.literal("steer")]).readonly(),
   'content': z.array(z.union([z.object({
@@ -1486,7 +1521,7 @@ const _deepseek_ai_dsh_api_session_controller_session_prompt_parameter_0$schema 
 }), z.object({
   'type': z.literal("file").readonly(),
   'receiptId': z.string().readonly(),
-})])).readonly().describe('At least one non-whitespace text part or attachment.'),
+})])).readonly().describe('Non-whitespace text or attachments; an empty array continues an eligible failed idle Session.'),
   'clientTimeZone': z.string().readonly().optional(),
 }))
 let _deepseek_ai_dsh_api_session_controller_session_prompt_result$schema$value
@@ -1760,7 +1795,7 @@ const _deepseek_ai_dsh_api_session_controller_session_projections_parameter_0_st
 }))
 let _deepseek_ai_dsh_api_session_controller_session_prompt_parameter_0_strict$schema$value
 const _deepseek_ai_dsh_api_session_controller_session_prompt_parameter_0_strict$schema = () => (_deepseek_ai_dsh_api_session_controller_session_prompt_parameter_0_strict$schema$value ??= z.strictObject({
-  'requestId': z.string().readonly().describe('Client-minted identity persisted on the exact accepted user message.'),
+  'requestId': z.string().readonly().describe('Client-minted identity persisted on the accepted inbox input, including empty continuation.'),
   'sessionId': z.string().readonly(),
   'mode': z.union([z.literal("queue"), z.literal("steer")]).readonly(),
   'content': z.array(z.union([z.strictObject({
@@ -1774,7 +1809,7 @@ const _deepseek_ai_dsh_api_session_controller_session_prompt_parameter_0_strict$
 }), z.strictObject({
   'type': z.literal("file").readonly(),
   'receiptId': z.string().readonly(),
-})])).readonly().describe('At least one non-whitespace text part or attachment.'),
+})])).readonly().describe('Non-whitespace text or attachments; an empty array continues an eligible failed idle Session.'),
   'clientTimeZone': z.string().readonly().optional(),
 }))
 let _deepseek_ai_dsh_api_session_controller_session_rename_parameter_0_strict$schema$value
@@ -1918,7 +1953,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'the durable attachment reference and base64-encoded bytes.',
         jsonSchema: {"type":"object","properties":{"attachment":{"type":"object","properties":{"attachmentId":{"type":"string","description":"Opaque storage identifier; never a filesystem path or bearer URL."},"mediaType":{"type":"string","enum":["image/png","image/jpeg","image/webp","image/gif"],"description":"Media type verified from the stored bytes."},"bytes":{"type":"number","description":"Exact encoded byte length."},"width":{"type":"number","description":"Intrinsic encoded width in pixels."},"height":{"type":"number","description":"Intrinsic encoded height in pixels."},"name":{"type":"string","description":"Optional display name stripped of local path information."},"originalDimensions":{"type":"object","properties":{"width":{"type":"number"},"height":{"type":"number"}},"required":["width","height"],"additionalProperties":true,"description":"Input dimensions after applying EXIF orientation and before normalization scaling. Present only when normalization reduced the image."}},"required":["attachmentId","mediaType","bytes","width","height"],"additionalProperties":true,"description":"Supplied reference after ID, format, byte length, and dimensions verification; display fields are preserved."},"data":{"type":"string"}},"required":["attachment","data"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":497,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":500,"column":3},
     },
     'session/cancel': {
       service: 'sessionController',
@@ -1950,7 +1985,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'acknowledgement that cancellation was requested.',
         jsonSchema: {"type":"object","properties":{"accepted":{"type":"boolean","const":true}},"required":["accepted"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":517,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":520,"column":3},
     },
     'session/canOpenWorkspacePath': {
       service: 'sessionController',
@@ -1965,7 +2000,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'true when the matching open operation is available.',
         jsonSchema: {"type":"boolean"},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":350,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":353,"column":3},
     },
     'session/control': {
       service: 'sessionController',
@@ -1982,7 +2017,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'one complete baseline followed by live replacement frames.',
         jsonSchemaError: 'typert tool schema: selected dictionaries require string keys and unconstrained JSON values',
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":628,"column":10},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":631,"column":10},
     },
     'session/create': {
       service: 'sessionController',
@@ -2014,7 +2049,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'the created or reused Session identity and its preset when configured.',
         jsonSchema: {"type":"object","properties":{"sessionId":{"type":"string","description":"The created or reused Session, which may differ from the requested `sessionId`."},"agentPreset":{"type":"string","description":"Preset the Session runs, when the deployment composes a preset roster."}},"required":["sessionId"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":304,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":307,"column":3},
     },
     'session/events': {
       service: 'sessionController',
@@ -2047,7 +2082,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'one chronological page with its inclusive cursor.',
         jsonSchema: {"type":"object","properties":{"cursor":{"type":"number"},"records":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string","const":"event"},"event":{"type":"object","properties":{"type":{"type":"string"},"seq":{"type":"number"},"time":{"type":"number"},"data":{},"ignorable":{"type":"boolean","const":true},"sourceEventSeqs":{"description":"Earlier sources on current surface events; opaque JSON on unknown ignorable events."},"surfaceOp":{"description":"Canonical placement on current surface events; opaque JSON on unknown ignorable events."}},"required":["type","seq","time","data"],"additionalProperties":true}},"required":["type","event"],"additionalProperties":true}},"hasMore":{"type":"boolean"}},"required":["cursor","records","hasMore"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":540,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":543,"column":3},
     },
     'session/follow': {
       service: 'sessionController',
@@ -2081,7 +2116,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'a complete opening snapshot followed by gap-free durable event frames and optional cursorless assistant-stream frames.',
         jsonSchemaError: 'typert tool schema: selected dictionaries require string keys and unconstrained JSON values',
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":607,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":610,"column":3},
     },
     'session/fork': {
       service: 'sessionController',
@@ -2113,7 +2148,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'the new Session identity.',
         jsonSchema: {"type":"object","properties":{"sessionId":{"type":"string"}},"required":["sessionId"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":446,"column":9},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":449,"column":9},
     },
     'session/initializeDefaultModel': {
       service: 'sessionController',
@@ -2128,7 +2163,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'after saving the first available model or retaining the existing default.',
         jsonSchemaError: 'typert tool schema: unsupported void value',
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":323,"column":9},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":326,"column":9},
     },
     'session/list': {
       service: 'sessionController',
@@ -2161,7 +2196,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'visible Session summaries ordered by activity.',
         jsonSchemaError: 'typert tool schema: selected dictionaries require string keys and unconstrained JSON values',
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":279,"column":9},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":282,"column":9},
     },
     'session/modelCatalog': {
       service: 'sessionController',
@@ -2176,7 +2211,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'provider-grouped models, the deployment default, and isolated provider failures.',
         jsonSchemaError: 'typert tool schema: selected dictionaries require string keys and unconstrained JSON values',
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":341,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":344,"column":3},
     },
     'session/observeEvent': {
       service: 'sessionController',
@@ -2210,7 +2245,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'readiness and subsequent events, without a snapshot.',
         jsonSchema: {"oneOf":[{"type":"object","properties":{"type":{"type":"string","const":"event"},"event":{"type":"object","properties":{"type":{"type":"string"},"seq":{"type":"number"},"time":{"type":"number"},"data":{},"ignorable":{"type":"boolean","const":true},"sourceEventSeqs":{"description":"Earlier sources on current surface events; opaque JSON on unknown ignorable events."},"surfaceOp":{"description":"Canonical placement on current surface events; opaque JSON on unknown ignorable events."}},"required":["type","seq","time","data"],"additionalProperties":true}},"required":["type","event"],"additionalProperties":true},{"type":"object","properties":{"type":{"type":"string","const":"ready"}},"required":["type"],"additionalProperties":true}]},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":551,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":554,"column":3},
     },
     'session/observeProjections': {
       service: 'sessionController',
@@ -2244,7 +2279,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'readiness followed by one projection change frame per committed event.',
         jsonSchema: {"oneOf":[{"type":"object","properties":{"type":{"type":"string","const":"ready"}},"required":["type"],"additionalProperties":true},{"type":"object","properties":{"type":{"type":"string","const":"projection"},"seq":{"type":"number","description":"Seq of the committed event that caused every listed change."},"changes":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string"},"val":{}},"required":["key","val"],"additionalProperties":true},"description":"One entry per client-visible key whose view the event changed, in registration order without duplicate keys, with the key's new value as `val`. A key absent from `changes` is unchanged; unlike a baseline, absence does not mean an absent capability."}},"required":["type","seq","changes"],"additionalProperties":true}]},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":562,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":565,"column":3},
     },
     'session/observeState': {
       service: 'sessionController',
@@ -2278,7 +2313,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'complete passive state replacements.',
         jsonSchema: {"type":"object","properties":{"cursor":{"type":"number"},"active":{"type":"boolean"},"running":{"type":"boolean"},"queue":{"oneOf":[{"type":"null","const":null},{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"placement":{"type":"string","enum":["queued","steering","context"]},"rpcId":{"type":"string"},"content":{"type":"array","items":{}}},"required":["id","placement","content"],"additionalProperties":true}}]},"pendingInput":{"type":"array","items":{"type":"string","enum":["approval","question","other"]},"description":"Pending Remote requests sampled when this state was read. A pending change alone does not trigger `observeState`; `wait` refreshes on its own interval."}},"required":["cursor","active","running","queue","pendingInput"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":584,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":587,"column":3},
     },
     'session/openWorkspacePath': {
       service: 'sessionController',
@@ -2311,7 +2346,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'confirmation after the native opener accepts the path.',
         jsonSchema: {"type":"object","properties":{"opened":{"type":"boolean","const":true}},"required":["opened"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":371,"column":9},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":374,"column":9},
     },
     'session/page': {
       service: 'sessionController',
@@ -2344,7 +2379,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'one chronological page with its inclusive cursor; an omitted `throughSeq` selects the observed log end.',
         jsonSchema: {"type":"object","properties":{"cursor":{"type":"number"},"records":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string","const":"event"},"event":{"type":"object","properties":{"type":{"type":"string"},"seq":{"type":"number"},"time":{"type":"number"},"data":{},"ignorable":{"type":"boolean","const":true},"sourceEventSeqs":{"description":"Earlier sources on current surface events; opaque JSON on unknown ignorable events."},"surfaceOp":{"description":"Canonical placement on current surface events; opaque JSON on unknown ignorable events."}},"required":["type","seq","time","data"],"additionalProperties":true}},"required":["type","event"],"additionalProperties":true}},"hasMore":{"type":"boolean"}},"required":["cursor","records","hasMore"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":529,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":532,"column":3},
     },
     'session/projections': {
       service: 'sessionController',
@@ -2377,7 +2412,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'a sequenced baseline, cached hints when migration is deferred, or null when absent.',
         jsonSchemaError: 'typert tool schema: selected dictionaries require string keys and unconstrained JSON values',
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":618,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":621,"column":3},
     },
     'session/prompt': {
       service: 'sessionController',
@@ -2392,13 +2427,13 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
             mode: 'strict',
             typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionPromptRequest',
             create: _deepseek_ai_dsh_api_session_controller_session_prompt_parameter_0$schema,
-            jsonSchema: {"type":"object","properties":{"requestId":{"type":"string","description":"Client-minted identity persisted on the exact accepted user message."},"sessionId":{"type":"string"},"mode":{"type":"string","enum":["queue","steer"]},"content":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"type":{"type":"string","const":"text"},"text":{"type":"string"}},"required":["type","text"],"additionalProperties":true},{"type":"object","properties":{"type":{"type":"string","const":"image"},"mediaType":{"type":"string","enum":["image/png","image/jpeg","image/webp","image/gif"]},"data":{"type":"string"},"name":{"type":"string"}},"required":["type","mediaType","data"],"additionalProperties":true},{"type":"object","properties":{"type":{"type":"string","const":"file"},"receiptId":{"type":"string"}},"required":["type","receiptId"],"additionalProperties":true}]},"description":"At least one non-whitespace text part or attachment."},"clientTimeZone":{"type":"string"}},"required":["requestId","sessionId","mode","content"],"additionalProperties":true},
+            jsonSchema: {"type":"object","properties":{"requestId":{"type":"string","description":"Client-minted identity persisted on the accepted inbox input, including empty continuation."},"sessionId":{"type":"string"},"mode":{"type":"string","enum":["queue","steer"]},"content":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"type":{"type":"string","const":"text"},"text":{"type":"string"}},"required":["type","text"],"additionalProperties":true},{"type":"object","properties":{"type":{"type":"string","const":"image"},"mediaType":{"type":"string","enum":["image/png","image/jpeg","image/webp","image/gif"]},"data":{"type":"string"},"name":{"type":"string"}},"required":["type","mediaType","data"],"additionalProperties":true},{"type":"object","properties":{"type":{"type":"string","const":"file"},"receiptId":{"type":"string"}},"required":["type","receiptId"],"additionalProperties":true}]},"description":"Non-whitespace text or attachments; an empty array continues an eligible failed idle Session."},"clientTimeZone":{"type":"string"}},"required":["requestId","sessionId","mode","content"],"additionalProperties":true},
           },
           strictCodec: {
             mode: 'strict',
             typeSymbol: '@deepseek-ai/dsh-api-session-controller/types#SessionPromptRequest',
             create: _deepseek_ai_dsh_api_session_controller_session_prompt_parameter_0_strict$schema,
-            jsonSchema: {"type":"object","properties":{"requestId":{"type":"string","description":"Client-minted identity persisted on the exact accepted user message."},"sessionId":{"type":"string"},"mode":{"type":"string","enum":["queue","steer"]},"content":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"type":{"type":"string","const":"text"},"text":{"type":"string"}},"required":["type","text"],"additionalProperties":false},{"type":"object","properties":{"type":{"type":"string","const":"image"},"mediaType":{"type":"string","enum":["image/png","image/jpeg","image/webp","image/gif"]},"data":{"type":"string"},"name":{"type":"string"}},"required":["type","mediaType","data"],"additionalProperties":false},{"type":"object","properties":{"type":{"type":"string","const":"file"},"receiptId":{"type":"string"}},"required":["type","receiptId"],"additionalProperties":false}]},"description":"At least one non-whitespace text part or attachment."},"clientTimeZone":{"type":"string"}},"required":["requestId","sessionId","mode","content"],"additionalProperties":false},
+            jsonSchema: {"type":"object","properties":{"requestId":{"type":"string","description":"Client-minted identity persisted on the accepted inbox input, including empty continuation."},"sessionId":{"type":"string"},"mode":{"type":"string","enum":["queue","steer"]},"content":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"type":{"type":"string","const":"text"},"text":{"type":"string"}},"required":["type","text"],"additionalProperties":false},{"type":"object","properties":{"type":{"type":"string","const":"image"},"mediaType":{"type":"string","enum":["image/png","image/jpeg","image/webp","image/gif"]},"data":{"type":"string"},"name":{"type":"string"}},"required":["type","mediaType","data"],"additionalProperties":false},{"type":"object","properties":{"type":{"type":"string","const":"file"},"receiptId":{"type":"string"}},"required":["type","receiptId"],"additionalProperties":false}]},"description":"Non-whitespace text or attachments; an empty array continues an eligible failed idle Session."},"clientTimeZone":{"type":"string"}},"required":["requestId","sessionId","mode","content"],"additionalProperties":false},
           },
         },
       ],
@@ -2410,7 +2445,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'acknowledgement that the Agent accepted the prompt.',
         jsonSchema: {"type":"object","properties":{"accepted":{"type":"boolean","const":true}},"required":["accepted"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":465,"column":9},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":468,"column":9},
     },
     'session/rename': {
       service: 'sessionController',
@@ -2442,7 +2477,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'the accepted title and durable event sequence.',
         jsonSchema: {"type":"object","properties":{"title":{"type":"string"},"seq":{"type":"number"}},"required":["title","seq"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":434,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":437,"column":3},
     },
     'session/search': {
       service: 'sessionController',
@@ -2475,7 +2510,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'authorized bounded Session search results.',
         jsonSchema: {"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"sessionId":{"type":"string"},"snippet":{"type":"string"}},"required":["sessionId","snippet"],"additionalProperties":true}},"hasMore":{"type":"boolean"}},"required":["items","hasMore"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":293,"column":9},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":296,"column":9},
     },
     'session/selectModel': {
       service: 'sessionController',
@@ -2507,7 +2542,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'the normalized selection installed for the Session, without waiting for default persistence.',
         jsonSchema: {"type":"object","properties":{"selected":{"type":"object","properties":{"provider":{"type":"string"},"model":{"type":"string"},"reasoningEffort":{"type":"string"}},"required":["provider","model"],"additionalProperties":true}},"required":["selected"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":314,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":317,"column":3},
     },
     'session/state': {
       service: 'sessionController',
@@ -2540,7 +2575,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'current passive state.',
         jsonSchema: {"type":"object","properties":{"cursor":{"type":"number"},"active":{"type":"boolean"},"running":{"type":"boolean"},"queue":{"oneOf":[{"type":"null","const":null},{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"placement":{"type":"string","enum":["queued","steering","context"]},"rpcId":{"type":"string"},"content":{"type":"array","items":{}}},"required":["id","placement","content"],"additionalProperties":true}}]},"pendingInput":{"type":"array","items":{"type":"string","enum":["approval","question","other"]},"description":"Pending Remote requests sampled when this state was read. A pending change alone does not trigger `observeState`; `wait` refreshes on its own interval."}},"required":["cursor","active","running","queue","pendingInput"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":573,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":576,"column":3},
     },
     'session/updateQueue': {
       service: 'sessionController',
@@ -2572,7 +2607,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'acknowledgement that the queue mutation was applied.',
         jsonSchema: {"type":"object","properties":{"accepted":{"type":"boolean","const":true}},"required":["accepted"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":507,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":510,"column":3},
     },
     'session/wait': {
       service: 'sessionController',
@@ -2605,7 +2640,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'stopping state and bounded assistant output.',
         jsonSchema: {"type":"object","properties":{"reason":{"type":"string","enum":["idle","input-required","timeout"]},"state":{"type":"object","properties":{"cursor":{"type":"number"},"active":{"type":"boolean"},"running":{"type":"boolean"},"queue":{"oneOf":[{"type":"null","const":null},{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"placement":{"type":"string","enum":["queued","steering","context"]},"rpcId":{"type":"string"},"content":{"type":"array","items":{}}},"required":["id","placement","content"],"additionalProperties":true}}]},"pendingInput":{"type":"array","items":{"type":"string","enum":["approval","question","other"]},"description":"Pending Remote requests sampled when this state was read. A pending change alone does not trigger `observeState`; `wait` refreshes on its own interval."}},"required":["cursor","active","running","queue","pendingInput"],"additionalProperties":true},"output":{"type":"object","properties":{"records":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string","const":"event"},"event":{"type":"object","properties":{"type":{"type":"string"},"seq":{"type":"number"},"time":{"type":"number"},"data":{},"ignorable":{"type":"boolean","const":true},"sourceEventSeqs":{"description":"Earlier sources on current surface events; opaque JSON on unknown ignorable events."},"surfaceOp":{"description":"Canonical placement on current surface events; opaque JSON on unknown ignorable events."}},"required":["type","seq","time","data"],"additionalProperties":true}},"required":["type","event"],"additionalProperties":true}},"truncated":{"type":"boolean","description":"More eligible assistant messages exist in the selected interval."}},"required":["records","truncated"],"additionalProperties":true}},"required":["reason","state","output"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":595,"column":3},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":598,"column":3},
     },
     'session/workspacePathApplications': {
       service: 'sessionController',
@@ -2638,7 +2673,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'OS application names, icons, and default selection; empty when desktop opening is unavailable.',
         jsonSchema: {"type":"array","items":{"type":"object","properties":{"id":{"type":"string","description":"OS application identifier; callers must revalidate it against the file's current handlers before opening."},"name":{"type":"string"},"default":{"type":"boolean"},"icon":{"oneOf":[{"type":"null","const":null},{"type":"string"}],"description":"PNG or SVG data URL, or null when the desktop supplies no icon."}},"required":["id","name","default","icon"],"additionalProperties":true}},
       },
-      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":401,"column":9},
+      sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":404,"column":9},
     },
     'skills/list': {
       service: 'sessionSkillCatalog',

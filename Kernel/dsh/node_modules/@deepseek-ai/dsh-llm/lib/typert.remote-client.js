@@ -102,7 +102,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'advertised models in endpoint order.',
         jsonSchema: {"type":"array","items":{"type":"object","properties":{"id":{"type":"string","description":"Model id the endpoint accepts."},"name":{"type":"string","description":"Human-readable name when the endpoint supplies one."},"contextWindow":{"type":"number","description":"Maximum combined request and response context, when disclosed."},"maxTokens":{"type":"number","description":"Maximum output tokens, when disclosed."},"inputModalities":{"type":"array","items":{"type":"string","enum":["text","image"]},"description":"Accepted input types when disclosed by the catalog or endpoint; absent means unknown."}},"required":["id"],"additionalProperties":true}},
       },
-      sourceLocation: {"file":"packages/llm/llm/src/index.ts","line":643,"column":9},
+      sourceLocation: {"file":"packages/llm/llm/src/index.ts","line":658,"column":9},
     },
     'llm/listConfigurableProviders': {
       service: 'llm',
@@ -117,7 +117,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'detached directory entries in declaration order.',
         jsonSchema: {"type":"array","items":{"type":"object","properties":{"provider":{"type":"string","description":"Provider route key this entry activates when configured."},"displayName":{"type":"string","description":"Human-readable provider name for configuration surfaces."},"settingsNs":{"type":"string","description":"User-settings namespace whose section configures this provider."},"settingsPath":{"type":"array","items":{"type":"string"},"description":"Path from that namespace's section root to this provider's profile object; empty when the whole section is the profile."},"declared":{"type":"boolean","description":"Whether the owning adapter knows this route only because configuration declared it — a gateway or self-hosted server it ships nothing about. Absent means the adapter draws no such distinction; false means it does and this route is one of its own. Only the adapter can answer: a stored profile is how a user-added route AND a corrected shipped one both look from outside."},"defaultBaseURL":{"type":"string","description":"Route endpoint the adapter uses when the profile sets no `baseURL`; the adapter may still send an individual model to that model's own endpoint. Absent when the route has no fixed endpoint."},"baseURLEnv":{"type":"array","items":{"type":"string"},"description":"Environment variables used to construct a provider endpoint; absent when none are reported."},"nativeAuth":{"type":"object","properties":{"env":{"type":"array","items":{"type":"string"},"description":"Environment variables the route's authentication reads, in lookup order; empty when it reads none."},"oauth":{"type":"boolean","description":"Whether a stored OAuth sign-in can authenticate the route."}},"required":["env","oauth"],"additionalProperties":true,"description":"Authentication the adapter performs when the profile names no credential reference; absent when it reports none."},"error":{"type":"string","description":"Configuration diagnostic for repair; unaffected models may remain serviceable."}},"required":["provider","displayName","settingsNs","settingsPath"],"additionalProperties":true}},
       },
-      sourceLocation: {"file":"packages/llm/llm/src/index.ts","line":555,"column":3},
+      sourceLocation: {"file":"packages/llm/llm/src/index.ts","line":570,"column":3},
     },
     'llm/listProviders': {
       service: 'llm',
@@ -132,7 +132,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'detached provider metadata in registration order.',
         jsonSchema: {"type":"array","items":{"type":"object","properties":{"id":{"type":"string","description":"Provider route key used by {@link GenerateOptions.provider}."},"name":{"type":"string","description":"Human-readable provider name for selectors and diagnostics."}},"required":["id","name"],"additionalProperties":true}},
       },
-      sourceLocation: {"file":"packages/llm/llm/src/index.ts","line":483,"column":3},
+      sourceLocation: {"file":"packages/llm/llm/src/index.ts","line":498,"column":3},
     },
   },
 }, z)

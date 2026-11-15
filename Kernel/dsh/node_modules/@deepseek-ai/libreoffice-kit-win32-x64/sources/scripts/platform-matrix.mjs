@@ -1,5 +1,5 @@
 /** Package metadata shared by release tooling; runtime selection belongs to the adapter package. */
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -9,6 +9,13 @@ export const enginePrefix = '@deepseek-ai/libreoffice-kit';
 export const releaseRepository = 'deepseek-harness/libreoffice-kit';
 /** Repository maintaining the source and Actions builds referenced by release evidence. */
 export const sourceRepository = releaseRepository;
+/**
+ * Public mirror whose master fast-forwards from the source repository's `public` branch.
+ * Package manifests name it, and npm records provenance only for its publications.
+ */
+export const publicRepository = 'deepseek-ai/dsh-libreoffice-kit';
+/** Repositories whose publish workflow may hold an npm trusted publisher. */
+export const npmPublishingRepositories = Object.freeze([sourceRepository, publicRepository]);
 export const wasmName = `${enginePrefix}-wasm`;
 export const kitPackageName = '@deepseek-ai/libreoffice-kit';
 export const nodeRange = '>=22.19.0';
@@ -46,6 +53,18 @@ export function releaseTag(version) {
   return `libreoffice-kit-v${version}`;
 }
 
+/** Prerelease candidates may have immutable revisions while retaining an unpublished npm version. */
+export function matchesReleaseTag(tag, version) {
+  const base = releaseTag(version);
+  return tag === base || (version.includes('-') && typeof tag === 'string'
+    && tag.startsWith(`${base}+candidate.`) && /^[1-9]\d*$/.test(tag.slice(`${base}+candidate.`.length)));
+}
+
+/** Retained 0.1.x helpers provide conversion and raster output without the native preview protocol. */
+export function supportsNativePreview(record) {
+  return record.platform !== 'wasm' && !['0.1.1', '0.1.5'].includes(record.version);
+}
+
 /**
  * Versioned download URL for one engine archive attached to the family release.
  * @param version - Engine family version.
@@ -58,13 +77,10 @@ export function releaseAssetUrl(version, file) {
 
 /** Return the complete declared matrix, including targets without built assets. */
 export function packageMatrix(repo = root) {
-  return readdirSync(join(repo, 'packages'), { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && entry.name !== 'entry')
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((entry) => {
-      const dir = join(repo, 'packages', entry.name);
-      return { dir, manifest: readJson(join(dir, 'package.json')), prebuild: readJson(join(dir, 'prebuilds.json')) };
-    });
+  return [...Object.keys(targets), 'wasm'].sort().map((platform) => {
+    const dir = join(repo, 'packages', platform);
+    return { dir, manifest: readJson(join(dir, 'package.json')), prebuild: readJson(join(dir, 'prebuilds.json')) };
+  });
 }
 
 /** An unrecognized Linux libc is deliberately not treated as glibc. */
@@ -77,7 +93,7 @@ export function hostTarget(platform = process.platform, arch = process.arch, rep
 
 /** The adapter declares released native packages; targets also contains unfinished build recipes. */
 export function kitNativeTargets(manifest) {
-  return Object.keys(manifest.optionalDependencies ?? {}).filter(name => name !== wasmName).map((name) => {
+  return Object.keys(manifest.optionalDependencies ?? {}).filter(name => name !== wasmName && name !== 'koffi').map((name) => {
     const platform = name.slice(enginePrefix.length + 1);
     if (!name.startsWith(`${enginePrefix}-`) || !Object.hasOwn(targets, platform)) throw new Error(`Unknown native optional dependency: ${name}`);
     return platform;

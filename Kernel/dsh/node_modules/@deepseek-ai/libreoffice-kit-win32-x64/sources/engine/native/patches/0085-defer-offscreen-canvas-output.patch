@@ -1,0 +1,59 @@
+diff --git a/canvas/source/vcl/spritecanvas.cxx b/canvas/source/vcl/spritecanvas.cxx
+index bbef9a909b6ad986618aeb363a6334cade325066..050d721541743e5cb3e9ee032c13af60b6effed0 100644
+--- a/canvas/source/vcl/spritecanvas.cxx
++++ b/canvas/source/vcl/spritecanvas.cxx
+@@ -58,7 +58,16 @@ namespace vclcanvas
+              [this](css::uno::Any const& aAny) mutable { this->maCanvasHelper.enableUnsafeScrolling(aAny); } )
+             ("SpriteBounds",
+              [this]() { return this->maCanvasHelper.isSpriteBounds(); },
+-             [this](css::uno::Any const& aAny) mutable { this->maCanvasHelper.enableSpriteBounds(aAny); } ));
++             [this](css::uno::Any const& aAny) mutable { this->maCanvasHelper.enableSpriteBounds(aAny); } )
++            ("LOKDeferredUpdate",
++             [this]() { return uno::Any(mbLOKDeferredUpdate); },
++             [this](const uno::Any& value) {
++                 ENSURE_ARG_OR_THROW(value >>= mbLOKDeferredUpdate,
++                                     "LOKDeferredUpdate requires a boolean");
++             })
++            ("LOKUpdatePending",
++             [this]() { return uno::Any(mbLOKUpdatePending); },
++             {}));
+ 
+         SAL_INFO("canvas.vcl", "VCLSpriteCanvas::initialize called" );
+ 
+@@ -140,11 +149,20 @@ namespace vclcanvas
+     {
+         SolarMutexGuard aGuard;
+ 
++        if (mbLOKDeferredUpdate)
++        {
++            mbLOKUpdatePending = true;
++            return true;
++        }
++
+         // avoid repaints on hidden window (hidden: not mapped to
+         // screen). Return failure, since the screen really has _not_
+         // been updated (caller should try again later)
+-        return mbIsVisible && maCanvasHelper.updateScreen(bUpdateAll,
+-                                                                  mbSurfaceDirty);
++        const bool updated = mbIsVisible && maCanvasHelper.updateScreen(bUpdateAll,
++                                                                        mbSurfaceDirty);
++        if (updated)
++            mbLOKUpdatePending = false;
++        return updated;
+     }
+ 
+     OUString SAL_CALL SpriteCanvas::getServiceName(  )
+diff --git a/canvas/source/vcl/spritecanvas.hxx b/canvas/source/vcl/spritecanvas.hxx
+index a5942c569a9d84ef524273fb29ede49b407581bc..5685b6d4b7164304d61bcdfe1e5509b27b5bf919 100644
+--- a/canvas/source/vcl/spritecanvas.hxx
++++ b/canvas/source/vcl/spritecanvas.hxx
+@@ -153,6 +153,9 @@ namespace vclcanvas
+ 
+     private:
+         css::uno::Sequence< css::uno::Any >                maArguments;
++        // Offscreen owners defer output until a shared target is available.
++        bool mbLOKDeferredUpdate = false;
++        bool mbLOKUpdatePending = false;
+     };
+ 
+     typedef ::rtl::Reference< SpriteCanvas > SpriteCanvasRef;

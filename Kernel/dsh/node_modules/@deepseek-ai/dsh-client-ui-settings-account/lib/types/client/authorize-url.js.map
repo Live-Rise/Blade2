@@ -1,0 +1,1 @@
+{"version":3,"file":"authorize-url.js","sourceRoot":"","sources":["../../../src/client/authorize-url.ts"],"names":[],"mappings":"AAAA,kGAAkG;AAElG;;;;;;GAMG;AACH,MAAM,UAAU,qBAAqB,CAAC,YAAoB,EAAE,WAA6B;IACvF,MAAM,GAAG,GAAG,IAAI,GAAG,CAAC,YAAY,CAAC,CAAA;IACjC,GAAG,CAAC,YAAY,CAAC,GAAG,CAAC,OAAO,EAAE,WAAW,CAAC,CAAA;IAC1C,OAAO,GAAG,CAAC,IAAI,CAAA;AACjB,CAAC"}

@@ -203,10 +203,10 @@ class ModelsImpl {
                     throw credentialError;
                 if (!allowNetwork || signal.aborted)
                     return;
-                const credential = await this.resolveRefreshCredential(provider, storedCredential, signal);
-                if (!credential)
+                const network = await this.resolveNetworkRefresh(provider, storedCredential, signal);
+                if (!network)
                     return;
-                await this.runProviderRefreshPhase(provider, credential, true, options.force, generation, signal);
+                await this.runProviderRefreshPhase(provider, network.credential, true, options.force, generation, signal);
             })();
             try {
                 await raceWithAbortSignal(operation, signal);
@@ -232,6 +232,14 @@ class ModelsImpl {
                 throw error;
         }
         return { aborted: callerSignal.aborted, errors: new Map(errors) };
+    }
+    /** The credential for the network refresh phase, or undefined when the provider is not configured. */
+    async resolveNetworkRefresh(provider, stored, signal) {
+        if (provider.refreshModelsAuth === "configured") {
+            return (await this.checkProviderAuth(provider, stored, signal)) ? {} : undefined;
+        }
+        const credential = await this.resolveRefreshCredential(provider, stored, signal);
+        return credential ? { credential } : undefined;
     }
     async resolveRefreshCredential(provider, stored, signal) {
         if (stored?.type === "oauth") {
@@ -460,7 +468,7 @@ class ModelsImpl {
             const provider = this.requireChatProvider(model);
             const { requestModel, requestOptions } = await this.applyAuth(model, options);
             return provider.stream(requestModel, transcript, requestOptions);
-        }, observeModelRequest(model, options, false));
+        }, observeModelRequest(model, options, false), options?.signal);
     }
     async complete(model, context, options) {
         return this.stream(model, context, options).result();
@@ -471,7 +479,7 @@ class ModelsImpl {
             const provider = this.requireChatProvider(model);
             const { requestModel, requestOptions } = await this.applyAuth(model, options);
             return provider.streamSimple(requestModel, transcript, requestOptions);
-        }, observeModelRequest(model, options, false));
+        }, observeModelRequest(model, options, false), options?.signal);
     }
     async completeSimple(model, context, options) {
         return this.streamSimple(model, context, options).result();
@@ -484,7 +492,7 @@ class ModelsImpl {
             }
             const { requestModel, requestOptions } = await this.applyAuth(model, options);
             return provider.fetchDeferred(requestModel, handle, requestOptions);
-        }, observeModelRequest(model, options, true));
+        }, observeModelRequest(model, options, true), options?.signal);
     }
     async fetchDeferred(model, handle, options) {
         return this.streamDeferred(model, handle, options).result();
@@ -566,12 +574,12 @@ export function createProvider(input) {
         return merged;
     };
     const apiFor = (model) => single ?? byApi?.[model.api];
-    const dispatch = (model, run) => {
+    const dispatch = (model, run, signal) => {
         const streams = apiFor(model);
         if (!streams) {
             return lazyStream(model, async () => {
                 throw new ModelsError("stream", `Provider ${input.id} has no API implementation for "${model.api}"`);
-            });
+            }, undefined, signal);
         }
         return run(streams);
     };
@@ -613,8 +621,8 @@ export function createProvider(input) {
             : undefined,
         filterModels: input.filterModels,
         filterAllModels: input.filterAllModels,
-        stream: (model, context, options) => dispatch(model, (streams) => streams.stream(model, context, options)),
-        streamSimple: (model, context, options) => dispatch(model, (streams) => streams.streamSimple(model, context, options)),
+        stream: (model, context, options) => dispatch(model, (streams) => streams.stream(model, context, options), options?.signal),
+        streamSimple: (model, context, options) => dispatch(model, (streams) => streams.streamSimple(model, context, options), options?.signal),
     };
     if (streams.some((entry) => entry.fetchDeferred !== undefined)) {
         provider.fetchDeferred = (model, handle, options) => lazyStream(model, async () => {
@@ -623,7 +631,7 @@ export function createProvider(input) {
                 throw new ModelsError("provider", `Provider ${input.id} does not support deferred responses for "${model.api}"`);
             }
             return implementation.fetchDeferred(model, handle, options);
-        });
+        }, undefined, options?.signal);
     }
     if (streams.some((entry) => entry.cancelDeferred !== undefined)) {
         provider.cancelDeferred = async (model, handle, options) => {

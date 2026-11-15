@@ -98,11 +98,15 @@ function sleep(ms, signal) {
             reject(new Error("Request was aborted"));
             return;
         }
-        const timeout = setTimeout(resolve, ms);
-        signal?.addEventListener("abort", () => {
+        const onAbort = () => {
             clearTimeout(timeout);
             reject(new Error("Request was aborted"));
-        });
+        };
+        const timeout = setTimeout(() => {
+            signal?.removeEventListener("abort", onAbort);
+            resolve();
+        }, ms);
+        signal?.addEventListener("abort", onAbort, { once: true });
     });
 }
 function normalizeTimeoutMs(value) {

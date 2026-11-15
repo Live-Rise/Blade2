@@ -1,0 +1,36 @@
+{
+  "sources": {
+    "include/dsh_frame_forwarding.h": "20990b72d6da7494b5abd44a0146767b85d9ba9d8d4ace7fe24e6bbf944a06b2",
+    "src/graphite-interop-internal.hxx": "012bba82e8e0e49f8ed9e62a357d61d5932d248582eafbcd914358d46711bfab",
+    "src/node-producer.cc": "69f4dd6499a7af1d0efce3aa78710e6b6d3564363db077d109eb09791cc565cb",
+    "src/producer-internal.h": "7ebe4756fa7d693567be6fbff3b25e6c29a3be474f0ac42fd51986ecdd14bc72",
+    "src/transport.h": "4ca800c74069e11d3a58ef9261cc003af115ea7b6cfcfa2950473e82e0f79a1e",
+    "src/transport.cc": "6927d4f7424ae80b155fb5b83cf4455c17c132cf292437b6c3e8a6b3caceadcc",
+    "src/relay-transport.inc": "3e96b42414c3397ed59fc3323ee29de040f9889c0c474c277e02fd077a92c607",
+    "src/producer.cc": "8e90a7d0ee173e2c62823d4962288581e34fb3567cf6e8942aa3fa9935dc0e21",
+    "src/receiver.cc": "96fbe8e9b1d8d173de5df5a9455b5a24128570de0213b5f6e0ad757d48d0342e",
+    "src/win-delay-load.cc": "7acf6bad7bdea695163cbf151286787eb0f9144bc53a7a137f3373888c54cb20",
+    "src/win-delay-load.LICENSE": "662a1b0115251cfb29c6aed0f221f8847bc49c6365d1c53a62c9f4bccc2489c3",
+    "src/graphite-interop.cc": "4f2de8e9ad4bd1aef9220c95d3660937980893f12af006116bed720e7dfaf013",
+    "CMakeLists.txt": "90e821d3718037a60d989b80bc156cb4cc267d66487139e81cf568cb8a54d344",
+    "sdk.json": "b749f12a3371b259c8c98a22dad1b83b85b394dfeecb27581f88f9623a42a4b5",
+    "scripts/build.mjs": "0824c5975106ce2101026d3c7f451643fe28e358b8bff644739fe7614e82c6fa",
+    "scripts/metadata.mjs": "a4848f50df31eb905dba1feb5d7df9fed60af4213c14f6ace7f40c5d066ab20c",
+    "scripts/source-identity.mjs": "e8360e59c4c83eeb4110d3a1c278d330f4a2d20b87edefb1f1e527dc17301602",
+    "scripts/build-webgpu.mjs": "919d40e78b7f5d3e2a7de6d5d2e46ca4a26bcce18f98abc1220c59f8cb79ebdd",
+    "webgpu-dependencies.json": "99fd5b4763f3621ffe72290ca5ddaa9c26f8d2404b54c9158f20f6fd29a403c2"
+  },
+  "sourceCommit": "7d5b94813a4a407c91c8bb67f6f91f61cdfd2b21",
+  "sourceDirty": false,
+  "version": "0.2.3",
+  "protocolVersion": 1,
+  "capabilities": [
+    "transferable-tx",
+    "producer-local-handles"
+  ],
+  "platform": "darwin-x64",
+  "files": {
+    "frame-forwarding.node": "ca36836fabbf9217102eab0226e3590984f34491b044a7ef7587e06cca877ed4",
+    "libdsh_frame_forwarding_sdk.a": "c59c43b6880ed6aa9a478779213277019b0a2ad88348c88fcf817410262d3f1a"
+  }
+}

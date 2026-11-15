@@ -1,0 +1,1 @@
+{"version":3,"file":"header-scroll.d.ts","sourceRoot":"","sources":["../../../src/client/header-scroll.ts"],"names":[],"mappings":"AAAA,2GAA2G;AAE3G,6DAA6D;AAC7D,MAAM,WAAW,sBAAsB;IACrC,qEAAqE;IACrE,eAAe,EAAE,MAAM,CAAC,OAAO,EAAE,cAAc,GAAG,IAAI,KAAK,IAAI,CAAA;CAChE;AAoBD;;;;;GAKG;AACH,wBAAgB,qBAAqB,IAAI,CAAC,OAAO,EAAE,cAAc,GAAG,IAAI,KAAK,IAAI,CAMhF"}

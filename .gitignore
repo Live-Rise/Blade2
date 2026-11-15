@@ -39,3 +39,16 @@ mac/.build/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# ── 临时产物（锚定根目录：Kernel/ 与 rust/ 里有合法同名内容，不能全局排除） ──
+/tmp-cap/
+/tmp-rc3/
+/.zcode/
+/rust/tests/gui-shots/
+
+# 同步盘幽灵目录（删除会被 Syncthing 恢复，忽略即可）
+/tmp/
+
+# rc.3 新进的 wasm 办公套件：单文件 dsoffice.wasm 121.9MB 超 GitHub 100MB 硬限，
+# 整包不入库；磁盘由 Kernel/dsh 的 npm install 还原（零漂移校验不含它不受影响）
+/Kernel/dsh/node_modules/@deepseek-ai/libreoffice-kit-wasm/

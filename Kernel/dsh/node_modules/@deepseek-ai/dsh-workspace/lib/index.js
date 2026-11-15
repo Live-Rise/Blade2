@@ -521,7 +521,7 @@ var WorkspaceRegistry = class extends Service {
 	* resolves without writing, asking, or stopping.
 	* @param sessionId - The session to archive.
 	* @param options - Whether running work is stopped instead of refusing.
-	* @returns resolution after durability and, with `stopActivity`, after every stop request was issued.
+	* @returns resolution after durability, any stop requests, and follow-up admission.
 	*/
 	archiveSession(sessionId, options = {}) {
 		return this.enqueueOperation(async () => {
@@ -538,6 +538,11 @@ var WorkspaceRegistry = class extends Service {
 				pinnedSessionIds: state.pinnedSessionIds.filter((id) => id !== sessionId)
 			});
 			if (options.stopActivity === true) await this.stopSessionActivity(sessionId);
+			try {
+				await this.ctx.parallel("workspace/session-archived", { sessionId });
+			} catch (error) {
+				this.ctx.logger.warn("Session archived, but archive follow-up admission failed: %s", error);
+			}
 		});
 	}
 	/**
@@ -554,6 +559,7 @@ var WorkspaceRegistry = class extends Service {
 		return this.enqueueOperation(async () => {
 			const state = this.requireState();
 			if (!state.archivedSessionIds.includes(sessionId)) return;
+			await this.ctx.parallel("workspace/session-unarchiving", { sessionId });
 			await this.setState({
 				...state,
 				archivedSessionIds: state.archivedSessionIds.filter((id) => id !== sessionId)

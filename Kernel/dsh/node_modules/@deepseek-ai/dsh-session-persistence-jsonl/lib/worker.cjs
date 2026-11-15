@@ -3229,6 +3229,7 @@ const KNOWN_SESSION_EVENT_TYPES = new Set([
 	"team/member",
 	"team/message/delivered",
 	"team/message/queued",
+	"team/mode",
 	"team/task",
 	"todo/write",
 	"tool-workflow/agent-end",
@@ -3395,12 +3396,12 @@ function assertSourceEventReferences(event, shadowedSeqs) {
 	if (missing.length > 0) throw new Error(`surface replace: sourceEventSeqs must include every shadowed surface node; missing ${missing.join(", ")}`);
 }
 /** Resolve tool additions against their immutable historical request header. */
-function assertDeveloperHeader(event, events, baseSeq) {
+function assertDeveloperHeader(event, read) {
 	if (event.type !== "developer/message") return;
 	validateSessionEventData(event, `developer/message at seq ${event.seq}`);
 	if (event.data.headerSeq === void 0) return;
 	const headerSeq = event.data.headerSeq;
-	const headerEvent = events[headerSeq - baseSeq];
+	const headerEvent = read(headerSeq);
 	if (headerSeq >= event.seq || headerEvent?.type !== "request/header") throw new Error("developer/message headerSeq must reference an earlier request/header");
 	for (const block of event.data.message.content) {
 		if (block.type !== "tool-addition") continue;
@@ -3455,11 +3456,11 @@ function isDeepEqualJson(a, b) {
 	return aKeys.every((key) => Object.hasOwn(b, key) && isDeepEqualJson(a[key], bRecord[key]));
 }
 /** Restrict a tool-result replacement to one current result's content. */
-function assertToolResultRewrite(event, shadowedSeqs, events, baseSeq) {
+function assertToolResultRewrite(event, shadowedSeqs, read) {
 	if (event.type !== "tool/result") return;
 	if (shadowedSeqs.length !== 1) throw new Error("tool/result surface replacement must rewrite exactly one current node");
 	for (const originalSeq of shadowedSeqs) {
-		const original = events[originalSeq - baseSeq];
+		const original = read(originalSeq);
 		if (original?.type !== "tool/result") throw new Error("tool/result surface replacement must target a current tool/result");
 		const originalRest = { ...original.data };
 		const replacementRest = { ...event.data };
@@ -3480,27 +3481,36 @@ function assertToolResultRewrite(event, shadowedSeqs, events, baseSeq) {
 * exactly that node; later system nodes carry no protection and a compaction
 * range may shadow them.
 */
-function assertSystemHeadRewrite(event, state, startIdx, shadowedSeqs, events, baseSeq) {
+function assertSystemHeadRewrite(event, state, startIdx, shadowedSeqs, read) {
 	if (startIdx !== 0) return;
-	if (events[state.nodes[0] - baseSeq]?.type !== "system/message") return;
+	if (read(state.nodes[0])?.type !== "system/message") return;
 	if (event.type !== "system/message" || shadowedSeqs.length !== 1) throw new Error("surface replace: node 0 holds the system prompt and may be rewritten only by a system/message over exactly that node");
 }
 /** Validate one event at its replay boundary and prepare its atomic fold transition. */
-function planSurfaceEvent(state, event, expectedSeq, events, baseSeq, projections) {
+function planSurfaceEvent(state, event, expectedSeq, events, baseSeq, projections, candidates) {
 	if (event.seq !== expectedSeq) throw new Error(`session event seq ${event.seq} is not contiguous; expected ${expectedSeq}`);
 	const surfaceOp = validateSurfaceMetadata(event);
-	assertDeveloperHeader(event, events, baseSeq);
-	const projection = projections.find((item) => item.type === event.type);
-	if (projection !== void 0) return {
-		kind: "project",
-		projection,
-		messages: projection.project(event, {
-			nodes: state.nodes,
-			events,
-			baseSeq,
-			messages: state.projectedMessages
-		})
+	const read = (seq) => {
+		const index = seq - baseSeq;
+		return index < events.length ? events[index] : candidates?.[index - events.length];
 	};
+	assertDeveloperHeader(event, read);
+	const projection = projections.find((item) => item.type === event.type);
+	if (projection !== void 0) {
+		let projectionEvents;
+		return {
+			kind: "project",
+			projection,
+			messages: projection.project(event, {
+				nodes: state.nodes,
+				get events() {
+					return candidates === void 0 ? events : projectionEvents ??= [...events, ...candidates];
+				},
+				baseSeq,
+				messages: state.projectedMessages
+			})
+		};
+	}
 	if (MESSAGE_PROJECTION_EVENT_TYPES.has(event.type)) throw new Error(`session event "${event.type}" requires a message projection; load its owning plugin or supply its projection definition`);
 	if (surfaceOp === void 0) return;
 	if (surfaceOp === "append") return {
@@ -3509,8 +3519,8 @@ function planSurfaceEvent(state, event, expectedSeq, events, baseSeq, projection
 	};
 	const range = replacementRange(state, surfaceOp);
 	assertSourceEventReferences(event, range.shadowedSeqs);
-	assertToolResultRewrite(event, range.shadowedSeqs, events, baseSeq);
-	assertSystemHeadRewrite(event, state, range.startIdx, range.shadowedSeqs, events, baseSeq);
+	assertToolResultRewrite(event, range.shadowedSeqs, read);
+	assertSystemHeadRewrite(event, state, range.startIdx, range.shadowedSeqs, read);
 	return {
 		kind: "replace",
 		seq: event.seq,
@@ -3577,6 +3587,40 @@ var SurfaceManager = class {
 			event,
 			expectedSeq,
 			plan: planSurfaceEvent(this._state, event, expectedSeq, this.log, this.baseSeq, this.projections)
+		};
+	}
+	/**
+	* Validate consecutive candidates against an isolated surface fold.
+	* @param events - candidates immediately following the committed log.
+	* @returns a callback adopting the validated fold after all candidates enter the log.
+	*/
+	prepareBatch(events) {
+		this._assertProjections();
+		if (this._lastProcessedSeq < this.baseSeq + this.log.length - 1) this._processDelta();
+		const lastProcessedSeq = SessionSeq(this.baseSeq + this.log.length + events.length - 1);
+		if (events.every((event) => (event.surfaceOp === void 0 || event.surfaceOp === "append") && !this.projections.some((projection) => projection.type === event.type))) {
+			const plans = events.map((event, index) => planSurfaceEvent(this._state, event, SessionSeq(this.baseSeq + this.log.length + index), this.log, this.baseSeq, this.projections, events));
+			return () => {
+				for (const plan of plans) applySurfacePlan(this._state, plan);
+				this._lastProcessedSeq = lastProcessedSeq;
+				this._pendingPlan = void 0;
+			};
+		}
+		const state = {
+			...this._state,
+			nodes: [...this._state.nodes],
+			projectedMessages: new Map(this._state.projectedMessages),
+			projections: new Set(this._state.projections)
+		};
+		const plans = events.map((event, index) => {
+			const plan = planSurfaceEvent(state, event, SessionSeq(this.baseSeq + this.log.length + index), this.log, this.baseSeq, this.projections, events);
+			applySurfacePlan(state, plan);
+			return plan;
+		});
+		return () => {
+			for (const plan of plans) applySurfacePlan(this._state, plan);
+			this._lastProcessedSeq = lastProcessedSeq;
+			this._pendingPlan = void 0;
 		};
 	}
 	/** Monotonic count of folded positional replacements. */
@@ -4499,11 +4543,11 @@ defineMethod("transform", [
 /** Largest delay Node schedules without clamping it to one millisecond. */
 const MAX_TIMER_DELAY_MS = 2147483647;
 //#endregion
-//#region ../../llm/llm/src/error.ts
+//#region ../../util/error/src/index.ts
 /**
 * Harness error base with a stable machine-routable code and chained cause.
 * Package errors extend it so tool results and replay can retain failure class.
-* @module @deepseek-ai/dsh-llm/error
+* @module @deepseek-ai/dsh-error
 */
 /**
 * Base class for all harness errors. Carries a `code` (stable, programmatic —
@@ -4520,6 +4564,75 @@ var HarnessError = class extends Error {
 		this.name = new.target.name;
 	}
 };
+//#endregion
+//#region ../../llm/llm/src/error.ts
+/**
+* LLM failure codes and helpers over the shared Harness error base. The base
+* class lives in `@deepseek-ai/dsh-error` and is re-exported here, so both
+* import paths name the same class.
+* @module @deepseek-ai/dsh-llm/error
+*/
+/**
+* Every failure code the built-in providers and the LLM runtime raise. An entry
+* marked `retryChoice` is offered as a choice for a provider retry policy's
+* `retryableCodes`; being a choice does not make a code retried by default.
+*/
+const LLM_FAILURE_CODES = {
+	ABORTED: {},
+	ACCOUNT_QUOTA: {},
+	ACCOUNT_SIGN_IN_REQUIRED: {},
+	ACCOUNT_TOKEN_INVALID: {},
+	AUTH: {},
+	CLIENT_UPGRADE_REQUIRED: {},
+	CONTEXT_WINDOW_EXCEEDED: {},
+	DISCOVERY_FAILED: {},
+	DISCOVERY_UNSUPPORTED: {},
+	DUPLICATE_ADAPTER: {},
+	DUPLICATE_DIRECTORY: {},
+	DUPLICATE_DISCOVERY: {},
+	EMPTY_RESPONSE: { retryChoice: true },
+	FILES_API: {},
+	IMAGE_OFFLOAD_REQUIRED: {},
+	INVALID_ADAPTER: {},
+	INVALID_CATALOG: {},
+	INVALID_CONFIG: {},
+	INVALID_CREDENTIAL: {},
+	INVALID_DIRECTORY: {},
+	INVALID_DISCOVERY: {},
+	INVALID_MODEL_CONTEXT: {},
+	INVALID_MODEL_INFO: {},
+	INVALID_MODEL_MAX_TOKENS: {},
+	INVALID_MODEL_REASONING: {},
+	INVALID_PREPARED_CALL: {},
+	INVALID_REPLAY_STATE: {},
+	INVALID_REQUEST: {},
+	INVALID_RESPONSE: {},
+	MALFORMED_RESPONSE: { retryChoice: true },
+	MISSING_CREDENTIAL: {},
+	MODEL_SWITCH_COMPACTION_FAILED: {},
+	MODEL_UNSUPPORTED: {},
+	NO_ADAPTER: {},
+	NO_CREDENTIAL_STORE: {},
+	NO_DISCOVERY: {},
+	PI_AI_ERROR: {},
+	QUOTA: { retryChoice: true },
+	RATE_LIMIT: { retryChoice: true },
+	REGISTRATION_DISPOSED: {},
+	REQUEST_EXTENSION: {},
+	REQUEST_HEADERS: {},
+	SERVER: { retryChoice: true },
+	STREAM_CLOSED: { retryChoice: true },
+	TIMEOUT: { retryChoice: true },
+	TRANSPORT: { retryChoice: true },
+	UNKNOWN: {},
+	UNKNOWN_MODEL: {},
+	UNSTORABLE_PROVIDER_ID: {},
+	UNSUPPORTED_CONTENT: {},
+	UNSUPPORTED_OPTION: {},
+	UNSUPPORTED_REASONING_EFFORT: {}
+};
+/** The {@link LLM_FAILURE_CODES} entries marked as retry-policy choices, in definition order. */
+const RETRY_CODE_CHOICES = Object.freeze(Object.keys(LLM_FAILURE_CODES).filter((code) => "retryChoice" in LLM_FAILURE_CODES[code]));
 /**
 * Canonical provider-neutral code for a response that completed normally but
 * carried no content blocks at all. Providers occasionally emit a degenerate
@@ -4555,14 +4668,14 @@ const DEFAULT_RETRYABLE_CODES = Object.freeze([
 	"TRANSPORT"
 ]);
 const backoffSchema = Schema.object({
-	initialDelayMs: Schema.number().max(MAX_TIMER_DELAY_MS).default(DEFAULT_INITIAL_DELAY_MS),
-	maxDelayMs: Schema.number().max(MAX_TIMER_DELAY_MS).default(DEFAULT_MAX_DELAY_MS),
+	initialDelayMs: Schema.number().min(Number.MIN_VALUE).max(MAX_TIMER_DELAY_MS).default(DEFAULT_INITIAL_DELAY_MS),
+	maxDelayMs: Schema.number().min(Number.MIN_VALUE).max(MAX_TIMER_DELAY_MS).default(DEFAULT_MAX_DELAY_MS),
 	jitterRatio: Schema.number().min(0).max(1).default(DEFAULT_JITTER_RATIO)
 });
 const normalPolicySchema = Schema.object({
 	mode: Schema.const("normal").required(),
 	maxRetries: Schema.number().step(1).min(0).max(Number.MAX_SAFE_INTEGER).default(DEFAULT_MAX_RETRIES),
-	retryableCodes: Schema.array(Schema.string()).default([...DEFAULT_RETRYABLE_CODES]),
+	retryableCodes: Schema.array(Schema.union([...RETRY_CODE_CHOICES.map((code) => Schema.const(code)), Schema.string().min(1)])).min(1).default([...DEFAULT_RETRYABLE_CODES]),
 	backoff: backoffSchema
 });
 const alwaysPolicySchema = Schema.object({
@@ -4846,27 +4959,47 @@ function withoutDeveloperMessages(messages) {
 	const retained = messages.filter((message) => message.role !== "developer");
 	return retained.length === messages.length ? messages : retained;
 }
-function toolDeclarations(tools, mode, history) {
+function toolDeclarations(history) {
 	const declarations = new Map(history.tools.map((tool) => [tool.name, tool]));
 	for (const update of history.updates) for (const tool of update.additions) if (!declarations.has(tool.name)) declarations.set(tool.name, {
 		...tool,
 		deferLoading: true
 	});
-	switch (mode) {
-		case "in-history": return declarations;
-		case "addition-only": {
-			const activeNames = new Set(tools?.map((tool) => tool.name));
-			for (const name of declarations.keys()) if (!activeNames.has(name)) declarations.delete(name);
-			return declarations;
+	return declarations;
+}
+/** Rebuild declarations on removals or additions to an empty set, where the request prefix changes. */
+function rebaseAdditionOnlyHistory(history, messages) {
+	const available = new Map(history.tools.map((tool) => [tool.name, tool]));
+	let baseline = history.tools;
+	let retainedFrom = 0;
+	for (const [index, update] of history.updates.entries()) {
+		const additions = new Map(update.additions.map((tool) => [tool.name, tool]));
+		let reset = available.size === 0 && additions.size > 0;
+		for (const block of messages.get(update.messageId)) if (block.type === "tool-addition") {
+			const { deferLoading: _loading, ...tool } = additions.get(block.toolName);
+			available.set(tool.name, tool);
+		} else if (block.type === "tool-removal") {
+			reset = true;
+			available.delete(block.toolName);
 		}
-		/* v8 ignore next 2 -- closed-union exhaustiveness guard */
-		default: return assertNever(mode);
+		if (reset) {
+			baseline = [...available.values()];
+			retainedFrom = index + 1;
+		}
 	}
+	return retainedFrom === 0 ? history : {
+		tools: baseline,
+		updates: history.updates.slice(retainedFrom)
+	};
 }
 /**
 * Construct provider declarations from session-folded history without changing logged active tools.
 * Unsupported routes and incomplete history use current declarations without developer updates.
-* Explicitly deferred baseline tools become available only after their first retained addition.
+* Explicitly deferred declarations require an addition to activate them.
+* A rebuild makes previously activated declarations immediate; unactivated declarations stay deferred.
+* Addition-only routes rebuild when a tool is removed or tools are added to an empty set;
+* deferred declarations count as existing tools.
+* Later additions remain deferred and superseded tool blocks are omitted without dropping other content.
 * @param messages - complete request inputs, or the prefix selected for an auxiliary call.
 * @param tools - currently active tool schemas.
 * @param toolUpdate - the resolved route's update mode.
@@ -4886,14 +5019,16 @@ function projectToolUpdates(messages, tools, toolUpdate, history) {
 		messages: withoutDeveloperMessages(messages),
 		tools
 	};
-	const messageIds = new Set(messages.flatMap((message) => message.role === "developer" ? [message.id] : []));
-	if (history.updates.some((update) => !messageIds.has(update.messageId))) return {
+	const updates = new Map(messages.flatMap((message) => message.role === "developer" ? [[message.id, message.content]] : []));
+	if (history.updates.some((update) => !updates.has(update.messageId))) return {
 		messages: withoutDeveloperMessages(messages),
 		tools
 	};
-	const declarations = toolDeclarations(tools, toolUpdate, history);
+	const projectedHistory = toolUpdate === "addition-only" ? rebaseAdditionOnlyHistory(history, updates) : history;
+	const declarations = toolDeclarations(projectedHistory);
 	const updateIds = new Set(history.updates.map((update) => update.messageId));
-	const offered = new Set(history.tools.filter((tool) => !tool.deferLoading).map((tool) => tool.name));
+	const retainedUpdateIds = new Set(projectedHistory.updates.map((update) => update.messageId));
+	const offered = new Set(projectedHistory.tools.filter((tool) => !tool.deferLoading).map((tool) => tool.name));
 	const projectedMessages = [];
 	for (const message of messages) {
 		if (message.role !== "developer") {
@@ -4904,6 +5039,7 @@ function projectToolUpdates(messages, tools, toolUpdate, history) {
 		const content = message.content.filter((block) => {
 			switch (block.type) {
 				case "tool-addition":
+					if (!retainedUpdateIds.has(message.id)) return false;
 					if (!declarations.has(block.toolName) || offered.has(block.toolName)) return false;
 					offered.add(block.toolName);
 					return true;
@@ -5434,13 +5570,16 @@ var __esDecorate = function(ctor, descriptorIn, decorators, contextIn, initializ
 /**
 * Typed error for LLM-related failures. Extends {@link HarnessError}, so the
 * `code` string (e.g. `AUTH`, `RATE_LIMIT`, `NO_ADAPTER`) is shared taxonomy.
+* The constructor takes only a {@link BuiltinLlmFailureCode}; a failure from
+* another provider, whose code may be any string, is re-raised through
+* {@link LlmError.fromFailure}.
 */
-var LlmError = class extends HarnessError {
+var LlmError = class LlmError extends HarnessError {
 	/** Serializable facts retained beside this live Error. */
 	failure;
 	/**
 	* @param message - non-empty human-readable failure summary.
-	* @param code - non-empty stable provider-neutral machine code.
+	* @param code - built-in stable provider-neutral machine code.
 	* @param options - optional cause and validated serializable provider facts.
 	*/
 	constructor(message, code, options) {
@@ -5458,6 +5597,18 @@ var LlmError = class extends HarnessError {
 			...options?.providerRetryAfterMs === void 0 ? {} : { providerRetryAfterMs: options.providerRetryAfterMs },
 			...options?.requestId === void 0 ? {} : { requestId: options.requestId },
 			...options?.offloadImages === void 0 ? {} : { offloadImages: options.offloadImages }
+		});
+	}
+	/**
+	* Raise an observed failure again with its own code, which any provider may have chosen.
+	* @param failure - the serializable failure, typically from a stream's terminal chunk.
+	* @param options - optional cause.
+	* @returns an error carrying the failure's message, code, and provider facts.
+	*/
+	static fromFailure(failure, options) {
+		return new LlmError(failure.message, failure.code, {
+			...failure,
+			...options
 		});
 	}
 };
@@ -6463,6 +6614,36 @@ function assertPluginRecordEvent(value) {
 	const { type } = value;
 	if (!isPluginRecordType(type)) throw new Error(`plugin record type "${type}" must be "plugin:" followed by lowercase slash-separated segments`);
 }
+/** Copy live append inputs before sequence assignment. */
+function snapshotAppend(type, data, opts, subject) {
+	const surfaceOp = opts?.surfaceOp;
+	const sourceEventSeqs = opts?.sourceEventSeqs;
+	const dataSnapshot = snapshotJsonValue(data);
+	if (dataSnapshot === void 0) throw new Error(`${subject} carries non-JSON-serializable data`);
+	const surface = snapshotJsonValue({
+		...sourceEventSeqs === void 0 ? {} : { sourceEventSeqs },
+		...surfaceOp === void 0 ? {} : { surfaceOp }
+	});
+	if (surface === void 0) throw new Error(`${subject} carries non-JSON-serializable surface metadata`);
+	return {
+		type,
+		data: dataSnapshot,
+		surface
+	};
+}
+/** Construct and validate one live event from detached inputs. */
+function createAppendEvent(snapshot, seq) {
+	const { type, data, surface } = snapshot;
+	const event = deepFreeze({
+		type,
+		seq,
+		time: Date.now(),
+		data,
+		...surface
+	});
+	validateSessionEventData(event, `session event "${type}" at seq ${seq}`);
+	return event;
+}
 /**
 * An event-sourced session: an append-only log of {@link SessionEvent}s.
 *
@@ -6473,6 +6654,7 @@ function assertPluginRecordEvent(value) {
 */
 var Session = class Session {
 	log = [];
+	batchPublication;
 	/** Single incremental owner of surface acceptance and projection state. */
 	surfaceManager;
 	/** The ordered surface over this session's event log. */
@@ -6627,70 +6809,67 @@ var Session = class Session {
 	get seq() {
 		return SessionLogOffset(this.log.length);
 	}
-	/**
-	* Append one typed event to the log and synchronously notify observers via
-	* the store-owned, module-private publication hooks. The hot path never blocks
-	* on I/O — persistence plugins buffer asynchronously. Once the event enters
-	* the log, the append is committed: observer failures are logged and
-	* contained per listener, so they do not change the return value or prevent
-	* later listeners from observing the same accepted event.
-	* Independent Sessions append without notifying store observers. Once a store
-	* prepares or enters the instance, writes require a completed creation
-	* announcement and remain disabled after removal.
-	*
-	* @param type - The event type (key of {@link SessionEventMap}).
-	* @param data - The event payload; must be JSON-serializable.
-	* @param opts - Surface metadata: `surfaceOp` controls how the event enters
-	*   the ordered surface; `sourceEventSeqs` lists the seq numbers of earlier
-	*   events this one derives from. REQUIRED for
-	*   {@link SurfaceEventType} events (every message-producing event must
-	*   declare how it joins the surface, the sole source of derived model
-	*   history) and
-	*   rejected by the compiler for non-surface types like `turn/start` or
-	*   `assistant/attempt`. Assistant messages embed their exact provider
-	*   stream and cannot cite top-level source events.
-	* @returns the logged event — its assigned `seq`/`time` plus the SNAPSHOT of
-	*   `data` that entered the log, so reading `event.data` back sees the logged
-	*   value, never the caller's still-mutable input.
-	* @throws if a store-owned Session is unentered or its creation announcement
-	*   has not completed, or if `data` or surface
-	*   metadata is not losslessly JSON-serializable
-	*   (BigInt, function, symbol, undefined, negative zero, non-finite number,
-	*   circular reference, sparse array, or an exotic object such as
-	*   Map/Set/Date/class instance), or when the candidate violates the
-	*   request-header empty-field or tool-error consistency rules, or the
-	*   canonical surface contract (marker shape and eligibility, unique
-	*   earlier source-event references, positional replacement validity, and complete
-	*   shadowed-node coverage). One iterative pass reads, validates, and
-	*   copies each nested value once, so a stateful getter cannot supply one value
-	*   to validation and another to storage. The event log is the durable source
-	*   of truth, so a bad event fails at the append site rather than later during
-	*   a backend flush. A synchronous internal dispatch validation failure or an
-	*   append reentered while this acceptance/publication boundary is open also
-	*   rejects before the log changes.
-	*/
+	/** Current event while synchronously notifying a batch's observers. */
+	get currentBatchPublication() {
+		return this.batchPublication;
+	}
 	append(type, data, ...opts) {
+		if (typeof type !== "string") return this.#appendEvents(type);
 		this.publicationEntry();
-		const surfaceOpts = opts[0];
-		const surfaceMetadata = {
-			...surfaceOpts?.sourceEventSeqs === void 0 ? {} : { sourceEventSeqs: surfaceOpts.sourceEventSeqs },
-			...surfaceOpts?.surfaceOp === void 0 ? {} : { surfaceOp: surfaceOpts.surfaceOp }
-		};
-		const dataSnapshot = snapshotJsonValue(data);
-		if (dataSnapshot === void 0) throw new Error(`session event "${type}" carries non-JSON-serializable data`);
-		const surfaceMetadataSnapshot = snapshotJsonValue(surfaceMetadata);
-		if (surfaceMetadataSnapshot === void 0) throw new Error(`session event "${type}" carries non-JSON-serializable surface metadata`);
+		const snapshot = snapshotAppend(type, data, opts[0], `session event "${type}"`);
 		const entry = this.publicationEntry();
-		const event = deepFreeze({
-			type,
-			seq: SessionSeq(this.log.length),
-			time: Date.now(),
-			data: dataSnapshot,
-			...surfaceMetadataSnapshot
-		});
-		validateSessionEventData(event, `session event "${type}" at seq ${event.seq}`);
+		const event = createAppendEvent(snapshot, SessionSeq(this.log.length));
 		this.commit(event, entry);
 		return event;
+	}
+	/**
+	* Validate and publish consecutive events together. Observers see the complete log.
+	* @param inputs - event payloads and surface intents in commit order.
+	* @returns immutable committed events in the same order.
+	* @throws before changing the log if any candidate or synchronous dispatch validation fails.
+	*/
+	#appendEvents(inputs) {
+		this.publicationEntry();
+		if (inputs.length === 0) return [];
+		const snapshots = Array.from({ length: inputs.length }, (_, index) => {
+			const input = inputs.at(index);
+			if (input === void 0) throw new Error(`session batch has an empty member at index ${index}`);
+			const [type, data, surfaceOpts] = input;
+			return snapshotAppend(type, data, surfaceOpts, `session batch member ${index} ("${type}")`);
+		});
+		const entry = this.publicationEntry();
+		const startSeq = this.log.length;
+		const events = snapshots.map((snapshot, index) => createAppendEvent(snapshot, SessionSeq(startSeq + index)));
+		const acceptSurface = this.surfaceManager.prepareBatch(events);
+		if (entry !== void 0) entry.appending = true;
+		try {
+			const publications = entry === void 0 ? [] : events.map((event) => {
+				const args = [this, event];
+				return {
+					event,
+					args,
+					callbacks: collectSessionCallbacks(entry.emitCtx, [
+						entry.carrier,
+						"session/event",
+						...args
+					])
+				};
+			});
+			for (const event of events) this.log.push(event);
+			this.eventsSnapshot = void 0;
+			acceptSurface();
+			if (entry !== void 0) for (const { event, args, callbacks } of publications) {
+				this.batchPublication = event;
+				invokeContainedSessionObservers(entry.emitCtx, "session/event", entry.id, args, callbacks);
+			}
+		} finally {
+			this.batchPublication = void 0;
+			if (entry !== void 0) {
+				entry.appending = false;
+				if (entry.detachRequested) entry.detach();
+			}
+		}
+		return events;
 	}
 	static {}
 	/**
@@ -12545,6 +12724,7 @@ function validateDeliveryAccepted(event, currentVersion) {
 */
 function assertReleasedV4Relationships(artifact, knownEventTypes) {
 	const ids = /* @__PURE__ */ new Set();
+	const names = /* @__PURE__ */ new Set();
 	for (const event of artifact.events) {
 		if (!knownEventTypes.has(event.type)) continue;
 		assertV4DeveloperData(event);
@@ -12552,12 +12732,29 @@ function assertReleasedV4Relationships(artifact, knownEventTypes) {
 		const deliveryId = validateDeliveryAccepted(event, 4);
 		if (deliveryId !== void 0 && event.seq >= artifact.inheritedEventCount && deliveryId !== artifact.header.id) throw new SessionFormatError("current-generation delivery marker names the wrong Session");
 		if (event.type === "subagent/catalog" && event.seq >= artifact.inheritedEventCount) {
-			const id = catalogFact(event.data)["childId"];
+			const fact = nativeCatalogFact(event.data);
+			const id = fact["childId"];
 			if (ids.has(id)) throw new SessionFormatError(`duplicate catalog child ${id}`);
 			ids.add(id);
+			if (fact["name"] === void 0) continue;
+			const name = fact["name"];
+			if (names.has(name)) throw new SessionFormatError(`duplicate catalog child name ${name}`);
+			names.add(name);
 		}
 	}
 	assertV4LifecycleRelationships(artifact, knownEventTypes);
+}
+/**
+* Validate an own native V4 catalog payload: a historical version or version 3,
+* which adds the child's name and is written only by native V4 creation.
+* @param value - native `subagent/catalog` payload.
+* @returns validated catalog payload.
+*/
+function nativeCatalogFact(value) {
+	if (!isSessionFormatJsonObject(value) || value["version"] !== 3) return catalogFact(value);
+	if (typeof value["childId"] !== "string" || value["mode"] !== "continuable" && value["mode"] !== "external" || typeof value["name"] !== "string" || !/^[a-z][a-z0-9-]{0,31}$/u.test(value["name"]) || value["name"] === "lead" || value["mode"] === "continuable" && typeof value["label"] !== "string" || value["label"] !== void 0 && typeof value["label"] !== "string") throw new SessionFormatError("subagent/catalog requires a supported versioned catalog fact");
+	sessionFormatCount(value["childCreatedAt"], "catalog child creation time");
+	return value;
 }
 //#endregion
 //#region ../session-format-v3-to-v4/src/codec.ts

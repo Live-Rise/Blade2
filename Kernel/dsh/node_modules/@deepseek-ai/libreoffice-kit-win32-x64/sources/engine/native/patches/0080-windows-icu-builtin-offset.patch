@@ -1,0 +1,12 @@
+diff --git a/external/icu/ExternalProject_icu.mk b/external/icu/ExternalProject_icu.mk
+--- a/external/icu/ExternalProject_icu.mk
++++ b/external/icu/ExternalProject_icu.mk
+@@ -25,7 +25,7 @@
+ 		$(WSL) autoconf -f \
+ 		&& export CC="$(filter-out -fsanitize%,$(CC))" CXX="$(filter-out -fsanitize%,$(CXX))" \
+ 			LIB="$(ILIB)" PYTHONWARNINGS="default" \
+-			gb_ICU_XFLAGS="-FS $(SOLARINC) $(gb_DEBUGINFO_FLAGS) $(if $(MSVC_USE_DEBUG_RUNTIME),-MDd,-MD -Gy)" \
++			gb_ICU_XFLAGS="-FS $(SOLARINC) $(gb_DEBUGINFO_FLAGS) $(if $(filter TRUE,$(COM_IS_CLANG)),-D_CRT_USE_BUILTIN_OFFSETOF=1) $(if $(MSVC_USE_DEBUG_RUNTIME),-MDd,-MD -Gy)" \
+ 		&& CFLAGS="$${gb_ICU_XFLAGS}" CPPFLAGS="$(SOLARINC)" CXXFLAGS="$${gb_ICU_XFLAGS} $(ENVCFLAGSCXX) $(CXXFLAGS_CXX11)" \
+ 			INSTALL=`cygpath -m /usr/bin/install` $(if $(MSVC_USE_DEBUG_RUNTIME),LDFLAGS="-DEBUG") \
+ 			$(gb_RUN_CONFIGURE) ./configure \

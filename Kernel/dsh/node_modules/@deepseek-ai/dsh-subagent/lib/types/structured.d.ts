@@ -42,7 +42,7 @@ export interface StructuredAttachment {
  * @param childCtx - the child agent's scope context (`setup`'s argument).
  * @param schema - the trusted, already-asserted schema subset to enforce (see
  *   `assertObjectJsonSchema` in dsh-tools).
- * @param canComplete - whether accepted input and owned child work have finished.
+ * @param canComplete - whether accepted input has been processed.
  * @returns the attachment handle (read `captured()` after the child settles).
  */
 export declare function attachStructuredRuntime(childCtx: Context, schema: ObjectJsonSchema, canComplete: () => boolean): StructuredAttachment;

@@ -3,22 +3,16 @@ import { z } from 'zod'
 
 import { createTypertRemoteInfo } from '@deepseek-ai/dsh-typert-protocol/remote-info'
 
-let _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_0$schema$value
-const _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_0$schema = () => (_deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_0$schema$value ??= z.string())
-let _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_1$schema$value
-const _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_1$schema = () => (_deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_1$schema$value ??= z.string())
-let _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_2$schema$value
-const _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_2$schema = () => (_deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_2$schema$value ??= z.literal("continuable"))
-let _deepseek_ai_dsh_subagent_subagents_interruptByParent_result$schema$value
-const _deepseek_ai_dsh_subagent_subagents_interruptByParent_result$schema = () => (_deepseek_ai_dsh_subagent_subagents_interruptByParent_result$schema$value ??= z.object({
+let _deepseek_ai_dsh_subagent_subagents_interruptByUser_parameter_0$schema$value
+const _deepseek_ai_dsh_subagent_subagents_interruptByUser_parameter_0$schema = () => (_deepseek_ai_dsh_subagent_subagents_interruptByUser_parameter_0$schema$value ??= z.string())
+let _deepseek_ai_dsh_subagent_subagents_interruptByUser_result$schema$value
+const _deepseek_ai_dsh_subagent_subagents_interruptByUser_result$schema = () => (_deepseek_ai_dsh_subagent_subagents_interruptByUser_result$schema$value ??= z.object({
   'accepted': z.literal(true).readonly(),
 }))
 let _deepseek_ai_dsh_subagent_subagents_prompt_parameter_0$schema$value
 const _deepseek_ai_dsh_subagent_subagents_prompt_parameter_0$schema = () => (_deepseek_ai_dsh_subagent_subagents_prompt_parameter_0$schema$value ??= z.object({
   'requestId': z.string().readonly().describe('Identity persisted on the accepted message, minted before the call.'),
-  'parentSessionId': z.string().readonly(),
   'childSessionId': z.string().readonly(),
-  'mode': z.literal("continuable").readonly().describe('Required discriminator retained from the browser control address.'),
   'delivery': z.union([z.literal("queue"), z.literal("steer")]).readonly().describe('Whether this message queues a later turn or targets the nearest step.'),
   'content': z.array(z.union([z.object({
   'type': z.literal("text").readonly(),
@@ -35,18 +29,12 @@ let _deepseek_ai_dsh_subagent_subagents_prompt_result$schema$value
 const _deepseek_ai_dsh_subagent_subagents_prompt_result$schema = () => (_deepseek_ai_dsh_subagent_subagents_prompt_result$schema$value ??= z.object({
   'messageId': z.string().readonly(),
 }))
-let _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_0_strict$schema$value
-const _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_0_strict$schema = () => (_deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_0_strict$schema$value ??= z.string())
-let _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_1_strict$schema$value
-const _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_1_strict$schema = () => (_deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_1_strict$schema$value ??= z.string())
-let _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_2_strict$schema$value
-const _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_2_strict$schema = () => (_deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_2_strict$schema$value ??= z.literal("continuable"))
+let _deepseek_ai_dsh_subagent_subagents_interruptByUser_parameter_0_strict$schema$value
+const _deepseek_ai_dsh_subagent_subagents_interruptByUser_parameter_0_strict$schema = () => (_deepseek_ai_dsh_subagent_subagents_interruptByUser_parameter_0_strict$schema$value ??= z.string())
 let _deepseek_ai_dsh_subagent_subagents_prompt_parameter_0_strict$schema$value
 const _deepseek_ai_dsh_subagent_subagents_prompt_parameter_0_strict$schema = () => (_deepseek_ai_dsh_subagent_subagents_prompt_parameter_0_strict$schema$value ??= z.strictObject({
   'requestId': z.string().readonly().describe('Identity persisted on the accepted message, minted before the call.'),
-  'parentSessionId': z.string().readonly(),
   'childSessionId': z.string().readonly(),
-  'mode': z.literal("continuable").readonly().describe('Required discriminator retained from the browser control address.'),
   'delivery': z.union([z.literal("queue"), z.literal("steer")]).readonly().describe('Whether this message queues a later turn or targets the nearest step.'),
   'content': z.array(z.union([z.strictObject({
   'type': z.literal("text").readonly(),
@@ -63,9 +51,9 @@ const _deepseek_ai_dsh_subagent_subagents_prompt_parameter_0_strict$schema = () 
 const $remote = createTypertRemoteInfo({
   package: '@deepseek-ai/dsh-subagent',
   methods: {
-    'subagents/interruptByParent': {
+    'subagents/interruptByUser': {
       service: 'subagents',
-      description: 'Remote face of {@link interrupt} under one durable parent address. No catalog, history, persistence, or parent Agent lookup runs: the core primitive alone authorizes the address against the live Activation, which is what keeps a live child interruptible while its parent Agent is offline. Absent, idle, and already-completed targets are accepted no-ops there.',
+      description: 'Remote face of {@link interrupt}, authorized on the target Session by the Gateway. No catalog, history, persistence, or parent Agent lookup runs. Absent, idle, and already-completed targets are accepted no-ops there.',
       invocation: { kind: 'direct' },
       parameters: [
         {
@@ -75,80 +63,46 @@ const $remote = createTypertRemoteInfo({
           codec: {
             mode: 'strict',
             typeSymbol: '@deepseek-ai/dsh-session/types#SessionId',
-            create: _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_0$schema,
+            create: _deepseek_ai_dsh_subagent_subagents_interruptByUser_parameter_0$schema,
             jsonSchema: {"type":"string"},
           },
           strictCodec: {
             mode: 'strict',
             typeSymbol: '@deepseek-ai/dsh-session/types#SessionId',
-            create: _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_0_strict$schema,
+            create: _deepseek_ai_dsh_subagent_subagents_interruptByUser_parameter_0_strict$schema,
             jsonSchema: {"type":"string"},
-          },
-        },
-        {
-          name: 'parentSessionId',
-          description: 'durable direct parent whose authority is claimed.',
-          source: 'json',
-          codec: {
-            mode: 'strict',
-            typeSymbol: '@deepseek-ai/dsh-session/types#SessionId',
-            create: _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_1$schema,
-            jsonSchema: {"type":"string"},
-          },
-          strictCodec: {
-            mode: 'strict',
-            typeSymbol: '@deepseek-ai/dsh-session/types#SessionId',
-            create: _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_1_strict$schema,
-            jsonSchema: {"type":"string"},
-          },
-        },
-        {
-          name: 'mode',
-          description: 'required continuable-address discriminator.',
-          source: 'json',
-          codec: {
-            mode: 'strict',
-            typeSymbol: '@deepseek-ai/dsh-subagent#subagents/interruptByParent:mode',
-            create: _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_2$schema,
-            jsonSchema: {"type":"string","const":"continuable"},
-          },
-          strictCodec: {
-            mode: 'strict',
-            typeSymbol: '@deepseek-ai/dsh-subagent#subagents/interruptByParent:mode',
-            create: _deepseek_ai_dsh_subagent_subagents_interruptByParent_parameter_2_strict$schema,
-            jsonSchema: {"type":"string","const":"continuable"},
           },
         },
       ],
       result: {
         mode: 'strict',
         typeSymbol: '@deepseek-ai/dsh-subagent/client#SubagentInterruptReceipt',
-        create: _deepseek_ai_dsh_subagent_subagents_interruptByParent_result$schema,
+        create: _deepseek_ai_dsh_subagent_subagents_interruptByUser_result$schema,
         description: 'acknowledgement that the cancel signal was admitted, not that the target is quiescent.',
         jsonSchema: {"type":"object","properties":{"accepted":{"type":"boolean","const":true}},"required":["accepted"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/subagent/subagent/src/index.ts","line":519,"column":3},
+      sourceLocation: {"file":"packages/subagent/subagent/src/index.ts","line":504,"column":3},
     },
     'subagents/prompt': {
       service: 'subagents',
-      description: 'Deliver one browser-authored message to a continuable child through the exact live direct parent, retaining the caller-minted request identity and validated browser zone on the accepted message. Success identifies the message the child\'s inbox accepted; later execution is independent of this call. Queue delivery targets a later turn; steer delivery targets the nearest step and retains the Agent loop\'s best-effort fallback semantics. Image parts are admitted and persisted through the attachment store before delivery, and the child\'s model must accept image input. Cold resume at capacity rejects with `subagent/delivery-unavailable`.',
+      description: 'Deliver one browser-authored message to a continuable child through its live subagent tree root, retaining the caller-minted request identity and validated browser zone on the accepted message. Success identifies the message the child\'s inbox accepted; later execution is independent of this call. Queue delivery targets a later turn; steer delivery targets the nearest step and retains the Agent loop\'s best-effort fallback semantics. Image parts are admitted and persisted through the attachment store before delivery, and the child\'s model must accept image input. Cold resume at capacity rejects with `subagent/delivery-unavailable`. Access is checked on the target Session before attachment admission or restoration.',
       invocation: { kind: 'direct' },
       parameters: [
         {
           name: 'request',
-          description: 'durable address, delivery, minted identity, content, and optional browser zone.',
+          description: 'target id, delivery, minted identity, content, and optional browser zone.',
           source: 'json',
           codec: {
             mode: 'strict',
             typeSymbol: '@deepseek-ai/dsh-subagent/client#SubagentPromptRequest',
             create: _deepseek_ai_dsh_subagent_subagents_prompt_parameter_0$schema,
-            jsonSchema: {"type":"object","properties":{"requestId":{"type":"string","description":"Identity persisted on the accepted message, minted before the call."},"parentSessionId":{"type":"string"},"childSessionId":{"type":"string"},"mode":{"type":"string","const":"continuable","description":"Required discriminator retained from the browser control address."},"delivery":{"type":"string","enum":["queue","steer"],"description":"Whether this message queues a later turn or targets the nearest step."},"content":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"type":{"type":"string","const":"text"},"text":{"type":"string"}},"required":["type","text"],"additionalProperties":true},{"type":"object","properties":{"type":{"type":"string","const":"image"},"mediaType":{"type":"string","enum":["image/png","image/jpeg","image/webp","image/gif"]},"data":{"type":"string"},"name":{"type":"string"}},"required":["type","mediaType","data"],"additionalProperties":true}]},"description":"Browser prompt parts delivered as the child's user message. The Host admits and persists image parts before delivery, so the wire never carries a durable attachment reference the caller could fabricate."},"clientTimeZone":{"type":"string","description":"Optional browser zone sampled for this exact human prompt."}},"required":["requestId","parentSessionId","childSessionId","mode","delivery","content"],"additionalProperties":true},
+            jsonSchema: {"type":"object","properties":{"requestId":{"type":"string","description":"Identity persisted on the accepted message, minted before the call."},"childSessionId":{"type":"string"},"delivery":{"type":"string","enum":["queue","steer"],"description":"Whether this message queues a later turn or targets the nearest step."},"content":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"type":{"type":"string","const":"text"},"text":{"type":"string"}},"required":["type","text"],"additionalProperties":true},{"type":"object","properties":{"type":{"type":"string","const":"image"},"mediaType":{"type":"string","enum":["image/png","image/jpeg","image/webp","image/gif"]},"data":{"type":"string"},"name":{"type":"string"}},"required":["type","mediaType","data"],"additionalProperties":true}]},"description":"Browser prompt parts delivered as the child's user message. The Host admits and persists image parts before delivery, so the wire never carries a durable attachment reference the caller could fabricate."},"clientTimeZone":{"type":"string","description":"Optional browser zone sampled for this exact human prompt."}},"required":["requestId","childSessionId","delivery","content"],"additionalProperties":true},
           },
           strictCodec: {
             mode: 'strict',
             typeSymbol: '@deepseek-ai/dsh-subagent/client#SubagentPromptRequest',
             create: _deepseek_ai_dsh_subagent_subagents_prompt_parameter_0_strict$schema,
-            jsonSchema: {"type":"object","properties":{"requestId":{"type":"string","description":"Identity persisted on the accepted message, minted before the call."},"parentSessionId":{"type":"string"},"childSessionId":{"type":"string"},"mode":{"type":"string","const":"continuable","description":"Required discriminator retained from the browser control address."},"delivery":{"type":"string","enum":["queue","steer"],"description":"Whether this message queues a later turn or targets the nearest step."},"content":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"type":{"type":"string","const":"text"},"text":{"type":"string"}},"required":["type","text"],"additionalProperties":false},{"type":"object","properties":{"type":{"type":"string","const":"image"},"mediaType":{"type":"string","enum":["image/png","image/jpeg","image/webp","image/gif"]},"data":{"type":"string"},"name":{"type":"string"}},"required":["type","mediaType","data"],"additionalProperties":false}]},"description":"Browser prompt parts delivered as the child's user message. The Host admits and persists image parts before delivery, so the wire never carries a durable attachment reference the caller could fabricate."},"clientTimeZone":{"type":"string","description":"Optional browser zone sampled for this exact human prompt."}},"required":["requestId","parentSessionId","childSessionId","mode","delivery","content"],"additionalProperties":false},
+            jsonSchema: {"type":"object","properties":{"requestId":{"type":"string","description":"Identity persisted on the accepted message, minted before the call."},"childSessionId":{"type":"string"},"delivery":{"type":"string","enum":["queue","steer"],"description":"Whether this message queues a later turn or targets the nearest step."},"content":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"type":{"type":"string","const":"text"},"text":{"type":"string"}},"required":["type","text"],"additionalProperties":false},{"type":"object","properties":{"type":{"type":"string","const":"image"},"mediaType":{"type":"string","enum":["image/png","image/jpeg","image/webp","image/gif"]},"data":{"type":"string"},"name":{"type":"string"}},"required":["type","mediaType","data"],"additionalProperties":false}]},"description":"Browser prompt parts delivered as the child's user message. The Host admits and persists image parts before delivery, so the wire never carries a durable attachment reference the caller could fabricate."},"clientTimeZone":{"type":"string","description":"Optional browser zone sampled for this exact human prompt."}},"required":["requestId","childSessionId","delivery","content"],"additionalProperties":false},
           },
         },
       ],
@@ -160,7 +114,7 @@ const $remote = createTypertRemoteInfo({
         description: 'the accepted message\'s inbox identity.',
         jsonSchema: {"type":"object","properties":{"messageId":{"type":"string"}},"required":["messageId"],"additionalProperties":true},
       },
-      sourceLocation: {"file":"packages/subagent/subagent/src/index.ts","line":450,"column":9},
+      sourceLocation: {"file":"packages/subagent/subagent/src/index.ts","line":451,"column":9},
     },
   },
 }, z)
@@ -204,45 +158,52 @@ export const TYPERT = {
           },
           {
             "kind": "method",
-            "name": "waitForChildren",
-            "signature": "async waitForChildren(parent: Agent): Promise<boolean>",
-            "summary": "Join progressing descendants without cancelling them.",
-            "jsDoc": "/**\n * Join progressing descendants without cancelling them. Idle descendants whose\n * inboxes require a later wake stay resident and do not delay host completion.\n * @param parent - the exact parent whose descendant work is observed.\n * @returns whether work was joined; hosts recheck parent idle after true.\n */"
+            "name": "rootOf",
+            "signature": "rootOf(caller: Agent): Agent",
+            "summary": "Resolve the root shared by an Agent and its other agents in its subagent tree.",
+            "jsDoc": "/**\n * Resolve the root shared by an Agent and its other agents in its subagent tree.\n * @param caller - exact live Agent whose subagent ancestry selects the tree.\n * @returns the live root; ordinary Session forks lead independent trees.\n * @throws when the caller or its runtime owner is unavailable.\n */"
+          },
+          {
+            "kind": "method",
+            "name": "namesOf",
+            "signature": "namesOf(agent: Agent): SubagentMemberNames",
+            "summary": "Report the model-facing names of a live tree member and its direct creator.",
+            "jsDoc": "/**\n * Report the model-facing names of a live tree member and its direct creator.\n * The root is `lead`; a descendant is the slash-separated path of names from\n * the root, or its Session id when it or a creator below the root has no name.\n * @param agent - exact live root or resident tree member.\n * @returns the member's name and, for a descendant, its creator's name.\n * @throws when the caller or its runtime owner is unavailable.\n */"
+          },
+          {
+            "kind": "method",
+            "name": "resolveName",
+            "signature": "async resolveName(caller: Agent, name: string, signal: AbortSignal): Promise<SessionId>",
+            "summary": "Resolve a model-supplied agent reference within the caller's tree.",
+            "jsDoc": "/**\n * Resolve a model-supplied agent reference within the caller's tree. `lead`\n * selects the root and a slash-separated path is looked up through the\n * catalogs along it. Any other text that is not a name in the tree is\n * returned as a Session id, because a single token can be one; a\n * slash-separated address never is, so an unmatched path fails instead of\n * reaching a member lookup as an unknown id. Resolution grants no authority:\n * messaging, interruption, and assignment authorize the result.\n * @param caller - exact live Agent whose tree root anchors the lookup.\n * @param name - `lead`, a full name from the root, or a Session id.\n * @param signal - cancellation forwarded to each catalog read.\n * @returns the referenced Session id.\n * @throws {@link SubagentError} `AGENT_NAME_NOT_FOUND` when a path names no member;\n *   when the caller's root is unavailable; or when a catalog along the path cannot be read.\n */"
+          },
+          {
+            "kind": "method",
+            "name": "waitForTreeWork",
+            "signature": "async waitForTreeWork(root: Agent): Promise<boolean>",
+            "summary": "Join progressing subagent tree work for its root.",
+            "jsDoc": "/**\n * Join progressing subagent tree work for its root. Idle members with parked input\n * stay resident without delaying host completion. Ordinary members return false.\n * @param root - exact live subagent tree root whose member work is awaited.\n * @returns whether work was joined; hosts recheck root idle after true.\n */"
           },
           {
             "kind": "method",
             "name": "sendMessage",
             "signature": "async sendMessage( sender: Agent, targetId: SessionId, content: ContentBlock[], options: SubagentSendMessageOptions, ): Promise<MessageId>",
-            "summary": "Steer one model-authored message to the sender's direct parent or direct continuable child.",
-            "jsDoc": "/**\n * Steer one model-authored message to the sender's direct parent or direct\n * continuable child. A running target admits it at the nearest step boundary;\n * an idle target starts a turn, and an absent direct child cold-resumes from\n * persistence. The service derives durable sender attribution from the exact\n * live sender. Caller cancellation stops only pre-acceptance work.\n * @param sender - exact live Agent authorizing and originating the message.\n * @param targetId - durable direct-parent or direct-child session id.\n * @param content - model-authored content to deliver.\n * @param options - caller cancellation before inbox acceptance.\n * @returns the accepted message's inbox id.\n * @throws when continuation services are unavailable, adjacency is rejected,\n *   or the message was not admitted.\n */"
+            "summary": "Steer one model-authored message to another member of the same subagent tree.",
+            "jsDoc": "/**\n * Steer one model-authored message to another member of the same subagent tree.\n * A running target receives it at its next step; an idle target starts a turn.\n * A cold target resumes under its runtime subagent tree root without restoring\n * its creation ancestors. Sender identity is rechecked before inbox acceptance; cancellation\n * stops only pre-acceptance work and never retracts an accepted message.\n * @param sender - exact live root or resident continuable Agent originating the message.\n * @param targetId - another root or continuable member's durable Session id.\n * @param content - model-authored content to deliver.\n * @param options - caller cancellation before inbox acceptance.\n * @returns the accepted message's inbox id.\n * @throws when the target is outside the tree, cannot resume, or rejects input.\n */"
           },
           {
             "kind": "method",
             "name": "interrupt",
             "signature": "interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void",
-            "summary": "Interrupt one live child's current execution under a human parent address or an exact live ancestor Agent.",
-            "jsDoc": "/**\n * Interrupt one live child's current execution under a human parent\n * address or an exact live ancestor Agent. Fire-and-return: the cancel\n * signal is issued before this returns, but the target may keep running\n * until it observes the signal. Unclaimed pending inbox work, the Activation,\n * and published descendants are preserved; claimed work is not requeued.\n * Once the interrupted Agent is idle, a waking send resumes the parked FIFO\n * queue. External backends stop their single execution. An absent target\n * is an accepted no-op, as is a manager-less composition, which cannot own a\n * live Activation.\n * @param targetSessionId - the durable child session id to interrupt.\n * @param authority - the human parent address or exact live ancestor Agent.\n * @throws {SubagentError} `UNAUTHORIZED` when the authority does not own the\n *   live target.\n */"
+            "summary": "Interrupt one live child's current execution under a trusted user operation or an exact live ancestor Agent.",
+            "jsDoc": "/**\n * Interrupt one live child's current execution under a trusted user\n * operation or an exact live ancestor Agent. Fire-and-return: the cancel\n * signal is issued before this returns, but the target may keep running\n * until it observes the signal. Unclaimed pending inbox work, the Activation,\n * and published descendants are preserved; claimed work is not requeued.\n * Once the interrupted Agent is idle, a waking send resumes the parked FIFO\n * queue. External backends stop their single execution. An absent target\n * is an accepted no-op, as is a manager-less composition, which cannot own a\n * live Activation.\n * @param targetSessionId - the durable child session id to interrupt.\n * @param authority - a trusted user operation or exact live ancestor Agent.\n * @throws {SubagentError} `UNAUTHORIZED` when the authority does not own the\n *   live target.\n */"
           },
           {
             "kind": "method",
             "name": "drainDescendants",
             "signature": "async drainDescendants(parents: readonly Agent[]): Promise<void>",
-            "summary": "Close subagent admission below exact live parent Agents, stop only their visible descendant Activations synchronously, then await admitted scoped materializations and release those forests child-first.",
-            "jsDoc": "/**\n * Close subagent admission below exact live parent Agents, stop only their\n * visible descendant Activations synchronously, then await admitted scoped\n * materializations and release those forests child-first. The scoped cutoff\n * lasts until each exact parent leaves the registry; unrelated parent trees\n * remain live.\n * @param parents - exact host-owned parent Agents entering teardown.\n * @returns once every retained descendant activation released its execution handle.\n * @throws an aggregate error after all branches settle when any failed.\n */"
-          },
-          {
-            "kind": "method",
-            "name": "drainChildren",
-            "signature": "async drainChildren(parent: Agent, childIds: readonly SessionId[]): Promise<void>",
-            "summary": "Release selected resident direct children of one exact live parent.",
-            "jsDoc": "/**\n * Release selected resident direct children of one exact live\n * parent. Other children of the same parent remain admitted and resident.\n * Absent targets and a manager-less composition are accepted no-ops.\n * @param parent - exact live direct parent authorizing the selected release.\n * @param childIds - durable direct-child ids to release when resident.\n * @returns once every selected activation released its execution handle.\n * @throws {SubagentError} `UNAUTHORIZED` when a resident target belongs to a\n *   different parent or the supplied parent identity is stale.\n */"
-          },
-          {
-            "kind": "method",
-            "name": "listChildren",
-            "signature": "listChildren(parentSessionId: SessionId, signal?: AbortSignal): Promise<SubagentCatalogEntry[]>",
-            "summary": "Read the parent's durable direct-child catalog without loading or resuming an Agent.",
-            "jsDoc": "/**\n * Read the parent's durable direct-child catalog without loading or resuming an Agent.\n * The service owns and releases the live-preferred Session observation.\n * @param parentSessionId - parent whose direct children are requested.\n * @param signal - cancellation forwarded to the Session query.\n * @returns catalog children in parent event order.\n * @throws {@link SubagentError} when query or catalog projection is unavailable.\n * @throws SessionQueryError when the parent cannot be read or the query is cancelled.\n */"
+            "summary": "Close admission and stop all instances in the selected subagent trees, then await pending startup and cleanup.",
+            "jsDoc": "/**\n * Close admission and stop all instances in the selected subagent trees, then await\n * pending startup and cleanup. Ordinary members are ignored. The cutoff lasts\n * until each exact root leaves the registry; unrelated subagent trees remain live.\n * @param parents - exact live subagent tree roots entering teardown.\n * @returns once all admitted startup and member cleanup have settled.\n * @throws an aggregate error after all branches settle when any failed.\n */"
           },
           {
             "kind": "method",
@@ -254,16 +215,16 @@ export const TYPERT = {
           {
             "kind": "method",
             "name": "prompt",
-            "signature": "@Remote('prompt') async prompt(request: SubagentPromptRequest, signal: AbortSignal): Promise<SubagentPromptReceipt>",
-            "summary": "Deliver one browser-authored message to a continuable child through the exact live direct parent, retaining the caller-minted request identity and validated browser zone on the accepted message.",
-            "jsDoc": "/**\n * Deliver one browser-authored message to a continuable child through the\n * exact live direct parent, retaining the caller-minted request identity and\n * validated browser zone on the accepted message. Success identifies the\n * message the child's inbox accepted; later execution is independent of this\n * call. Queue delivery targets a later turn; steer delivery targets the\n * nearest step and retains the Agent loop's best-effort fallback semantics.\n * Image parts are admitted and persisted through the attachment store\n * before delivery, and the child's model must accept image input.\n * Cold resume at capacity rejects with `subagent/delivery-unavailable`.\n * @param request - durable address, delivery, minted identity, content, and optional browser zone.\n * @param signal - carrier cancellation, owning the call until inbox acceptance.\n * @returns the accepted message's inbox identity.\n * @throws {RemoteError} `gateway/bad-request`, `subagent/attachment-invalid`,\n *   `subagent/invalid-time-zone`, `subagent/parent-unavailable`,\n *   `subagent/not-resumable`, `subagent/unauthorized`,\n *   `subagent/delivery-unavailable`, `gateway/cancelled`, or `gateway/internal`.\n */"
+            "signature": "@Remote({ name: 'prompt', resources: { session: request => request.childSessionId } }) async prompt(request: SubagentPromptRequest, signal: AbortSignal): Promise<SubagentPromptReceipt>",
+            "summary": "Deliver one browser-authored message to a continuable child through its live subagent tree root, retaining the caller-minted request identity and validated browser zone on the accepted message.",
+            "jsDoc": "/**\n * Deliver one browser-authored message to a continuable child through its\n * live subagent tree root, retaining the caller-minted request identity and\n * validated browser zone on the accepted message. Success identifies the\n * message the child's inbox accepted; later execution is independent of this\n * call. Queue delivery targets a later turn; steer delivery targets the\n * nearest step and retains the Agent loop's best-effort fallback semantics.\n * Image parts are admitted and persisted through the attachment store\n * before delivery, and the child's model must accept image input.\n * Cold resume at capacity rejects with `subagent/delivery-unavailable`.\n * Access is checked on the target Session before attachment admission or restoration.\n * @param request - target id, delivery, minted identity, content, and optional browser zone.\n * @param signal - carrier cancellation, owning the call until inbox acceptance.\n * @returns the accepted message's inbox identity.\n * @throws {RemoteError} `gateway/bad-request`, `subagent/attachment-invalid`,\n *   `subagent/invalid-time-zone`,\n *   `subagent/not-resumable`, `subagent/unauthorized`,\n *   `subagent/delivery-unavailable`, `gateway/cancelled`, or `gateway/internal`.\n */"
           },
           {
             "kind": "method",
-            "name": "interruptByParent",
-            "signature": "@Remote('interruptByParent') interruptByParent( childSessionId: SessionId, parentSessionId: SessionId, mode: 'continuable', ): SubagentInterruptReceipt",
-            "summary": "Remote face of {@link interrupt} under one durable parent address.",
-            "jsDoc": "/**\n * Remote face of {@link interrupt} under one durable parent address. No\n * catalog, history, persistence, or parent Agent lookup runs: the core\n * primitive alone authorizes the address against the live Activation, which\n * is what keeps a live child interruptible while its parent Agent is offline.\n * Absent, idle, and already-completed targets are accepted no-ops there.\n * @param childSessionId - durable child session id to interrupt.\n * @param parentSessionId - durable direct parent whose authority is claimed.\n * @param mode - required continuable-address discriminator.\n * @returns acknowledgement that the cancel signal was admitted, not that the target is quiescent.\n * @throws {RemoteError} `gateway/bad-request` for an empty id,\n *   `subagent/unauthorized` when the address does not own the live target,\n *   otherwise `gateway/internal`.\n */"
+            "name": "interruptByUser",
+            "signature": "@Remote({ name: 'interruptByUser', resources: { session: childSessionId => childSessionId } }) interruptByUser(childSessionId: SessionId): SubagentInterruptReceipt",
+            "summary": "Remote face of {@link interrupt}, authorized on the target Session by the Gateway.",
+            "jsDoc": "/**\n * Remote face of {@link interrupt}, authorized on the target Session by the Gateway.\n * No catalog, history, persistence, or parent Agent lookup runs.\n * Absent, idle, and already-completed targets are accepted no-ops there.\n * @param childSessionId - durable child session id to interrupt.\n * @returns acknowledgement that the cancel signal was admitted, not that the target is quiescent.\n * @throws {RemoteError} `gateway/bad-request` for an empty id,\n *   otherwise `gateway/internal`.\n */"
           },
           {
             "kind": "method",
@@ -278,13 +239,6 @@ export const TYPERT = {
             "signature": "getProvider(name: string): SubagentProvider | undefined",
             "summary": "Look up a provider by name.",
             "jsDoc": "/**\n * Look up a provider by name.\n * @param name - the provider name.\n * @returns the provider, or undefined when absent.\n */"
-          },
-          {
-            "kind": "method",
-            "name": "list",
-            "signature": "list(): string[]",
-            "summary": "List registered provider names in insertion order.",
-            "jsDoc": "/**\n * List registered provider names in insertion order.\n * @returns the registered names.\n */"
           }
         ],
         "types": [
@@ -561,6 +515,10 @@ export const TYPERT = {
             "declaration": "export type KnownCatalogMode = { readonly mode: 'one-shot'; readonly label?: string; } | { readonly mode: 'continuable'; readonly label: string; };"
           },
           {
+            "name": "KnownSubagentCatalogFields",
+            "declaration": "export type KnownSubagentCatalogFields = { readonly mode: 'one-shot'; readonly label?: string; } | { readonly mode: 'external'; readonly label?: string; readonly name?: string; } | { readonly mode: 'continuable'; readonly label: string; readonly name?: string; };"
+          },
+          {
             "name": "LegacyAfterScheduleRecord",
             "declaration": "export interface LegacyAfterScheduleRecord extends Omit<AfterScheduleRecord, 'title'> {\n    readonly title?: string;\n}"
           },
@@ -642,7 +600,7 @@ export const TYPERT = {
           },
           {
             "name": "MessageSourceMap",
-            "declaration": "export interface MessageSourceMap {\n    user: { kind: 'user'; };\n    model: ModelMessageSource;\n    tool: ToolMessageSource;\n    'system-prompt': SystemPromptMessageSource;\n    'model-selection': { kind: 'model-selection'; } & ContextFormed;\n    'tool-registry': { kind: 'tool-registry'; };\n    'action-cards': { kind: 'action-cards'; through: SessionSeq; } & ContextFormed;\n    'runtime-context': { kind: 'runtime-context'; } & ContextFormed;\n    'user-rpc': { kind: 'user'; rpcId: SessionRequestId; clientTimeZone?: string; principal?: Principal; };\n    'working-directory': { kind: 'working-directory'; };\n    'user-approval': { kind: 'user-approval'; } & ContextFormed;\n    'agent-message': AgentMessageSource;\n    'subagent-settled': SubagentSettledMessageSource;\n    'skill-invocation': SkillInvocationSource;\n    'ptc-mode': { kind: 'ptc-mode'; };\n    'compact-checkpoint': CompactionCheckpointSource;\n    'cordis-host-runner': { kind: 'cordis-host-runner'; };\n    'user-question-reply': { kind: 'user-question-reply'; callId: ToolCallId; outcome: 'answered'; };\n    'team-message': TeamMessageSource;\n    goal: GoalMessageSource;\n    'plan-mode': { kind: 'plan-mode'; } & ContextFormed;\n    schedule: { kind: 'schedule'; } & ContextFormed;\n    'session-reference': SessionReferenceSource;\n    webhook: { readonly kind: 'webhook'; readonly provider: string; readonly source: WebhookSourceId; readonly deliveryId: WebhookDeliveryId; readonly ruleId: WebhookRuleId; readonly form: 'notice'; readonly summary: string; };\n}"
+            "declaration": "export interface MessageSourceMap {\n    user: { kind: 'user'; };\n    model: ModelMessageSource;\n    tool: ToolMessageSource;\n    'system-prompt': SystemPromptMessageSource;\n    'model-selection': { kind: 'model-selection'; } & ContextFormed;\n    'tool-registry': { kind: 'tool-registry'; };\n    'action-cards': { kind: 'action-cards'; through: SessionSeq; } & ContextFormed;\n    'runtime-context': { kind: 'runtime-context'; } & ContextFormed;\n    'team-message': TeamMessageSource;\n    'working-directory': { kind: 'working-directory'; };\n    'user-approval': { kind: 'user-approval'; } & ContextFormed;\n    'agent-message': AgentMessageSource;\n    'subagent-settled': SubagentSettledMessageSource;\n    'user-rpc': { kind: 'user'; rpcId: SessionRequestId; clientTimeZone?: string; principal?: Principal; };\n    'retry-rpc': { kind: 'retry'; rpcId: SessionRequestId; clientTimeZone?: string; principal?: Principal; };\n    'skill-invocation': SkillInvocationSource;\n    'ptc-mode': { kind: 'ptc-mode'; };\n    'compact-checkpoint': CompactionCheckpointSource;\n    'cordis-host-runner': { kind: 'cordis-host-runner'; };\n    'user-question-reply': { kind: 'user-question-reply'; callId: ToolCallId; outcome: 'answered'; };\n    goal: GoalMessageSource;\n    'plan-mode': { kind: 'plan-mode'; } & ContextFormed;\n    schedule: { kind: 'schedule'; } & ContextFormed;\n    'session-reference': SessionReferenceSource;\n    webhook: { readonly kind: 'webhook'; readonly provider: string; readonly source: WebhookSourceId; readonly deliveryId: WebhookDeliveryId; readonly ruleId: WebhookRuleId; readonly form: 'notice'; readonly summary: string; };\n}"
           },
           {
             "name": "Model",
@@ -750,15 +708,19 @@ export const TYPERT = {
           },
           {
             "name": "Session",
-            "declaration": "export class Session {\n    get surface(): SessionSurface;\n    readonly header: SessionHeader;\n    readonly inheritedEventCount: SessionLogOffset;\n    get id(): SessionId;\n    readonly firstLiveSeq: SessionLogOffset;\n    readonly firstLifecycleSeq: SessionLogOffset;\n    eventAt(seq: SessionSeq): SessionEvent | undefined;\n    snapshotEvents(fromSeq: SessionLogOffset = SessionLogOffset(0), toSeqExclusive: SessionLogOffset = this.seq): readonly SessionEvent[];\n    ownEvents(): readonly SessionEvent[];\n    isOwnSeq(seq: SessionSeq): boolean;\n    get seq(): SessionLogOffset;\n    append<T extends SessionEventType>(type: T, data: SessionEventMap[T], ...opts: T extends SurfaceEventType ? [opts: SurfaceIntent<T>] : []): SessionEvent<T>;\n    requestHeader(): EpochHeader | undefined;\n    requestContext(): RequestContext | undefined;\n    toolHistory(): ToolHistory;\n    deriveMessages(): Message[];\n    deriveEventMessage(event: SessionEvent): Message | null;\n}"
+            "declaration": "export class Session {\n    get surface(): SessionSurface;\n    readonly header: SessionHeader;\n    readonly inheritedEventCount: SessionLogOffset;\n    get id(): SessionId;\n    readonly firstLiveSeq: SessionLogOffset;\n    readonly firstLifecycleSeq: SessionLogOffset;\n    eventAt(seq: SessionSeq): SessionEvent | undefined;\n    snapshotEvents(fromSeq: SessionLogOffset = SessionLogOffset(0), toSeqExclusive: SessionLogOffset = this.seq): readonly SessionEvent[];\n    ownEvents(): readonly SessionEvent[];\n    isOwnSeq(seq: SessionSeq): boolean;\n    get seq(): SessionLogOffset;\n    get currentBatchPublication(): SessionEvent | undefined;\n    append(inputs: readonly SessionEventInput[]): readonly SessionEvent[];\n    append<T extends SessionEventType>(type: T, data: SessionEventMap[T], ...opts: T extends SurfaceEventType ? [opts: SurfaceIntent<T>] : []): SessionEvent<T>;\n    requestHeader(): EpochHeader | undefined;\n    requestContext(): RequestContext | undefined;\n    toolHistory(): ToolHistory;\n    deriveMessages(): Message[];\n    deriveEventMessage(event: SessionEvent): Message | null;\n}"
           },
           {
             "name": "SessionEvent",
             "declaration": "export type SessionEvent<T extends SessionEventType = SessionEventType> = { [K in SessionEventType]: { type: K; seq: SessionSeq; time: number; data: SessionEventMap[K]; ignorable?: true; } & (K extends SurfaceEventType ? SurfaceIntent<K> : { surfaceOp?: never; sourceEventSeqs?: never; }) }[T];"
           },
           {
+            "name": "SessionEventInput",
+            "declaration": "export type SessionEventInput = { [K in SessionEventType]: readonly [type: K, data: SessionEventMap[K], ...opts: K extends SurfaceEventType ? [opts: SurfaceIntent<K>] : []] }[SessionEventType];"
+          },
+          {
             "name": "SessionEventMap",
-            "declaration": "export interface SessionEventMap {\n    'turn/start': { turn: number; };\n    'turn/end': { turn: number; reason: TurnEndReason; };\n    'step/start': { turn: number; step: number; };\n    'step/end': { turn: number; step: number; };\n    'user/message': UserMessage;\n    'developer/message': { turn: number; step: number; message: DeveloperMessage; headerSeq?: SessionSeq; };\n    'system/message': { turn: number; step: number; message: SystemMessage; };\n    'assistant/message': { turn: number; step: number; message: AssistantMessage; stream: AssistantStreamRecord[]; usage?: TokenUsage; interrupted?: true; };\n    'assistant/attempt': { turn: number; step: number; stream: AssistantStreamRecord[]; };\n    'tool/call': { turn: number; step: number; callId: ToolCallId; name: string; arguments: string; };\n    'tool/result': { turn: number; step: number; message: ToolResultMessage; error?: { name: string; code: string; reason?: string; }; meta?: JsonValue; };\n    'request/header': { header: EpochHeader; reason: RequestHeaderReason; startsSeries?: true; };\n    'request/context': RequestContext;\n    'session/end-seed': { inherited?: true; };\n    'agent/inbox/spliced': { target: InboxTarget; start: number; removedCount?: number; inserted: UserMessage[]; outcome?: 'canceled'; };\n    'model/selection': ModelSelection;\n    'sandbox/mode': { mode: SandboxMode; source?: 'delegation'; };\n    'agent-preset/selected': { agentPreset: string; };\n    'job/registered': JobRegisteredData;\n    'job/settled': JobSettledData;\n    'command/run': { commandId: CommandId; name: string; args?: string; source: CommandSource; };\n    'command/done': { commandId: CommandId; kind: 'success' | 'error'; text?: string; sourceEventSeq?: import('@deepseek-ai/dsh-session/types').SessionSeq; };\n    'image/offload': { targets: ImageOffloadTarget[]; };\n    'session/title': SessionTitleEventData;\n    'todo/write': { todos: TodoItem[]; };\n    'working-directory/change': { cwd: string; };\n    'approval/asked': { id: ApprovalRequestId; toolName: string; callId?: ToolCallId; reason?: string; };\n    'approval/decided': { id: ApprovalRequestId; outcome: ApprovalOutcome; };\n    'approval/policy': { policy: ApprovalPolicy; source?: 'delegation'; };\n    'permission/preset': { preset: string; };\n    'subagent/descriptor': SubagentDescriptorData;\n    'subagent/catalog': SubagentCatalogEvent;\n    'compaction/start': { compactionId: CompactionId; sourceCommandId?: CommandId; turn: number | null; };\n    'compaction/summary': { compactionId: CompactionId; sourceCommandId?: CommandId; summary: ContentBlock[]; shadowedRange: { start: SessionSeq; end: SessionSeq; }; shadowedSeqs: SessionSeq[]; shadowedTokenCount: number; provider: string; model: string; maxTokens?: number; usage?: TokenUsage; } & ({ rawOutput: ContentBlock[]; llmStreamCall: true; } | { rawOutput?: ContentBlock[]; llmStreamCall?: never; });\n    'compaction/end': { compactionId: CompactionId; sourceCommandId?: CommandId; turn: number | null; error?: string; };\n    'compaction/prune': { shadowedRange: { start: SessionSeq; end: SessionSeq; }; shadowedSeqs: SessionSeq[]; shadowedTokenCount: number; };\n    'tool/ptc-dispatch-start': PtcDispatchStartEventData;\n    'tool/ptc-dispatch': PtcDispatchEventData;\n    'feedback/record': FeedbackRecord;\n    'llm/retry': LlmRetryEventData;\n    'llm/retry-started': LlmRetryStartedEventData;\n    'team/member': { version: 2; teamId: TeamId; member: TeamMemberSnapshot; };\n    'team/task': { version: 2; teamId: TeamId; task: TeamTaskSnapshot; };\n    'team/message/queued': { version: 2; teamId: TeamId; message: TeamMessageSnapshot; };\n    'team/message/delivered': { version: 2; teamId: TeamId; messageId: TeamMessageId; targetId: SessionId; };\n    'goal/change': GoalChangeMeta;\n    'feedback/message-put': MessageFeedbackPut;\n    'feedback/message-delete': MessageFeedbackDelete;\n    'plan/mode': { active: boolean; };\n    'schedule/change': ScheduleChange;\n    'session-log-deepseek/delivery-accepted': { sessionId: import('@deepseek-ai/dsh-session/types').SessionId; sessionFormatVersion?: number; throughSeq: import('@deepseek-ai/dsh-session/types').SessionSeq; };\n    'subagent/model-selection-policy': { allowedModels: AllowedModelRoute[]; };\n    'workspace/changes': { turn: number; };\n}"
+            "declaration": "export interface SessionEventMap {\n    'turn/start': { turn: number; };\n    'turn/end': { turn: number; reason: TurnEndReason; };\n    'step/start': { turn: number; step: number; };\n    'step/end': { turn: number; step: number; };\n    'user/message': UserMessage;\n    'developer/message': { turn: number; step: number; message: DeveloperMessage; headerSeq?: SessionSeq; };\n    'system/message': { turn: number; step: number; message: SystemMessage; };\n    'assistant/message': { turn: number; step: number; message: AssistantMessage; stream: AssistantStreamRecord[]; usage?: TokenUsage; interrupted?: true; };\n    'assistant/attempt': { turn: number; step: number; stream: AssistantStreamRecord[]; };\n    'tool/call': { turn: number; step: number; callId: ToolCallId; name: string; arguments: string; };\n    'tool/result': { turn: number; step: number; message: ToolResultMessage; error?: { name: string; code: string; reason?: string; }; meta?: JsonValue; };\n    'request/header': { header: EpochHeader; reason: RequestHeaderReason; startsSeries?: true; };\n    'request/context': RequestContext;\n    'session/end-seed': { inherited?: true; };\n    'agent/inbox/spliced': { target: InboxTarget; start: number; removedCount?: number; inserted: UserMessage[]; outcome?: 'canceled'; };\n    'model/selection': ModelSelection;\n    'sandbox/mode': { mode: SandboxMode; source?: 'delegation'; };\n    'agent-preset/selected': { agentPreset: string; };\n    'team/mode': { enabled: boolean; };\n    'team/member': { version: 2; teamId: TeamId; member: TeamMemberSnapshot; };\n    'team/task': { version: 2; teamId: TeamId; task: TeamTaskSnapshot; };\n    'team/message/queued': { version: 2; teamId: TeamId; message: TeamMessageSnapshot; };\n    'team/message/delivered': { version: 2; teamId: TeamId; messageId: TeamMessageId; targetId: SessionId; };\n    'working-directory/change': { cwd: string; };\n    'image/offload': { targets: ImageOffloadTarget[]; };\n    'session/title': SessionTitleEventData;\n    'todo/write': { todos: TodoItem[]; };\n    'approval/asked': { id: ApprovalRequestId; toolName: string; callId?: ToolCallId; reason?: string; };\n    'approval/decided': { id: ApprovalRequestId; outcome: ApprovalOutcome; };\n    'approval/policy': { policy: ApprovalPolicy; source?: 'delegation'; };\n    'command/run': { commandId: CommandId; name: string; args?: string; source: CommandSource; };\n    'command/done': { commandId: CommandId; kind: 'success' | 'error'; text?: string; sourceEventSeq?: import('@deepseek-ai/dsh-session/types').SessionSeq; };\n    'permission/preset': { preset: string; };\n    'subagent/descriptor': SubagentDescriptorData;\n    'subagent/catalog': SubagentCatalogEvent;\n    'job/registered': JobRegisteredData;\n    'job/settled': JobSettledData;\n    'compaction/start': { compactionId: CompactionId; sourceCommandId?: CommandId; turn: number | null; };\n    'compaction/summary': { compactionId: CompactionId; sourceCommandId?: CommandId; summary: ContentBlock[]; shadowedRange: { start: SessionSeq; end: SessionSeq; }; shadowedSeqs: SessionSeq[]; shadowedTokenCount: number; provider: string; model: string; maxTokens?: number; usage?: TokenUsage; } & ({ rawOutput: ContentBlock[]; llmStreamCall: true; } | { rawOutput?: ContentBlock[]; llmStreamCall?: never; });\n    'compaction/end': { compactionId: CompactionId; sourceCommandId?: CommandId; turn: number | null; error?: string; };\n    'compaction/prune': { shadowedRange: { start: SessionSeq; end: SessionSeq; }; shadowedSeqs: SessionSeq[]; shadowedTokenCount: number; };\n    'tool/ptc-dispatch-start': PtcDispatchStartEventData;\n    'tool/ptc-dispatch': PtcDispatchEventData;\n    'feedback/record': FeedbackRecord;\n    'llm/retry': LlmRetryEventData;\n    'llm/retry-started': LlmRetryStartedEventData;\n    'goal/change': GoalChangeMeta;\n    'feedback/message-put': MessageFeedbackPut;\n    'feedback/message-delete': MessageFeedbackDelete;\n    'plan/mode': { active: boolean; };\n    'schedule/change': ScheduleChange;\n    'session-log-deepseek/delivery-accepted': { sessionId: import('@deepseek-ai/dsh-session/types').SessionId; sessionFormatVersion?: number; throughSeq: import('@deepseek-ai/dsh-session/types').SessionSeq; };\n    'subagent/model-selection-policy': { allowedModels: AllowedModelRoute[]; };\n    'workspace/changes': { turn: number; };\n}"
           },
           {
             "name": "SessionEventType",
@@ -822,31 +784,31 @@ export const TYPERT = {
           },
           {
             "name": "SubagentActivation",
-            "declaration": "export interface SubagentActivation {\n    readonly childId: SessionId;\n    readonly messageId?: MessageId;\n    readonly result: Promise<SubagentResult>;\n    dispose(): Promise<void>;\n}"
+            "declaration": "export interface SubagentActivation {\n    readonly childId: SessionId;\n    readonly name: string;\n    readonly messageId?: MessageId;\n    readonly result: Promise<SubagentResult>;\n    dispose(): Promise<void>;\n}"
           },
           {
             "name": "SubagentActivationSpec",
-            "declaration": "export interface SubagentActivationSpec {\n    readonly provider: string;\n    readonly label: string;\n    readonly childId?: SessionId;\n    readonly request: Omit<SubagentStartRequest, 'label' | 'signal'>;\n    readonly signal: AbortSignal;\n    readonly delivery: 'parent' | 'caller';\n}"
+            "declaration": "export interface SubagentActivationSpec extends Omit<SubagentStartRequest, 'label' | 'signal'> {\n    readonly provider: string;\n    readonly label: string;\n    readonly name?: string;\n    readonly childId?: SessionId;\n    readonly signal: AbortSignal;\n    readonly delivery: 'parent' | 'caller';\n}"
           },
           {
             "name": "SubagentCapabilities",
             "declaration": "export interface SubagentCapabilities {\n    readonly agentOptions: boolean;\n    readonly agentPreset: boolean;\n    readonly outputSchema: boolean;\n    readonly depthLimit: boolean;\n}"
           },
           {
-            "name": "SubagentCatalogEntry",
-            "declaration": "export type SubagentCatalogEntry = { readonly id: SessionId; readonly createdAt: number; } & ({ readonly mode: 'one-shot'; readonly label?: string; } | { readonly mode: 'external'; readonly label?: string; } | { readonly mode: 'continuable'; readonly label: string; } | { readonly mode: 'unknown'; readonly label?: string; });"
-          },
-          {
             "name": "SubagentCatalogEvent",
-            "declaration": "export type SubagentCatalogEvent = { readonly childId: SessionId; readonly childCreatedAt: number; } & (({ readonly version: 0; } & KnownCatalogMode) | ({ readonly version: 1; } & (KnownCatalogMode | { readonly mode: 'unknown'; readonly label?: string; })) | { readonly version: 2; readonly mode: 'external'; readonly label?: string; });"
+            "declaration": "export type SubagentCatalogEvent = { readonly childId: SessionId; readonly childCreatedAt: number; } & (({ readonly version: 0; } & KnownCatalogMode) | ({ readonly version: 1; } & (KnownCatalogMode | { readonly mode: 'unknown'; readonly label?: string; })) | { readonly version: 2; readonly mode: 'external'; readonly label?: string; } | ({ readonly version: 3; readonly name: string; } & ({ readonly mode: 'continuable'; readonly label: string; } | { readonly mode: 'external'; readonly label?: string; })));"
           },
           {
             "name": "SubagentCatalogRow",
-            "declaration": "export type SubagentCatalogRow = { readonly id: SessionId; readonly activity: 'running' | 'inactive'; } & ({ readonly mode: 'one-shot'; readonly label?: string; } | { readonly mode: 'external'; readonly label?: string; } | { readonly mode: 'continuable'; readonly label: string; });"
+            "declaration": "export type SubagentCatalogRow = { readonly id: SessionId; readonly activity: 'running' | 'inactive'; } & KnownSubagentCatalogFields;"
+          },
+          {
+            "name": "SubagentDelivery",
+            "declaration": "export type SubagentDelivery = 'queue' | 'steer';"
           },
           {
             "name": "SubagentDescendantListEntry",
-            "declaration": "export type SubagentDescendantListEntry = SubagentListEntry & { readonly parentId: SessionId; readonly depth: number; };"
+            "declaration": "export type SubagentDescendantListEntry = SubagentListEntry & { readonly parentId: SessionId; readonly depth: number; readonly path?: string; };"
           },
           {
             "name": "SubagentDescriptorBase",
@@ -858,7 +820,7 @@ export const TYPERT = {
           },
           {
             "name": "SubagentInterruptAuthority",
-            "declaration": "export type SubagentInterruptAuthority = { readonly kind: 'user'; readonly parentSessionId: SessionId; } | { readonly kind: 'ancestor'; readonly agent: Agent; };"
+            "declaration": "export type SubagentInterruptAuthority = { readonly kind: 'user'; } | { readonly kind: 'ancestor'; readonly agent: Agent; };"
           },
           {
             "name": "SubagentInterruptReceipt",
@@ -869,12 +831,16 @@ export const TYPERT = {
             "declaration": "export type SubagentListEntry = SubagentCatalogRow & { readonly kind: 'child'; readonly hasChildren: boolean; } | { readonly kind: 'diagnostic'; readonly id: SessionId; readonly reason: 'corrupt' | 'unsupported' | 'unavailable'; };"
           },
           {
+            "name": "SubagentMemberNames",
+            "declaration": "export interface SubagentMemberNames {\n    readonly self: string;\n    readonly parent?: string;\n}"
+          },
+          {
             "name": "SubagentPromptReceipt",
             "declaration": "export interface SubagentPromptReceipt {\n    readonly messageId: MessageId;\n}"
           },
           {
             "name": "SubagentPromptRequest",
-            "declaration": "export interface SubagentPromptRequest {\n    readonly requestId: SubagentPromptRequestId;\n    readonly parentSessionId: SessionId;\n    readonly childSessionId: SessionId;\n    readonly mode: 'continuable';\n    readonly delivery: 'queue' | 'steer';\n    readonly content: readonly PromptContentPart[];\n    readonly clientTimeZone?: string;\n}"
+            "declaration": "export interface SubagentPromptRequest {\n    readonly requestId: SubagentPromptRequestId;\n    readonly childSessionId: SessionId;\n    readonly delivery: SubagentDelivery;\n    readonly content: readonly PromptContentPart[];\n    readonly clientTimeZone?: string;\n}"
           },
           {
             "name": "SubagentPromptRequestId",
@@ -898,7 +864,7 @@ export const TYPERT = {
           },
           {
             "name": "SubagentSettledMessageSource",
-            "declaration": "export interface SubagentSettledMessageSource {\n    readonly kind: 'subagent-settled';\n    readonly form: 'notice';\n    readonly summary: string;\n    readonly senderSessionId: SessionId;\n}"
+            "declaration": "export interface SubagentSettledMessageSource {\n    readonly kind: 'subagent-settled';\n    readonly form: 'notice';\n    readonly summary: string;\n    readonly stopReason?: SubagentResult['stopReason'];\n    readonly senderSessionId: SessionId;\n}"
           },
           {
             "name": "SubagentStartRequest",
@@ -966,7 +932,7 @@ export const TYPERT = {
           },
           {
             "name": "TeamTaskSnapshot",
-            "declaration": "export interface TeamTaskSnapshot {\n    readonly id: TeamTaskId;\n    readonly revision: number;\n    readonly subject: string;\n    readonly description: string;\n    readonly status: TeamTaskStatus;\n    readonly ownerId?: SessionId;\n    readonly blockedBy: TeamTaskId[];\n    readonly writeScopes: string[];\n}"
+            "declaration": "export interface TeamTaskSnapshot {\n    readonly id: TeamTaskId;\n    readonly revision: number;\n    readonly subject: string;\n    readonly description: string;\n    readonly status: TeamTaskStatus;\n    readonly ownerId?: SessionId;\n    readonly ownerName?: string;\n    readonly blockedBy: TeamTaskId[];\n    readonly writeScopes: string[];\n}"
           },
           {
             "name": "TeamTaskStatus",
@@ -1053,14 +1019,14 @@ export const TYPERT = {
     ],
     "events": [
       {
-        "description": "A published child settled. Scope-filtered dispatch uses the same delegating parent carrier as `subagent/start`, so the lifecycle pair reaches the same scoped audience.",
+        "description": "A published child settled. Scope-filtered dispatch uses the same subagent tree-root carrier as `subagent/start`, so the lifecycle pair reaches the same scoped audience.",
         "summary": "A published child settled.",
         "tags": [
           {
             "name": "param",
             "argument": "info",
-            "comment": "- the run identity and terminal outcome.",
-            "text": "@param info - the run identity and terminal outcome.\n     *"
+            "comment": "- run identity, durable direct creator `parentSessionId`, and terminal outcome.",
+            "text": "@param info - run identity, durable direct creator `parentSessionId`, and terminal outcome.\n     *"
           },
           {
             "name": "mode",
@@ -1068,7 +1034,7 @@ export const TYPERT = {
             "text": "@mode emit"
           }
         ],
-        "jsDoc": "/**\n * A published child settled. Scope-filtered dispatch uses the same delegating\n * parent carrier as `subagent/start`, so the lifecycle pair reaches the\n * same scoped audience.\n * @param info - the run identity and terminal outcome.\n * @mode emit\n */",
+        "jsDoc": "/**\n * A published child settled. Scope-filtered dispatch uses the same subagent tree-root\n * carrier as `subagent/start`, so the lifecycle pair reaches the\n * same scoped audience.\n * @param info - run identity, durable direct creator `parentSessionId`, and terminal outcome.\n * @mode emit\n */",
         "name": "subagent/end",
         "mode": "emit",
         "signature": "'subagent/end'(this: Scoped<SubagentRuntime>, info: SubagentRunEndInfo): void"
@@ -1116,14 +1082,14 @@ export const TYPERT = {
         "signature": "'subagent/provider-removed'(name: string): void"
       },
       {
-        "description": "A provider established a published child. For in-process providers, `ctx.agents.get(info.id)` resolves during this notification. Scope-filtered dispatch keys the carrier by the delegating parent, so a parent-scoped listener observes only its own delegations. Paired with `subagent/end`.",
+        "description": "A provider established a published child. For in-process providers, `ctx.agents.get(info.id)` resolves during this notification. Scope-filtered dispatch keys the carrier by the subagent tree root, so a root-scoped listener observes all subagent tree activations. Paired with `subagent/end`.",
         "summary": "A provider established a published child.",
         "tags": [
           {
             "name": "param",
             "argument": "info",
-            "comment": "- the provider and published child identity.",
-            "text": "@param info - the provider and published child identity.\n     *"
+            "comment": "- provider, child identity, and durable direct creator `parentSessionId`.",
+            "text": "@param info - provider, child identity, and durable direct creator `parentSessionId`.\n     *"
           },
           {
             "name": "mode",
@@ -1131,7 +1097,7 @@ export const TYPERT = {
             "text": "@mode emit"
           }
         ],
-        "jsDoc": "/**\n * A provider established a published child. For in-process providers,\n * `ctx.agents.get(info.id)` resolves during this notification.\n * Scope-filtered dispatch keys the carrier by the delegating parent, so a\n * parent-scoped listener observes only its own delegations. Paired with\n * `subagent/end`.\n * @param info - the provider and published child identity.\n * @mode emit\n */",
+        "jsDoc": "/**\n * A provider established a published child. For in-process providers,\n * `ctx.agents.get(info.id)` resolves during this notification.\n * Scope-filtered dispatch keys the carrier by the subagent tree root, so a\n * root-scoped listener observes all subagent tree activations. Paired with\n * `subagent/end`.\n * @param info - provider, child identity, and durable direct creator `parentSessionId`.\n * @mode emit\n */",
         "name": "subagent/start",
         "mode": "emit",
         "signature": "'subagent/start'(this: Scoped<SubagentRuntime>, info: SubagentRunInfo): void"

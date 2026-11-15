@@ -1,0 +1,20 @@
+diff --git a/sc/source/ui/app/inputhdl.cxx b/sc/source/ui/app/inputhdl.cxx
+index 6f5ea51bc..4a7d4e4f2 100644
+--- a/sc/source/ui/app/inputhdl.cxx
++++ b/sc/source/ui/app/inputhdl.cxx
+@@ -3625,10 +3625,12 @@ void ScInputHandler::EnterHandler2(ScEnterMode nBlockMode, bool bForget, OUStrin
+     else
+         pSfxApp->Broadcast( SfxHint( SfxHintId::ScKillEditView ) );
+ 
+-    if ( bOldMod && pExecuteSh && pCellAttrs && !bForget )
++    if ( bOldMod && pExecuteSh && !bForget
++        && (pCellAttrs || (!bProtected && comphelper::LibreOfficeKit::isActive())) )
+     {
+-        // Combine with input?
+-        pExecuteSh->ApplySelectionPattern( *pCellAttrs, true );
++        if (pCellAttrs)
++            pExecuteSh->ApplySelectionPattern( *pCellAttrs, true );
++        // Tiled input can populate an automatic row whose font was set while empty.
+         pExecuteSh->AdjustBlockHeight();
+     }
+ 

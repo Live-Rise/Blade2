@@ -1,0 +1,1 @@
+{"version":3,"file":"CalendarIcon.d.ts","sourceRoot":"","sources":["../../../src/client/CalendarIcon.tsx"],"names":[],"mappings":"AAAA,wDAAwD;AACxD,OAAO,KAAK,EAAE,SAAS,EAAE,MAAM,OAAO,CAAA;AAEtC,2EAA2E;AAC3E,MAAM,WAAW,iBAAiB;IAChC,kEAAkE;IAClE,QAAQ,CAAC,SAAS,CAAC,EAAE,MAAM,GAAG,SAAS,CAAA;CACxC;AAED;;;;;;;GAOG;AACH,wBAAgB,0BAA0B,CAAC,EAAE,SAAS,EAAE,EAAE,iBAAiB,GAAG,SAAS,CAiBtF"}

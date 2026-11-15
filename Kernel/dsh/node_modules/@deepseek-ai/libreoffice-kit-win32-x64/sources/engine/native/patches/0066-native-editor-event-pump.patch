@@ -1,0 +1,18 @@
+diff --git a/desktop/source/lib/init.cxx b/desktop/source/lib/init.cxx
+--- a/desktop/source/lib/init.cxx
++++ b/desktop/source/lib/init.cxx
+@@ -7718,6 +7718,14 @@
+     Application::ReleaseSolarMutex();
+ }
+ 
++// The native helper calls this only on the VCL initialization thread, outside
++// document callbacks. Unlike the Svp unipoll callback, this also pumps Aqua/Win.
++extern "C" SAL_DLLPUBLIC_EXPORT bool dsh_native_process_events()
++{
++    SolarMutexGuard aGuard;
++    return Application::Reschedule(true);
++}
++
+ // unipoll version.
+ static void lo_runLoop(LibreOfficeKit* /*pThis*/,
+                        LibreOfficeKitPollCallback pPollCallback,

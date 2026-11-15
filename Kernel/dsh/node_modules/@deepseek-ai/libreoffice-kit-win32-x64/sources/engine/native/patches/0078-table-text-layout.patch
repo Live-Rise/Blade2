@@ -1,0 +1,43 @@
+diff --git a/svx/source/svdraw/svdedxv.cxx b/svx/source/svdraw/svdedxv.cxx
+index ef6464197..7fa1f0784 100644
+--- a/svx/source/svdraw/svdedxv.cxx
++++ b/svx/source/svdraw/svdedxv.cxx
+@@ -1111,7 +1111,7 @@ OutlinerView* SdrObjEditView::ImpMakeOutlinerView(vcl::Window* pWin, OutlinerVie
+     {
+         pOutlView->SetAnchorMode(pText->GetOutlinerViewAnchorMode());
+         mpTextEditOutliner->SetFixedCellHeight(
+-            pText->GetMergedItem(SDRATTR_TEXT_USEFIXEDCELLHEIGHT).GetValue());
++            pText->getActiveText()->GetItemSet().Get(SDRATTR_TEXT_USEFIXEDCELLHEIGHT).GetValue());
+     }
+     // do update before setting output area so that aTextEditArea can be recalculated
+     mpTextEditOutliner->SetUpdateLayout(true);
+diff --git a/svx/source/table/svdotable.cxx b/svx/source/table/svdotable.cxx
+index 38b16e057..f1330c3b0 100644
+--- a/svx/source/table/svdotable.cxx
++++ b/svx/source/table/svdotable.cxx
+@@ -34,6 +34,7 @@
+ #include <editeng/editstat.hxx>
+ #include <editeng/outlobj.hxx>
+ #include <sdr/properties/textproperties.hxx>
++#include <svx/sdtfchim.hxx>
+ #include <svx/svdetc.hxx>
+ #include <svx/svdmodel.hxx>
+ #include <svx/svdotable.hxx>
+@@ -1511,6 +1512,8 @@ void SdrTableObj::TakeTextRect( const CellPos& rPos, SdrOutliner& rOutliner, too
+     TakeTextAnchorRect( rPos, aAnkRect );
+ 
+     SdrTextVertAdjust eVAdj=xCell->GetTextVerticalAdjust();
++    rOutliner.SetFixedCellHeight(
++        xCell->GetItemSet().Get(SDRATTR_TEXT_USEFIXEDCELLHEIGHT).GetValue());
+ 
+     EEControlBits nStat0=rOutliner.GetControlWord();
+     nStat0 |= EEControlBits::AUTOPAGESIZE;
+@@ -1822,6 +1825,8 @@ bool SdrTableObj::BegTextEdit(SdrOutliner& rOutl)
+ 
+     rOutl.Init( OutlinerMode::TextObject );
+     rOutl.SetRefDevice(getSdrModelFromSdrObject().GetRefDevice());
++    rOutl.SetFixedCellHeight(
++        GetActiveCellItemSet().Get(SDRATTR_TEXT_USEFIXEDCELLHEIGHT).GetValue());
+ 
+     bool bUpdateMode = rOutl.SetUpdateLayout(false);
+     Size aPaperMin;

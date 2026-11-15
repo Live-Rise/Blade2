@@ -1,0 +1,67 @@
+diff --git a/desktop/source/lib/init.cxx b/desktop/source/lib/init.cxx
+--- a/desktop/source/lib/init.cxx
++++ b/desktop/source/lib/init.cxx
+@@ -4309,11 +4309,9 @@
+ #if defined(MACOSX) || (defined(_WIN32) && !USE_HEADLESS_CODE)
+     // Native devices allocate their own backing store; LOK buffer binding is unsupported.
+     pDevice->SetOutputSizePixel(Size(nCanvasWidth, nCanvasHeight));
+-#if defined(_WIN32)
+-    // Tiled document mapping uses 96 DPI independently of the Windows display.
++    // Tiled document mapping uses 96 DPI independently of the native display.
+     pDevice->SetReferenceDevice(96, 96);
+     pDevice->EnableOutput(true);
+-#endif
+ #else
+     pDevice->SetOutputSizePixelScaleOffsetAndLOKBuffer(
+                 Size(nCanvasWidth, nCanvasHeight), 1.0, Point(),
+diff --git a/vcl/osx/salframe.cxx b/vcl/osx/salframe.cxx
+--- a/vcl/osx/salframe.cxx
++++ b/vcl/osx/salframe.cxx
+@@ -88,7 +88,7 @@
+     maInternalFullScreenExpectedRect( NSZeroRect ),
+     mbNativeFullScreen( false ),
+     maNativeFullScreenRestoreRect( NSZeroRect ),
+-    mbHeadlessMode(Application::IsBitmapRendering())
++    mbHeadlessMode(Application::IsHeadlessModeEnabled())
+ {
+     mpParent = dynamic_cast<AquaSalFrame*>(pParent);
+ 
+diff --git a/vcl/inc/osx/salframe.h b/vcl/inc/osx/salframe.h
+--- a/vcl/inc/osx/salframe.h
++++ b/vcl/inc/osx/salframe.h
+@@ -181,6 +181,7 @@
+     virtual void UpdateDarkMode() override;
+     virtual bool GetUseDarkMode() const override;
+     virtual bool GetUseReducedAnimation() const override;
++    virtual bool IsOffScreen() const override { return mbHeadlessMode; }
+ 
+     void UpdateFrameGeometry();
+ 
+diff --git a/vcl/skia/osx/gdiimpl.cxx b/vcl/skia/osx/gdiimpl.cxx
+--- a/vcl/skia/osx/gdiimpl.cxx
++++ b/vcl/skia/osx/gdiimpl.cxx
+@@ -116,9 +116,9 @@
+ 
+ void AquaSkiaSalGraphicsImpl::flushSurfaceToWindowContext()
+ {
+-    if (office_graphite::enabled() && Application::IsBitmapRendering())
+-    {
+-        office_graphite::flush(false);
++    if (Application::IsHeadlessModeEnabled())
++    {
++        if (office_graphite::enabled()) office_graphite::flush(false);
+         return;
+     }
+     if (!isGPU())
+diff --git a/vcl/quartz/salgdicommon.cxx b/vcl/quartz/salgdicommon.cxx
+--- a/vcl/quartz/salgdicommon.cxx
++++ b/vcl/quartz/salgdicommon.cxx
+@@ -73,7 +73,7 @@
+ {
+     if (!nsWindow)
+     {
+-        if (Application::IsBitmapRendering())
++        if (Application::IsHeadlessModeEnabled())
+             mnRealDPIX = mnRealDPIY = 96;
+         return;
+     }

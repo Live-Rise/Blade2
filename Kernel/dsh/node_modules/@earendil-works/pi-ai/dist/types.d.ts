@@ -23,7 +23,7 @@ export type KnownImageApi = "openrouter-images";
 export type ImageApi = KnownImageApi | (string & {});
 export type KnownClassifierApi = "typesafe-system-one" | "cloudflare-workers-ai-system-one" | "llama-cpp-classify" | "openai-decisions";
 export type ClassifierApi = KnownClassifierApi | (string & {});
-export type KnownProvider = "amazon-bedrock" | "ant-ling" | "anthropic" | "google" | "google-vertex" | "openai" | "azure" | "openai-codex" | "radius" | "typesafe" | "nvidia" | "deepseek" | "github-copilot" | "xai" | "groq" | "cerebras" | "openrouter" | "vercel-ai-gateway" | "zai" | "zai-coding-cn" | "mistral" | "minimax" | "minimax-cn" | "moonshotai" | "moonshotai-cn" | "huggingface" | "fireworks" | "together" | "baseten" | "opencode" | "opencode-go" | "kimi-coding" | "meta" | "cloudflare-workers-ai" | "cloudflare-ai-gateway" | "qwen-token-plan" | "qwen-token-plan-cn" | "qwen-token-plan-individual" | "xiaomi" | "xiaomi-token-plan-cn" | "xiaomi-token-plan-ams" | "xiaomi-token-plan-sgp";
+export type KnownProvider = "amazon-bedrock" | "ant-ling" | "anthropic" | "google" | "google-vertex" | "openai" | "azure" | "openai-codex" | "radius" | "typesafe" | "nvidia" | "deepseek" | "github-copilot" | "xai" | "groq" | "cerebras" | "openrouter" | "vercel-ai-gateway" | "zai" | "zai-coding-cn" | "mistral" | "minimax" | "minimax-cn" | "moonshotai" | "moonshotai-cn" | "huggingface" | "fireworks" | "together" | "baseten" | "opencode" | "opencode-go" | "kimi-coding" | "meta" | "cloudflare-workers-ai" | "cloudflare-ai-gateway" | "qwen-token-plan" | "qwen-token-plan-cn" | "qwen-token-plan-individual" | "qwen-token-plan-individual-cn" | "xiaomi" | "xiaomi-token-plan-cn" | "xiaomi-token-plan-ams" | "xiaomi-token-plan-sgp";
 export type ProviderId = KnownProvider | string;
 export type ToolChoice = "auto" | "none";
 export type SamplingParams = Record<string, unknown>;
@@ -142,6 +142,13 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
      * session-aware features. Ignored by providers that don't support it.
      */
     sessionId?: string;
+    /**
+     * Do not use or record server-side continuation state for this request (for example
+     * Anthropic message threads). Set this for replays such as cache warming, which must not
+     * replace the state of the real conversation. Providers that do not keep continuation
+     * state ignore it.
+     */
+    disableContinuation?: boolean;
     /**
      * WebSocket connect timeout in milliseconds for providers that support
      * WebSocket transports. This covers the connection/open handshake only;

@@ -1,10 +1,8 @@
 /**
  * The seam's consumer-facing contracts: request, result, and capability types
  * for {@link SubagentProvider}, plus the `subagent/start` and `subagent/end`
- * payloads that plugins and hosts observe. Internal control interfaces belong
- * with their implementation — the lifecycle observer in `./lifecycle.ts`, the
- * manager host in `./manager.ts` — so this module stays the published
- * surface rather than a bag of everything type-shaped.
+ * payloads that plugins and hosts observe. Internal control interfaces, such
+ * as the manager host, belong with their implementation.
  *
  * @module @deepseek-ai/dsh-subagent/types
  */

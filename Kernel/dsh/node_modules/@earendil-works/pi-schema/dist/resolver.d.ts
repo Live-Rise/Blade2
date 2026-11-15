@@ -8,11 +8,12 @@ export interface Resolved {
 export declare const DEFAULT_BASE = "https://json-schema.invalid/root.json";
 /**
  * Resolves references in the root schema and the registered documents. The schema is indexed on the first
- * reference, so a schema without references is never walked for identifiers.
+ * reference or the first `$id` a walker meets, so a schema with neither is never walked for identifiers.
  */
 export declare class Resolver {
     readonly draft: "2020-12" | "7";
-    readonly rootBase: string;
+    /** The base URI the root schema is walked from; walkers apply the root's own `$id` through `baseFor`. */
+    readonly rootBase = "https://json-schema.invalid/root.json";
     /** Schema object to the base URI it was indexed under. */
     readonly baseOf: Map<object, string>;
     /** URI (with a `#name` fragment) of every `$dynamicAnchor`, to its schema. */

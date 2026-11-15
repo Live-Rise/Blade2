@@ -32,6 +32,8 @@ export function checkoutCore(directory, repo = root) {
     run('git', ['remote', 'add', 'origin', source.repository], { cwd: directory });
     run('git', ['fetch', '--depth=1', 'origin', source.revision], { cwd: directory, timeout: 900_000 });
   }
+  run('git', ['config', 'core.autocrlf', 'false'], { cwd: directory });
+  run('git', ['config', 'core.eol', 'lf'], { cwd: directory });
   run('git', ['checkout', '--detach', source.revision], { cwd: directory });
   verify(directory);
 }

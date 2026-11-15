@@ -1026,6 +1026,7 @@ function validateDeliveryAccepted(event, currentVersion) {
 */
 function assertReleasedV4Relationships(artifact, knownEventTypes) {
 	const ids = /* @__PURE__ */ new Set();
+	const names = /* @__PURE__ */ new Set();
 	for (const event of artifact.events) {
 		if (!knownEventTypes.has(event.type)) continue;
 		assertV4DeveloperData(event);
@@ -1033,12 +1034,29 @@ function assertReleasedV4Relationships(artifact, knownEventTypes) {
 		const deliveryId = validateDeliveryAccepted(event, 4);
 		if (deliveryId !== void 0 && event.seq >= artifact.inheritedEventCount && deliveryId !== artifact.header.id) throw new SessionFormatError("current-generation delivery marker names the wrong Session");
 		if (event.type === "subagent/catalog" && event.seq >= artifact.inheritedEventCount) {
-			const id = catalogFact(event.data)["childId"];
+			const fact = nativeCatalogFact(event.data);
+			const id = fact["childId"];
 			if (ids.has(id)) throw new SessionFormatError(`duplicate catalog child ${id}`);
 			ids.add(id);
+			if (fact["name"] === void 0) continue;
+			const name = fact["name"];
+			if (names.has(name)) throw new SessionFormatError(`duplicate catalog child name ${name}`);
+			names.add(name);
 		}
 	}
 	assertV4LifecycleRelationships(artifact, knownEventTypes);
+}
+/**
+* Validate an own native V4 catalog payload: a historical version or version 3,
+* which adds the child's name and is written only by native V4 creation.
+* @param value - native `subagent/catalog` payload.
+* @returns validated catalog payload.
+*/
+function nativeCatalogFact(value) {
+	if (!isSessionFormatJsonObject(value) || value["version"] !== 3) return catalogFact(value);
+	if (typeof value["childId"] !== "string" || value["mode"] !== "continuable" && value["mode"] !== "external" || typeof value["name"] !== "string" || !/^[a-z][a-z0-9-]{0,31}$/u.test(value["name"]) || value["name"] === "lead" || value["mode"] === "continuable" && typeof value["label"] !== "string" || value["label"] !== void 0 && typeof value["label"] !== "string") throw new SessionFormatError("subagent/catalog requires a supported versioned catalog fact");
+	sessionFormatCount(value["childCreatedAt"], "catalog child creation time");
+	return value;
 }
 //#endregion
 //#region lib/types/codec.js

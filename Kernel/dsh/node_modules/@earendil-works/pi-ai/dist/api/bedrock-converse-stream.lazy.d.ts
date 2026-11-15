@@ -5,5 +5,12 @@ import type { ProviderStreams } from "../types.ts";
  * build registers a statically imported module instead.
  */
 export declare function setBedrockProviderModule(module: ProviderStreams): void;
+/**
+ * Overrides how the bedrock implementation is imported, loaded on the first
+ * bedrock request. Used by Node bundles that split at dynamic imports (see
+ * `@earendil-works/pi-ai/lazy-bedrock-provider`): the loader's literal
+ * `import()` lets the bundler keep the implementation in a lazy chunk.
+ */
+export declare function setBedrockProviderLoader(load: () => Promise<ProviderStreams>): void;
 export declare const bedrockConverseStreamApi: () => ProviderStreams;
 //# sourceMappingURL=bedrock-converse-stream.lazy.d.ts.map

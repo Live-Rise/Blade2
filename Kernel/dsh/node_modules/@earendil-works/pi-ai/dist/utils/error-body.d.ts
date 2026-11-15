@@ -11,6 +11,14 @@ export interface NormalizedProviderError {
 }
 export declare function normalizeProviderError(error: unknown): NormalizedProviderError;
 /**
+ * Connection-level failures carry no status or body, and SDKs replace the
+ * reason with a generic message (`openai`: `"Connection error."`). The real
+ * reason sits in the `cause` chain, often two levels deep (undici's
+ * `"fetch failed"` wraps `connect ECONNREFUSED ...`). Append the deepest
+ * cause so callers that surface only the message keep the reason.
+ */
+export declare function withCauseDetail(error: Error): string;
+/**
  * Compose a display string from a normalized error. When the message already
  * carries the body (Anthropic / `@google/genai` happy path) or no body/status
  * was extracted, the message is returned unchanged. Otherwise the status and

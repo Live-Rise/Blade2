@@ -33,6 +33,13 @@ export interface RecordedTelemetryMeasurement {
     readonly context: Readonly<TelemetryCarrier> | null;
 }
 /**
+ * Now as milliseconds since the epoch, rounded to the microsecond: `performance.now()` (monotonic, sub-millisecond)
+ * plus an anchor to the wall clock. While the two agree within 10 ms, times in one process keep their order and
+ * spacing to the microsecond; past that the clock follows `Date.now()` again, at whole milliseconds. Every adapter
+ * of this package and Chord's SQLite store stamp span starts with it, so their times agree.
+ */
+export declare function telemetryNow(): number;
+/**
  * Backend-neutral reference implementation that records spans in process memory.
  * Create a fresh instance to isolate tests or independent recording scopes.
  */

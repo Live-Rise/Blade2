@@ -7,6 +7,8 @@ export function windowsCoreEnvironment(environment, coreExportsSource) {
     const canonical = key.toUpperCase();
     // Core rebuilds UCRTVERSION in find_ucrt and uses INCLUDE for -I flags, not MSVC's path list.
     if (canonical === 'INCLUDE' || canonical === 'UCRTVERSION') delete result[key];
+    // Credential filtering can remove counted Git keys; Core uses its checkout's Git configuration.
+    else if (/^GIT_CONFIG_(?:COUNT|PARAMETERS|KEY_\d+|VALUE_\d+)$/.test(canonical)) delete result[key];
     else if (canonical === 'PATH') {
       delete result[key];
       result.PATH = environment[key];

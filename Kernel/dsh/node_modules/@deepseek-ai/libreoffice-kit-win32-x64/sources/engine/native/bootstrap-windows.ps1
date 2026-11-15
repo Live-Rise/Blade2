@@ -17,11 +17,12 @@ foreach ($download in $downloads) {
     }
 }
 
-$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
-$year = [string](& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property catalog_productLineVersion)
-$year = $year.Trim()
-if ($LASTEXITCODE -ne 0 -or $year -notin @('2022', '2026')) { throw 'Core requires Visual Studio 2022 or 2026 with C++ desktop tools.' }
 if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) { throw 'The MSVC developer command environment has not been initialized.' }
+$year = switch (([version]$env:VisualStudioVersion).Major) {
+    17 { '2022' }
+    18 { '2026' }
+    default { throw 'Core requires Visual Studio 2022 or 2026 with C++ desktop tools.' }
+}
 foreach ($tool in @('bash.exe', 'cygpath.exe')) {
     if (-not (Test-Path (Join-Path $CygwinDirectory "bin/$tool"))) { throw "The Cygwin build tool is missing: $tool" }
 }

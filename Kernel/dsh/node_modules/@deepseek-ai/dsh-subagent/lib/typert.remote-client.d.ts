@@ -9,11 +9,11 @@ import type { SubagentInterruptReceipt, SubagentPromptReceipt, SubagentPromptReq
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
   interface TypertRemoteNamespace$7375626167656e7473 {
-    interruptByParent: (childSessionId: SessionId, parentSessionId: SessionId, mode: 'continuable') => Promise<RemoteResult<SubagentInterruptReceipt>>
+    interruptByUser: (childSessionId: SessionId) => Promise<RemoteResult<SubagentInterruptReceipt>>
     prompt: (request: SubagentPromptRequest, signal?: AbortSignal) => Promise<RemoteResult<SubagentPromptReceipt>>
   }
   interface TypertRemoteMap {
-    'subagents/interruptByParent': (childSessionId: SessionId, parentSessionId: SessionId, mode: 'continuable') => Promise<RemoteResult<SubagentInterruptReceipt>>
+    'subagents/interruptByUser': (childSessionId: SessionId) => Promise<RemoteResult<SubagentInterruptReceipt>>
     'subagents/prompt': (request: SubagentPromptRequest, signal?: AbortSignal) => Promise<RemoteResult<SubagentPromptReceipt>>
   }
   interface TypertRemoteNamespaceMap {
@@ -22,7 +22,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
 }
 
 export declare const TYPERT_REMOTE: TypertRemoteInfo<{
-  readonly 'subagents/interruptByParent': TypertRemoteMethod<{ readonly 'childSessionId': SessionId; readonly 'parentSessionId': SessionId; readonly 'mode': 'continuable' }, SubagentInterruptReceipt>
+  readonly 'subagents/interruptByUser': TypertRemoteMethod<{ readonly 'childSessionId': SessionId }, SubagentInterruptReceipt>
   readonly 'subagents/prompt': TypertRemoteMethod<{ readonly 'request': SubagentPromptRequest }, SubagentPromptReceipt>
 }>
 export default TYPERT_REMOTE

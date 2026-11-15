@@ -1,0 +1,319 @@
+--- a/vcl/skia/SkiaHelper.cxx
++++ b/vcl/skia/SkiaHelper.cxx
+@@ -8,6 +8,7 @@
+  */
+ 
+ #include <sal/config.h>
++#include <skia/dsh_graphite.hxx>
+ 
+ #include <config_features.h>
+ 
+@@ -560,6 +561,8 @@
+ 
+ sk_sp<SkSurface> createSkSurface(int width, int height, SkColorType type, SkAlphaType alpha)
+ {
++    if (office_graphite::enabled())
++        return office_graphite::createSurface(SkImageInfo::Make(width, height, type, alpha), surfaceProps());
+     SkiaZone zone;
+     assert(type == kN32_SkColorType || type == kAlpha_8_SkColorType);
+     sk_sp<SkSurface> surface;
+@@ -646,6 +649,7 @@
+ 
+ sk_sp<SkImage> makeCheckedImageSnapshot(sk_sp<SkSurface> surface)
+ {
++    office_graphite::observeSnapshot(surface.get());
+     sk_sp<SkImage> ret = surface->makeImageSnapshot();
+     assert(ret);
+     if (ret)
+@@ -655,6 +659,7 @@
+ 
+ sk_sp<SkImage> makeCheckedImageSnapshot(sk_sp<SkSurface> surface, const SkIRect& bounds)
+ {
++    office_graphite::observeSnapshot(surface.get());
+     sk_sp<SkImage> ret = surface->makeImageSnapshot(bounds);
+     assert(ret);
+     if (ret)
+@@ -880,7 +885,7 @@
+ void dump(const sk_sp<SkImage>& image, const char* file)
+ {
+     SkBitmap bm;
+-    if (!as_IB(image)->getROPixels(getSharedGrDirectContext(), &bm))
++    if (!as_IB(office_graphite::rasterImage(image))->getROPixels(office_graphite::enabled() ? nullptr : getSharedGrDirectContext(), &bm))
+         return;
+     SkPixmap pixmap;
+     if (!bm.peekPixels(&pixmap))
+--- a/vcl/skia/gdiimpl.cxx
++++ b/vcl/skia/gdiimpl.cxx
+@@ -18,6 +18,8 @@
+  */
+ 
+ #include <skia/gdiimpl.hxx>
++#include <stdexcept>
++#include <skia/dsh_graphite.hxx>
+ 
+ #include <salgdi.hxx>
+ #include <skia/salbmp.hxx>
+@@ -313,6 +315,36 @@
+     assert(!mWindowContext);
+ }
+ 
++void SkiaSalGraphicsImpl::bindGraphiteTarget(sk_sp<SkSurface> surface)
++{
++    if (!isOffscreen() || !surface || !surface->getCanvas()->recorder()
++        || surface->width() != GetWidth() || surface->height() != GetHeight())
++        throw std::runtime_error("Graphite target must match the offscreen output device");
++    destroySurface();
++    mSurface = std::move(surface);
++    mScaling = 1;
++    mIsGPU = true;
++    mClipRegion = vcl::Region(tools::Rectangle(0, 0, GetWidth(), GetHeight()));
++    mDirtyRect = SkIRect::MakeWH(GetWidth(), GetHeight());
++    setCanvasScalingAndClipping();
++    mFlush->Stop();
++}
++
++void SkiaSalGraphicsImpl::finishGraphiteTarget()
++{
++    // WITHOUT_ALPHA devices expose opaque pixels even where paths leave alpha below one.
++    mSurface->getCanvas()->restoreToCount(1);
++    mSurface->getCanvas()->drawColor(SK_ColorBLACK, SkBlendMode::kDstATop);
++    mSurface->getCanvas()->save();
++    mSurface->getCanvas()->save();
++}
++
++void SkiaSalGraphicsImpl::releaseGraphiteTarget()
++{
++    mFlush->Stop();
++    destroySurface();
++}
++
+ void SkiaSalGraphicsImpl::createSurface()
+ {
+     SkiaZone zone;
+@@ -359,7 +391,7 @@
+                 abort(); // This should not really happen, do not even try to cope with it.
+         }
+     }
+-    mIsGPU = mSurface->getCanvas()->recordingContext() != nullptr;
++    mIsGPU = (mSurface->getCanvas()->recordingContext() != nullptr || mSurface->getCanvas()->recorder() != nullptr);
+ #ifdef DBG_UTIL
+     prefillSurface(mSurface);
+ #endif
+@@ -387,10 +419,10 @@
+     // We need to use window scaling even for offscreen surfaces, because the common usage is rendering something
+     // into an offscreen surface and then copy it to a window, so without scaling here the result would be originally
+     // drawn without scaling and only upscaled when drawing to a window.
+-    mScaling = getWindowScaling();
++    mScaling = office_graphite::enabled() ? 1 : getWindowScaling();
+     mSurface = createSkSurface(width * mScaling, height * mScaling);
+     assert(mSurface);
+-    mIsGPU = mSurface->getCanvas()->recordingContext() != nullptr;
++    mIsGPU = (mSurface->getCanvas()->recordingContext() != nullptr || mSurface->getCanvas()->recorder() != nullptr);
+ }
+ 
+ void SkiaSalGraphicsImpl::destroySurface()
+@@ -488,6 +520,7 @@
+     {
+         if (auto dContext = GrAsDirectContext(mSurface->getCanvas()->recordingContext()))
+             dContext->flushAndSubmit();
++        if (mSurface->getCanvas()->recorder()) office_graphite::flush(false);
+         pendingOperationsToFlush = 0;
+     }
+     SkiaZone::leave(); // matched in preDraw()
+@@ -534,6 +567,11 @@
+ // to create it in Init() if it gets recreated later anyway).
+ void SkiaSalGraphicsImpl::checkSurface()
+ {
++    if (mIsGPU && office_graphite::enabled() && !office_graphite::healthy())
++    {
++        office_graphite::retireLostDevice();
++        destroySurface();
++    }
+     if (!mSurface)
+     {
+         createSurface();
+@@ -1424,7 +1462,7 @@
+     SkBitmap bitmap;
+     if (!bitmap.tryAllocN32Pixels(mSurface->width(), mSurface->height()))
+         abort();
+-    if (!mSurface->readPixels(bitmap, 0, 0))
++    if (!office_graphite::readSurface(mSurface, bitmap))
+         abort();
+     return fromSkColor(bitmap.getColor(nX * mScaling, nY * mScaling));
+ }
+--- a/vcl/skia/salbmp.cxx
++++ b/vcl/skia/salbmp.cxx
+@@ -18,6 +18,7 @@
+  */
+ 
+ #include <skia/salbmp.hxx>
++#include <skia/dsh_graphite.hxx>
+ 
+ #include <o3tl/safeint.hxx>
+ #include <tools/helpers.hxx>
+@@ -1056,6 +1057,8 @@
+ 
+ void SkiaSalBitmap::EnsureBitmapData()
+ {
++    mImage = office_graphite::rasterImage(mImage);
++    mAlphaImage = office_graphite::rasterImage(mAlphaImage);
+     if (mEraseColorSet)
+     {
+         SkiaZone zone;
+--- a/vcl/skia/quartz/salbmp.mm
++++ b/vcl/skia/quartz/salbmp.mm
+@@ -18,6 +18,7 @@
+  */
+ 
+ #include <skia/salbmp.hxx>
++#include <skia/dsh_graphite.hxx>
+ #include <skia/zone.hxx>
+ #include <SkBitmap.h>
+ #include <SkCanvas.h>
+@@ -55,7 +56,7 @@
+ 
+     SkCanvas canvas(targetBitmap);
+     canvas.concat(matrix);
+-    canvas.drawImageRect(GetSkImage(), SkRect::MakeXYWH(nX, nY, nWidth, nHeight), SkRect::MakeXYWH(0, 0, nWidth, nHeight), SkSamplingOptions(), &paint, SkCanvas::SrcRectConstraint::kFast_SrcRectConstraint);
++    canvas.drawImageRect(office_graphite::rasterImage(GetSkImage()), SkRect::MakeXYWH(nX, nY, nWidth, nHeight), SkRect::MakeXYWH(0, 0, nWidth, nHeight), SkSamplingOptions(), &paint, SkCanvas::SrcRectConstraint::kFast_SrcRectConstraint);
+     if (auto dContext = GrAsDirectContext(canvas.recordingContext()))
+         dContext->flushAndSubmit();
+ 
+@@ -94,7 +95,7 @@
+ 
+     SkCanvas canvas(targetBitmap);
+     canvas.concat(matrix);
+-    canvas.drawImageRect(GetSkImage(), SkRect::MakeXYWH(nX, nY, nWidth, nHeight), SkRect::MakeXYWH(0, 0, nWidth, nHeight), SkSamplingOptions(), &paint, SkCanvas::SrcRectConstraint::kFast_SrcRectConstraint);
++    canvas.drawImageRect(office_graphite::rasterImage(GetSkImage()), SkRect::MakeXYWH(nX, nY, nWidth, nHeight), SkRect::MakeXYWH(0, 0, nWidth, nHeight), SkSamplingOptions(), &paint, SkCanvas::SrcRectConstraint::kFast_SrcRectConstraint);
+     if (auto dContext = GrAsDirectContext(canvas.recordingContext()))
+         dContext->flushAndSubmit();
+     targetBitmap.setImmutable();
+--- a/vcl/skia/osx/gdiimpl.cxx
++++ b/vcl/skia/osx/gdiimpl.cxx
+@@ -19,6 +19,8 @@
+ #include <sal/config.h>
+ 
+ #include <skia/osx/gdiimpl.hxx>
++#include <vcl/svapp.hxx>
++#include <skia/dsh_graphite.hxx>
+ 
+ #include <skia/utils.hxx>
+ #include <skia/zone.hxx>
+@@ -114,6 +116,11 @@
+ 
+ void AquaSkiaSalGraphicsImpl::flushSurfaceToWindowContext()
+ {
++    if (office_graphite::enabled() && Application::IsBitmapRendering())
++    {
++        office_graphite::flush(false);
++        return;
++    }
+     if (!isGPU())
+     {
+         // tdf159175 mark dirty area in NSWindow for redrawing
+--- a/vcl/skia/win/gdiimpl.cxx
++++ b/vcl/skia/win/gdiimpl.cxx
+@@ -12,6 +12,7 @@
+ #include <config_skia.h>
+ 
+ #include <skia/win/gdiimpl.hxx>
++#include <skia/dsh_graphite.hxx>
+ 
+ #include <win/saldata.hxx>
+ #include <win/salvd.h>
+--- a/vcl/inc/skia/gdiimpl.hxx
++++ b/vcl/inc/skia/gdiimpl.hxx
+@@ -40,6 +40,9 @@
+ public:
+     SkiaSalGraphicsImpl(SalGraphics& pParent, SalGeometryProvider* pProvider);
+     virtual ~SkiaSalGraphicsImpl() override;
++    void bindGraphiteTarget(sk_sp<SkSurface> surface);
++    void finishGraphiteTarget();
++    void releaseGraphiteTarget();
+ 
+     virtual void DeInit() override;
+ 
+--- a/desktop/source/lib/init.cxx
++++ b/desktop/source/lib/init.cxx
+@@ -194,6 +194,11 @@
+ #include <vcl/sysdata.hxx>
+ #endif
+ #include <vcl/virdev.hxx>
++#ifdef SK_GRAPHITE
++#include <skia/dsh_graphite.hxx>
++#else
++using WGPUTexture = void*;
++#endif
+ #include <vcl/ImageTree.hxx>
+ #include <vcl/ITiledRenderable.hxx>
+ #include <vcl/dialoghelper.hxx>
+@@ -4227,11 +4232,11 @@
+     return pDoc->getEditMode();
+ }
+ 
+-static void doc_paintTile(LibreOfficeKitDocument* pThis,
++static void paintTileOutput(LibreOfficeKitDocument* pThis,
+                           unsigned char* pBuffer,
+                           const int nCanvasWidth, const int nCanvasHeight,
+                           const int nTilePosX, const int nTilePosY,
+-                          const int nTileWidth, const int nTileHeight)
++                          const int nTileWidth, const int nTileHeight, WGPUTexture texture)
+ {
+     comphelper::ProfileZone aZone("doc_paintTile");
+ 
+@@ -4310,6 +4315,15 @@
+                 pBuffer);
+ #endif
+ 
++#ifdef SK_GRAPHITE
++    std::unique_ptr<office_graphite::Target> target;
++    if (texture)
++    {
++        target = std::make_unique<office_graphite::Target>(*pDevice, texture);
++        pDevice->Erase();
++    }
++#endif
++
+     pDoc->paintTile(*pDevice, nCanvasWidth, nCanvasHeight,
+                     nTilePosX, nTilePosY, nTileWidth, nTileHeight);
+ 
+@@ -4327,9 +4341,15 @@
+ 
+ #if defined(MACOSX) || (defined(_WIN32) && !USE_HEADLESS_CODE)
+     // Aqua and native Windows devices do not draw into the LOK buffer.
++    if (!texture)
++    {
+     pDevice->EnableMapMode(false);
+     Bitmap aBmp(pDevice->GetBitmap({ 0, 0 }, { nCanvasWidth, nCanvasHeight }));
+     vcl::bitmap::fillWithData(pBuffer, aBmp);
++    }
++#ifdef SK_GRAPHITE
++    if (target) target->finish();
++#endif
+ #endif
+ #endif
+ 
+@@ -4346,6 +4366,23 @@
+     tools::Rectangle aRectangle{Point(nTilePosX, nTilePosY), Size(nTileWidth, nTileHeight)};
+     pDocument->updateViewsForPaintedTile(nOrigViewId, nPart, nMode, aRectangle);
+ }
++
++static void doc_paintTile(LibreOfficeKitDocument* document, unsigned char* buffer,
++    int width, int height, int x, int y, int tileWidth, int tileHeight)
++{
++    paintTileOutput(document, buffer, width, height, x, y, tileWidth, tileHeight, nullptr);
++}
++
++
++#ifdef SK_GRAPHITE
++extern "C" SAL_DLLPUBLIC_EXPORT void dsh_native_paint_graphite(LibreOfficeKitDocument* document,
++    WGPUTexture texture, int width, int height, int x, int y, int tileWidth, int tileHeight)
++{
++    if (!texture || !office_graphite::enabled())
++        throw std::runtime_error("Graphite tile output requires an initialized shared texture");
++    paintTileOutput(document, nullptr, width, height, x, y, tileWidth, tileHeight, texture);
++}
++#endif
+ 
+ inline static ITiledRenderable* getDocumentPointer(LibreOfficeKitDocument* pThis)
+ {

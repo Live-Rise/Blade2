@@ -1,0 +1,168 @@
+--- a/RepositoryExternal.mk
++++ b/RepositoryExternal.mk
+@@ -122,6 +122,8 @@
+ 
+ ifneq ($(ENABLE_SKIA),)
+ define gb_LinkTarget__use_skia
++$(call gb_LinkTarget_set_include,$(1),-I$(DSH_DAWN_PREFIX)/include $$(INCLUDE))
++$(if $(filter MACOSX WNT,$(OS)),$(call gb_LinkTarget_add_defs,$(1),-DSK_GRAPHITE -DSK_DAWN))
+ $(call gb_LinkTarget_set_include,$(1),\
+ 	-I$(gb_UnpackedTarball_workdir)/skia/include/core \
+ 	-I$(gb_UnpackedTarball_workdir)/skia/include/effects \
+--- a/external/skia/Library_skia.mk
++++ b/external/skia/Library_skia.mk
+@@ -1370,3 +1370,126 @@
+ 
+ 
+ # vim: set noet sw=4 ts=4:
++
++ifneq ($(filter MACOSX WNT,$(OS)),)
++$(eval $(call gb_Library_set_include,skia,-I$(DSH_DAWN_PREFIX)/include $$(INCLUDE)))
++$(eval $(call gb_Library_add_defs,skia,-DSK_GRAPHITE -DSK_DAWN))
++$(eval $(call gb_Library_add_generated_exception_objects,skia,\
++    UnpackedTarball/skia/src/gpu/graphite/AtlasProvider \
++    UnpackedTarball/skia/src/gpu/graphite/BackendSemaphore \
++    UnpackedTarball/skia/src/gpu/graphite/BackendTexture \
++    UnpackedTarball/skia/src/gpu/graphite/Buffer \
++    UnpackedTarball/skia/src/gpu/graphite/BufferManager \
++    UnpackedTarball/skia/src/gpu/graphite/Caps \
++    UnpackedTarball/skia/src/gpu/graphite/ClientMappedBufferManager \
++    UnpackedTarball/skia/src/gpu/graphite/ClipAtlasManager \
++    UnpackedTarball/skia/src/gpu/graphite/ClipStack \
++    UnpackedTarball/skia/src/gpu/graphite/CommandBuffer \
++    UnpackedTarball/skia/src/gpu/graphite/ComputePathAtlas \
++    UnpackedTarball/skia/src/gpu/graphite/ComputePipeline \
++    UnpackedTarball/skia/src/gpu/graphite/Context \
++    UnpackedTarball/skia/src/gpu/graphite/ContextUtils \
++    UnpackedTarball/skia/src/gpu/graphite/Device \
++    UnpackedTarball/skia/src/gpu/graphite/DrawAtlas \
++    UnpackedTarball/skia/src/gpu/graphite/DrawContext \
++    UnpackedTarball/skia/src/gpu/graphite/DrawList \
++    UnpackedTarball/skia/src/gpu/graphite/DrawListLayer \
++    UnpackedTarball/skia/src/gpu/graphite/DrawPass \
++    UnpackedTarball/skia/src/gpu/graphite/DrawWriter \
++    UnpackedTarball/skia/src/gpu/graphite/GlobalCache \
++    UnpackedTarball/skia/src/gpu/graphite/GpuWorkSubmission \
++    UnpackedTarball/skia/src/gpu/graphite/GraphicsPipeline \
++    UnpackedTarball/skia/src/gpu/graphite/GraphiteResourceKey \
++    UnpackedTarball/skia/src/gpu/graphite/ImageFactories \
++    UnpackedTarball/skia/src/gpu/graphite/Image_Base_Graphite \
++    UnpackedTarball/skia/src/gpu/graphite/Image_Graphite \
++    UnpackedTarball/skia/src/gpu/graphite/Image_YUVA_Graphite \
++    UnpackedTarball/skia/src/gpu/graphite/KeyContext \
++    UnpackedTarball/skia/src/gpu/graphite/KeyHelpers \
++    UnpackedTarball/skia/src/gpu/graphite/PaintParams \
++    UnpackedTarball/skia/src/gpu/graphite/PaintParamsKey \
++    UnpackedTarball/skia/src/gpu/graphite/PathAtlas \
++    UnpackedTarball/skia/src/gpu/graphite/PipelineManager \
++    UnpackedTarball/skia/src/gpu/graphite/PrecompileContext \
++    UnpackedTarball/skia/src/gpu/graphite/ProxyCache \
++    UnpackedTarball/skia/src/gpu/graphite/QueueManager \
++    UnpackedTarball/skia/src/gpu/graphite/RasterPathAtlas \
++    UnpackedTarball/skia/src/gpu/graphite/RasterPathUtils \
++    UnpackedTarball/skia/src/gpu/graphite/Recorder \
++    UnpackedTarball/skia/src/gpu/graphite/Recording \
++    UnpackedTarball/skia/src/gpu/graphite/RenderPassDesc \
++    UnpackedTarball/skia/src/gpu/graphite/Renderer \
++    UnpackedTarball/skia/src/gpu/graphite/RendererProvider \
++    UnpackedTarball/skia/src/gpu/graphite/Resource \
++    UnpackedTarball/skia/src/gpu/graphite/ResourceCache \
++    UnpackedTarball/skia/src/gpu/graphite/ResourceProvider \
++    UnpackedTarball/skia/src/gpu/graphite/RuntimeEffectDictionary \
++    UnpackedTarball/skia/src/gpu/graphite/Sampler \
++    UnpackedTarball/skia/src/gpu/graphite/ScratchResourceManager \
++    UnpackedTarball/skia/src/gpu/graphite/SerializationUtils \
++    UnpackedTarball/skia/src/gpu/graphite/ShaderCodeDictionary \
++    UnpackedTarball/skia/src/gpu/graphite/ShaderInfo \
++    UnpackedTarball/skia/src/gpu/graphite/SharedContext \
++    UnpackedTarball/skia/src/gpu/graphite/SpecialImage_Graphite \
++    UnpackedTarball/skia/src/gpu/graphite/Surface_Graphite \
++    UnpackedTarball/skia/src/gpu/graphite/Texture \
++    UnpackedTarball/skia/src/gpu/graphite/TextureFormat \
++    UnpackedTarball/skia/src/gpu/graphite/TextureInfo \
++    UnpackedTarball/skia/src/gpu/graphite/TextureProxy \
++    UnpackedTarball/skia/src/gpu/graphite/TextureUtils \
++    UnpackedTarball/skia/src/gpu/graphite/ThreadSafeResourceProvider \
++    UnpackedTarball/skia/src/gpu/graphite/UniformManager \
++    UnpackedTarball/skia/src/gpu/graphite/UploadBufferManager \
++    UnpackedTarball/skia/src/gpu/graphite/YUVABackendTextures \
++    UnpackedTarball/skia/src/gpu/graphite/compute/ComputeStep \
++    UnpackedTarball/skia/src/gpu/graphite/compute/DispatchGroup \
++    UnpackedTarball/skia/src/gpu/graphite/geom/AnalyticBlurMask \
++    UnpackedTarball/skia/src/gpu/graphite/geom/IntersectionTree \
++    UnpackedTarball/skia/src/gpu/graphite/geom/Shape \
++    UnpackedTarball/skia/src/gpu/graphite/geom/Transform \
++    UnpackedTarball/skia/src/gpu/graphite/render/AnalyticBlurRenderStep \
++    UnpackedTarball/skia/src/gpu/graphite/render/AnalyticRRectRenderStep \
++    UnpackedTarball/skia/src/gpu/graphite/render/BitmapTextRenderStep \
++    UnpackedTarball/skia/src/gpu/graphite/render/CircularArcRenderStep \
++    UnpackedTarball/skia/src/gpu/graphite/render/CoverBoundsRenderStep \
++    UnpackedTarball/skia/src/gpu/graphite/render/CoverageMaskRenderStep \
++    UnpackedTarball/skia/src/gpu/graphite/render/MiddleOutFanRenderStep \
++    UnpackedTarball/skia/src/gpu/graphite/render/PerEdgeAAQuadRenderStep \
++    UnpackedTarball/skia/src/gpu/graphite/render/SDFTextLCDRenderStep \
++    UnpackedTarball/skia/src/gpu/graphite/render/SDFTextRenderStep \
++    UnpackedTarball/skia/src/gpu/graphite/render/TessellateCurvesRenderStep \
++    UnpackedTarball/skia/src/gpu/graphite/render/TessellateStrokesRenderStep \
++    UnpackedTarball/skia/src/gpu/graphite/render/TessellateWedgesRenderStep \
++    UnpackedTarball/skia/src/gpu/graphite/render/VerticesRenderStep \
++    UnpackedTarball/skia/src/gpu/graphite/task/ClearBuffersTask \
++    UnpackedTarball/skia/src/gpu/graphite/task/ComputeTask \
++    UnpackedTarball/skia/src/gpu/graphite/task/CopyTask \
++    UnpackedTarball/skia/src/gpu/graphite/task/DrawTask \
++    UnpackedTarball/skia/src/gpu/graphite/task/RenderPassTask \
++    UnpackedTarball/skia/src/gpu/graphite/task/SynchronizeToCpuTask \
++    UnpackedTarball/skia/src/gpu/graphite/task/TaskList \
++    UnpackedTarball/skia/src/gpu/graphite/task/UploadTask \
++    UnpackedTarball/skia/src/gpu/graphite/text/GlyphData \
++    UnpackedTarball/skia/src/gpu/graphite/text/TextAtlasManager \
++    UnpackedTarball/skia/src/gpu/graphite/text/TextStrike \
++    UnpackedTarball/skia/src/sksl/SkSLGraphiteModules \
++    UnpackedTarball/skia/src/gpu/graphite/dawn/DawnAsyncWait \
++    UnpackedTarball/skia/src/gpu/graphite/dawn/DawnBackendTexture \
++    UnpackedTarball/skia/src/gpu/graphite/dawn/DawnBuffer \
++    UnpackedTarball/skia/src/gpu/graphite/dawn/DawnCaps \
++    UnpackedTarball/skia/src/gpu/graphite/dawn/DawnCommandBuffer \
++    UnpackedTarball/skia/src/gpu/graphite/dawn/DawnComputePipeline \
++    UnpackedTarball/skia/src/gpu/graphite/dawn/DawnErrorChecker \
++    UnpackedTarball/skia/src/gpu/graphite/dawn/DawnGraphicsPipeline \
++    UnpackedTarball/skia/src/gpu/graphite/dawn/DawnGraphiteUtils \
++    UnpackedTarball/skia/src/gpu/graphite/dawn/DawnQueueManager \
++    UnpackedTarball/skia/src/gpu/graphite/dawn/DawnResourceProvider \
++    UnpackedTarball/skia/src/gpu/graphite/dawn/DawnSampler \
++    UnpackedTarball/skia/src/gpu/graphite/dawn/DawnSharedContext \
++    UnpackedTarball/skia/src/gpu/graphite/dawn/DawnTexture \
++    UnpackedTarball/skia/src/gpu/graphite/dawn/DawnTextureInfo \
++    UnpackedTarball/skia/src/capture/SkCapture \
++    UnpackedTarball/skia/src/capture/SkCaptureCanvas \
++    UnpackedTarball/skia/src/capture/SkCaptureManager \
++))
++endif
+--- a/vcl/Library_vcl.mk
++++ b/vcl/Library_vcl.mk
+@@ -875,3 +875,7 @@
+ endif # WNT
+ 
+ # vim: set noet sw=4 ts=4:
++
++ifneq ($(filter MACOSX WNT,$(OS)),)
++$(eval $(call gb_Library_add_exception_objects,vcl,vcl/skia/dsh_graphite))
++endif
+--- a/desktop/Library_sofficeapp.mk
++++ b/desktop/Library_sofficeapp.mk
+@@ -176,3 +176,15 @@
+ $(eval $(call gb_Library_use_system_win32_libs,sofficeapp,d3d11 dxgi advapi32))
+ endif
+ endif
++
++ifneq ($(filter MACOSX WNT,$(OS)),)
++$(eval $(call gb_Library_use_externals,sofficeapp,skia))
++$(eval $(call gb_Library_set_include,sofficeapp,$$(INCLUDE) -I$(SRCDIR)/vcl/inc))
++$(eval $(call gb_Library_add_libs,sofficeapp,$(DSH_DAWN_LIBS)))
++ifeq ($(OS),MACOSX)
++$(eval $(call gb_Library_use_system_darwin_frameworks,sofficeapp,Metal QuartzCore IOKit))
++endif
++ifeq ($(OS),WNT)
++$(eval $(call gb_Library_use_system_win32_libs,sofficeapp,d3d12 dxguid onecore_apiset))
++endif
++endif

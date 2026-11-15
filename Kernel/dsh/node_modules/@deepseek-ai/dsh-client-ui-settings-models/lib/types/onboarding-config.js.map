@@ -1,0 +1,1 @@
+{"version":3,"file":"onboarding-config.js","sourceRoot":"","sources":["../../src/onboarding-config.ts"],"names":[],"mappings":"AAAA,0EAA0E;AAE1E,OAAO,CAAC,MAAM,0BAA0B,CAAA;AAQxC,yEAAyE;AACzE,MAAM,CAAC,MAAM,MAAM,GAA+B,CAAC,CAAC,MAAM,CAAC;IACzD,oBAAoB,EAAE,CAAC,CAAC,OAAO,EAAE,CAAC,OAAO,CAAC,IAAI,CAAC;CAChD,CAAC,CAAA;AAEF,mEAAmE;AACnE,MAAM,CAAC,MAAM,wBAAwB,GAAG,2BAA2B,CAAA"}

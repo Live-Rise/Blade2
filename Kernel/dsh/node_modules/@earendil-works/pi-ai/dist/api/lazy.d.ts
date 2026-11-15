@@ -10,7 +10,7 @@ export interface LazyStreamObserver {
  * lazy module loading) behind it. Setup failures terminate the stream with an
  * error event.
  */
-export declare function lazyStream(model: Model<Api>, setup: () => Promise<AsyncIterable<AssistantMessageEvent>>, observer?: LazyStreamObserver): AssistantMessageEventStream;
+export declare function lazyStream(model: Model<Api>, setup: () => Promise<AsyncIterable<AssistantMessageEvent>>, observer?: LazyStreamObserver, signal?: AbortSignal): AssistantMessageEventStream;
 /**
  * Wraps a dynamically imported API implementation module as `ProviderStreams`.
  * The module loads on first stream call; the host's import cache deduplicates

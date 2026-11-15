@@ -1,0 +1,22 @@
+diff --git a/vcl/source/app/scheduler.cxx b/vcl/source/app/scheduler.cxx
+--- a/vcl/source/app/scheduler.cxx
++++ b/vcl/source/app/scheduler.cxx
+@@ -616,14 +616,16 @@
+ #endif
+         }
+     }
+-    catch (css::uno::Exception&)
+-    {
++    catch (css::uno::Exception& error)
++    {
++        std::fprintf(stderr, "Native task %s failed: %s\n", pTask->GetDebugName(), OUStringToOString(error.Message, RTL_TEXTENCODING_UTF8).getStr());
+         TOOLS_WARN_EXCEPTION("vcl.schedule",
+                              "Uncaught exception for task '" << pTask->GetDebugName() << "'");
+         std::abort();
+     }
+     catch (std::exception& e)
+     {
++        std::fprintf(stderr, "Native task %s failed: %s\n", pTask->GetDebugName(), e.what());
+         SAL_WARN("vcl.schedule", "Uncaught " << typeid(e).name() << " " << e.what());
+         std::abort();
+     }

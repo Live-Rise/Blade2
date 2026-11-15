@@ -1,0 +1,1 @@
+{"version":3,"file":"error.d.ts","sourceRoot":"","sources":["../../../../src/client/excel/error.ts"],"names":[],"mappings":"AAAA,gEAAgE;AAChE,qBAAa,iBAAkB,SAAQ,KAAK;IAE9B,QAAQ,CAAC,IAAI,EAAE,SAAS,GAAG,UAAU,GAAG,SAAS,GAAG,UAAU;IAD1E,oDAAoD;gBAC/B,IAAI,EAAE,SAAS,GAAG,UAAU,GAAG,SAAS,GAAG,UAAU,EAAE,OAAO,CAAC,EAAE,YAAY;CAInG"}

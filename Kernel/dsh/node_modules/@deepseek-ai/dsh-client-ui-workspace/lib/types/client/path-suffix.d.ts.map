@@ -1,0 +1,1 @@
+{"version":3,"file":"path-suffix.d.ts","sourceRoot":"","sources":["../../../src/client/path-suffix.ts"],"names":[],"mappings":"AAAA,4DAA4D;AAE5D;;;;;;;GAOG;AACH,wBAAgB,0BAA0B,CAAC,EAAE,EAC3C,UAAU,EAAE,SAAS;IAAE,QAAQ,CAAC,EAAE,EAAE,EAAE,CAAC;IAAC,QAAQ,CAAC,KAAK,EAAE,MAAM,CAAC;IAAC,QAAQ,CAAC,IAAI,EAAE,MAAM,CAAA;CAAE,EAAE,GACxF,WAAW,CAAC,EAAE,EAAE,MAAM,CAAC,CAczB"}

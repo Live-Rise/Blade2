@@ -1,0 +1,1 @@
+{"version":3,"file":"file-intake.d.ts","sourceRoot":"","sources":["../../../../src/client/input/file-intake.ts"],"names":[],"mappings":"AAUA,OAAO,KAAK,EAAE,kBAAkB,EAA4B,MAAM,sBAAsB,CAAA;AAKxF;;;;GAIG;AACH,wBAAgB,cAAc,CAAC,QAAQ,EAAE,YAAY,GAAG;IAAE,KAAK,EAAE,IAAI,EAAE,CAAC;IAAC,WAAW,EAAE,GAAG,CAAC,IAAI,CAAC,CAAA;CAAE,CAahG;AAED;;;;GAIG;AACH,wBAAgB,wBAAwB,IAAI,kBAAkB,CA0D7D"}

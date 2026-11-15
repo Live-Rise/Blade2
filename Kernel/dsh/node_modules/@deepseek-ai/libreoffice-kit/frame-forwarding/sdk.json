@@ -1,0 +1,47 @@
+{
+  "version": "0.2.3",
+  "protocolVersion": 1,
+  "capabilities": [
+    "transferable-tx",
+    "producer-local-handles"
+  ],
+  "header": "include/dsh_frame_forwarding.h",
+  "sources": [
+    "src/transport.cc",
+    "src/producer.cc"
+  ],
+  "cxxStandard": 17,
+  "platforms": [
+    "darwin-arm64",
+    "darwin-x64",
+    "win32-x64",
+    "win32-arm64"
+  ],
+  "staticLibraries": {
+    "darwin-arm64": "prebuilds/darwin-arm64/libdsh_frame_forwarding_sdk.a",
+    "darwin-x64": "prebuilds/darwin-x64/libdsh_frame_forwarding_sdk.a",
+    "win32-x64": "prebuilds/win32-x64/dsh_frame_forwarding_sdk.lib",
+    "win32-arm64": "prebuilds/win32-arm64/dsh_frame_forwarding_sdk.lib"
+  },
+  "buildSources": [
+    "include/dsh_frame_forwarding.h",
+    "src/graphite-interop-internal.hxx",
+    "src/node-producer.cc",
+    "src/producer-internal.h",
+    "src/transport.h",
+    "src/transport.cc",
+    "src/relay-transport.inc",
+    "src/producer.cc",
+    "src/receiver.cc",
+    "src/win-delay-load.cc",
+    "src/win-delay-load.LICENSE",
+    "src/graphite-interop.cc",
+    "CMakeLists.txt",
+    "sdk.json",
+    "scripts/build.mjs",
+    "scripts/metadata.mjs",
+    "scripts/source-identity.mjs",
+    "scripts/build-webgpu.mjs",
+    "webgpu-dependencies.json"
+  ]
+}

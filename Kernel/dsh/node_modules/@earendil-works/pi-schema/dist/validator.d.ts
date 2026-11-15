@@ -22,6 +22,15 @@ export declare class Validator<T = unknown> {
      * kept, so a validator whose values always pass never pays for it.
      */
     errors(value: unknown): ValidationError[];
+    /**
+     * `value` itself when it is valid, else its errors: check() and errors() in one result, without coercion.
+     *
+     * Not TypeBox's `Value.Parse`, which also clones, fills defaults, converts and strips undeclared properties before
+     * it checks. This only checks: the strict replacement where `Value.Parse` is used to validate (its other steps
+     * change nothing for a valid value of a schema without defaults or extra properties). Use `parse()` with
+     * `coerce: true` for conversion.
+     */
+    validate(value: unknown): ParseResult<T>;
 }
 /** A validator compiled with `coerce: true`: it also coerces loosely typed input towards the schema. */
 export declare class CoercingValidator<T = unknown> extends Validator<T> {

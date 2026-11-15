@@ -1,0 +1,1 @@
+{"version":3,"file":"AgentTerminalOpener.js","sourceRoot":"","sources":["../../../src/client/AgentTerminalOpener.tsx"],"names":[],"mappings":"AAAA,8FAA8F;AAC9F,OAAO,EAAE,SAAS,EAAkB,MAAM,OAAO,CAAA;AAUjD;;;;GAIG;AACH,MAAM,UAAU,mBAAmB,CAAC,EAAE,mBAAmB,EAAqF;IAC5I,SAAS,CAAC,GAAG,EAAE,CAAC,mBAAmB,EAAE,EAAE,CAAC,mBAAmB,CAAC,CAAC,CAAA;IAC7D,OAAO,IAAI,CAAA;AACb,CAAC"}

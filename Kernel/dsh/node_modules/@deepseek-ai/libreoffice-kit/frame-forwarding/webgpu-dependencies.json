@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "dependencies": {
+    "dawn": {
+      "revision": "620a520f5029e14b57a0b58096c022e339b1857b",
+      "url": "https://codeload.github.com/google/dawn/tar.gz/620a520f5029e14b57a0b58096c022e339b1857b",
+      "sha256": "21ce11c2b142b6686af88c0ad8e0ac8ce2d1d91fb16e88724691c6070551553e",
+      "stripComponents": 1,
+      "licenses": [
+        "LICENSE"
+      ]
+    },
+    "abseil-cpp": {
+      "revision": "526428fa2488f4b10406f697108659bc1619a97b",
+      "url": "https://codeload.github.com/abseil/abseil-cpp/tar.gz/526428fa2488f4b10406f697108659bc1619a97b",
+      "sha256": "79d4f1592d2b500f47b5bcb68bb83d77c63d758285e9fd1e805b8db9438776e8",
+      "stripComponents": 1,
+      "licenses": [
+        "LICENSE"
+      ]
+    },
+    "spirv-headers": {
+      "revision": "f88a2d766840fc825af1fc065977953ba1fa4a91",
+      "url": "https://codeload.github.com/KhronosGroup/SPIRV-Headers/tar.gz/f88a2d766840fc825af1fc065977953ba1fa4a91",
+      "sha256": "028424e4934f2ed8567319939e79d0a87e529ac7c504501b8b406f98598bdadd",
+      "stripComponents": 1,
+      "licenses": [
+        "LICENSE",
+        "LICENSES"
+      ]
+    },
+    "jinja2": {
+      "revision": "c3027d884967773057bf74b957e3fea87e5df4d7",
+      "url": "https://chromium.googlesource.com/chromium/src/third_party/jinja2",
+      "stripComponents": 0,
+      "licenses": [
+        "LICENSE.rst"
+      ],
+      "sourceTreeSha256": "258ddd3ab809a11c0fd806152514a1ad8e1e31d3ebfd610d3e4998a95d4c6f91"
+    },
+    "markupsafe": {
+      "revision": "4256084ae14175d38a3ff7d739dca83ae49ccec6",
+      "url": "https://chromium.googlesource.com/chromium/src/third_party/markupsafe",
+      "stripComponents": 0,
+      "licenses": [
+        "LICENSE"
+      ],
+      "sourceTreeSha256": "19ab1d1fc4a652a6cb3b5657eadf54fa6ae6a5964ea7a5b46ca9dfc283a79ed2"
+    }
+  }
+}

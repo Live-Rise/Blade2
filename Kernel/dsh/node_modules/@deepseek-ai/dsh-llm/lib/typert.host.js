@@ -102,7 +102,7 @@ const $remote = createTypertRemoteInfo({
         description: 'advertised models in endpoint order.',
         jsonSchema: {"type":"array","items":{"type":"object","properties":{"id":{"type":"string","description":"Model id the endpoint accepts."},"name":{"type":"string","description":"Human-readable name when the endpoint supplies one."},"contextWindow":{"type":"number","description":"Maximum combined request and response context, when disclosed."},"maxTokens":{"type":"number","description":"Maximum output tokens, when disclosed."},"inputModalities":{"type":"array","items":{"type":"string","enum":["text","image"]},"description":"Accepted input types when disclosed by the catalog or endpoint; absent means unknown."}},"required":["id"],"additionalProperties":true}},
       },
-      sourceLocation: {"file":"packages/llm/llm/src/index.ts","line":643,"column":9},
+      sourceLocation: {"file":"packages/llm/llm/src/index.ts","line":658,"column":9},
     },
     'llm/listConfigurableProviders': {
       service: 'llm',
@@ -117,7 +117,7 @@ const $remote = createTypertRemoteInfo({
         description: 'detached directory entries in declaration order.',
         jsonSchema: {"type":"array","items":{"type":"object","properties":{"provider":{"type":"string","description":"Provider route key this entry activates when configured."},"displayName":{"type":"string","description":"Human-readable provider name for configuration surfaces."},"settingsNs":{"type":"string","description":"User-settings namespace whose section configures this provider."},"settingsPath":{"type":"array","items":{"type":"string"},"description":"Path from that namespace's section root to this provider's profile object; empty when the whole section is the profile."},"declared":{"type":"boolean","description":"Whether the owning adapter knows this route only because configuration declared it — a gateway or self-hosted server it ships nothing about. Absent means the adapter draws no such distinction; false means it does and this route is one of its own. Only the adapter can answer: a stored profile is how a user-added route AND a corrected shipped one both look from outside."},"defaultBaseURL":{"type":"string","description":"Route endpoint the adapter uses when the profile sets no `baseURL`; the adapter may still send an individual model to that model's own endpoint. Absent when the route has no fixed endpoint."},"baseURLEnv":{"type":"array","items":{"type":"string"},"description":"Environment variables used to construct a provider endpoint; absent when none are reported."},"nativeAuth":{"type":"object","properties":{"env":{"type":"array","items":{"type":"string"},"description":"Environment variables the route's authentication reads, in lookup order; empty when it reads none."},"oauth":{"type":"boolean","description":"Whether a stored OAuth sign-in can authenticate the route."}},"required":["env","oauth"],"additionalProperties":true,"description":"Authentication the adapter performs when the profile names no credential reference; absent when it reports none."},"error":{"type":"string","description":"Configuration diagnostic for repair; unaffected models may remain serviceable."}},"required":["provider","displayName","settingsNs","settingsPath"],"additionalProperties":true}},
       },
-      sourceLocation: {"file":"packages/llm/llm/src/index.ts","line":555,"column":3},
+      sourceLocation: {"file":"packages/llm/llm/src/index.ts","line":570,"column":3},
     },
     'llm/listProviders': {
       service: 'llm',
@@ -132,7 +132,7 @@ const $remote = createTypertRemoteInfo({
         description: 'detached provider metadata in registration order.',
         jsonSchema: {"type":"array","items":{"type":"object","properties":{"id":{"type":"string","description":"Provider route key used by {@link GenerateOptions.provider}."},"name":{"type":"string","description":"Human-readable provider name for selectors and diagnostics."}},"required":["id","name"],"additionalProperties":true}},
       },
-      sourceLocation: {"file":"packages/llm/llm/src/index.ts","line":483,"column":3},
+      sourceLocation: {"file":"packages/llm/llm/src/index.ts","line":498,"column":3},
     },
   },
 }, z)
@@ -493,7 +493,7 @@ export const TYPERT = {
           },
           {
             "name": "MessageSourceMap",
-            "declaration": "export interface MessageSourceMap {\n    user: { kind: 'user'; };\n    model: ModelMessageSource;\n    tool: ToolMessageSource;\n    'system-prompt': SystemPromptMessageSource;\n    'model-selection': { kind: 'model-selection'; } & ContextFormed;\n    'tool-registry': { kind: 'tool-registry'; };\n    'action-cards': { kind: 'action-cards'; through: SessionSeq; } & ContextFormed;\n    'runtime-context': { kind: 'runtime-context'; } & ContextFormed;\n    'user-rpc': { kind: 'user'; rpcId: SessionRequestId; clientTimeZone?: string; principal?: Principal; };\n    'working-directory': { kind: 'working-directory'; };\n    'user-approval': { kind: 'user-approval'; } & ContextFormed;\n    'agent-message': AgentMessageSource;\n    'subagent-settled': SubagentSettledMessageSource;\n    'skill-invocation': SkillInvocationSource;\n    'ptc-mode': { kind: 'ptc-mode'; };\n    'compact-checkpoint': CompactionCheckpointSource;\n    'cordis-host-runner': { kind: 'cordis-host-runner'; };\n    'user-question-reply': { kind: 'user-question-reply'; callId: ToolCallId; outcome: 'answered'; };\n    'team-message': TeamMessageSource;\n    goal: GoalMessageSource;\n    'plan-mode': { kind: 'plan-mode'; } & ContextFormed;\n    schedule: { kind: 'schedule'; } & ContextFormed;\n    'session-reference': SessionReferenceSource;\n    webhook: { readonly kind: 'webhook'; readonly provider: string; readonly source: WebhookSourceId; readonly deliveryId: WebhookDeliveryId; readonly ruleId: WebhookRuleId; readonly form: 'notice'; readonly summary: string; };\n}"
+            "declaration": "export interface MessageSourceMap {\n    user: { kind: 'user'; };\n    model: ModelMessageSource;\n    tool: ToolMessageSource;\n    'system-prompt': SystemPromptMessageSource;\n    'model-selection': { kind: 'model-selection'; } & ContextFormed;\n    'tool-registry': { kind: 'tool-registry'; };\n    'action-cards': { kind: 'action-cards'; through: SessionSeq; } & ContextFormed;\n    'runtime-context': { kind: 'runtime-context'; } & ContextFormed;\n    'team-message': TeamMessageSource;\n    'working-directory': { kind: 'working-directory'; };\n    'user-approval': { kind: 'user-approval'; } & ContextFormed;\n    'agent-message': AgentMessageSource;\n    'subagent-settled': SubagentSettledMessageSource;\n    'user-rpc': { kind: 'user'; rpcId: SessionRequestId; clientTimeZone?: string; principal?: Principal; };\n    'retry-rpc': { kind: 'retry'; rpcId: SessionRequestId; clientTimeZone?: string; principal?: Principal; };\n    'skill-invocation': SkillInvocationSource;\n    'ptc-mode': { kind: 'ptc-mode'; };\n    'compact-checkpoint': CompactionCheckpointSource;\n    'cordis-host-runner': { kind: 'cordis-host-runner'; };\n    'user-question-reply': { kind: 'user-question-reply'; callId: ToolCallId; outcome: 'answered'; };\n    goal: GoalMessageSource;\n    'plan-mode': { kind: 'plan-mode'; } & ContextFormed;\n    schedule: { kind: 'schedule'; } & ContextFormed;\n    'session-reference': SessionReferenceSource;\n    webhook: { readonly kind: 'webhook'; readonly provider: string; readonly source: WebhookSourceId; readonly deliveryId: WebhookDeliveryId; readonly ruleId: WebhookRuleId; readonly form: 'notice'; readonly summary: string; };\n}"
           },
           {
             "name": "ModelMessageSource",
@@ -596,8 +596,20 @@ export const TYPERT = {
             "declaration": "export type StreamChunk = { type: 'block-start'; index: number; blockType: ContentBlockType; } | { type: 'text-delta'; index: number; text: string; } | { type: 'reasoning-delta'; index: number; text: string; } | { type: 'tool-call-delta'; index: number; id: ToolCallId; name?: string; argumentsDelta: string; } | { type: 'block-end'; index: number; block: ContentBlock; } | { type: 'usage'; usage: TokenUsage; } | { type: 'finish'; reason: FinishReason; replayState?: ReplayEnvelope; };"
           },
           {
+            "name": "SubagentResult",
+            "declaration": "export interface SubagentResult {\n    readonly output: readonly ContentBlock[];\n    readonly structured?: unknown;\n    readonly diagnostic?: string;\n    readonly stopReason: SubagentStopReason;\n}"
+          },
+          {
             "name": "SubagentSettledMessageSource",
-            "declaration": "export interface SubagentSettledMessageSource {\n    readonly kind: 'subagent-settled';\n    readonly form: 'notice';\n    readonly summary: string;\n    readonly senderSessionId: SessionId;\n}"
+            "declaration": "export interface SubagentSettledMessageSource {\n    readonly kind: 'subagent-settled';\n    readonly form: 'notice';\n    readonly summary: string;\n    readonly stopReason?: SubagentResult['stopReason'];\n    readonly senderSessionId: SessionId;\n}"
+          },
+          {
+            "name": "SubagentStopReason",
+            "declaration": "export type SubagentStopReason = SubagentStopReasonMap[keyof SubagentStopReasonMap];"
+          },
+          {
+            "name": "SubagentStopReasonMap",
+            "declaration": "export interface SubagentStopReasonMap {\n    completed: 'completed';\n    aborted: 'aborted';\n    error: 'error';\n    'max-tokens': 'max-tokens';\n    refusal: 'refusal';\n}"
           },
           {
             "name": "SystemMessage",

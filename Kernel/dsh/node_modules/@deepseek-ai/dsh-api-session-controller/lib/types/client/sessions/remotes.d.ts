@@ -17,7 +17,7 @@ export interface SessionCommandsRemote {
 /** Narrow subagent namespace consumed by a Client Session and its manager. */
 export interface SessionSubagentsRemote {
     prompt(request: SubagentPromptRequest, signal?: AbortSignal): Promise<RemoteResult<SubagentPromptReceipt>>;
-    interruptByParent(childSessionId: SessionId, parentSessionId: SessionId, mode: 'continuable'): Promise<RemoteResult<SubagentInterruptReceipt>>;
+    interruptByUser(childSessionId: SessionId): Promise<RemoteResult<SubagentInterruptReceipt>>;
 }
 /** Generated Remote namespaces consumed by the Client Session object layer. */
 export interface SessionRemotes {

@@ -1,4 +1,5 @@
 import type { Api, Model, ModelThinkingLevel, SamplingParams, SimpleStreamOptions, StreamOptions, ThinkingBudgets, ThinkingLevel, TranscriptContext } from "../types.ts";
+/** Fit maxTokens into the context window, leaving room for the input being counted higher than estimated. */
 export declare function clampMaxTokensToContext(model: Model<Api>, context: TranscriptContext, maxTokens: number): number;
 export declare function resolveSamplingParams(model: Model<Api>, thinkingLevel: ModelThinkingLevel, requestParams?: SamplingParams): SamplingParams | undefined;
 export declare function buildBaseOptions(model: Model<Api>, context: TranscriptContext, options?: SimpleStreamOptions, apiKey?: string): StreamOptions;

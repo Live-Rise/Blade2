@@ -8,18 +8,14 @@ import type { SessionId } from '@deepseek-ai/dsh-session';
 import { z } from 'zod';
 declare const CONTROL_ID_SCHEMAS: {
     readonly 'subagent.prompt': z.ZodObject<{
-        parentSessionId: z.ZodString;
         childSessionId: z.ZodString;
-        mode: z.ZodLiteral<"continuable">;
         delivery: z.ZodEnum<{
             queue: "queue";
             steer: "steer";
         }>;
     }, z.core.$strip>;
     readonly 'subagent.interrupt': z.ZodObject<{
-        parentSessionId: z.ZodString;
         childSessionId: z.ZodString;
-        mode: z.ZodLiteral<"continuable">;
     }, z.core.$strip>;
 };
 /**

@@ -1,0 +1,1 @@
+{"version":3,"file":"present.d.ts","sourceRoot":"","sources":["../../src/present.ts"],"names":[],"mappings":"AAAA,8DAA8D;AAC9D,OAAO,KAAK,EAAE,eAAe,EAAE,MAAM,wBAAwB,CAAA;AAE7D;;;GAGG;AACH,wBAAgB,sBAAsB,IAAI,eAAe,CAExD;AAED;;;;GAIG;AACH,wBAAgB,uBAAuB,CAAC,IAAI,EAAE;IAAE,QAAQ,EAAE,MAAM,CAAC;IAAC,QAAQ,EAAE,MAAM,CAAC;IAAC,MAAM,EAAE,MAAM,CAAA;CAAE,GAAG,eAAe,CAErH"}

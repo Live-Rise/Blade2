@@ -1,0 +1,1 @@
+{"version":3,"file":"quote-rule.d.ts","sourceRoot":"","sources":["../../../src/client/quote-rule.ts"],"names":[],"mappings":"AAEA,OAAO,KAAK,EAAE,YAAY,EAAE,MAAM,gDAAgD,CAAA;AAElF,OAAO,QAAQ,gDAAgD,CAAC;IAC9D,UAAU,eAAe;QACvB,KAAK,EAAE;YAAE,QAAQ,CAAC,IAAI,EAAE,MAAM,CAAA;SAAE,CAAA;KACjC;CACF;AAED,6FAA6F;AAC7F,eAAO,MAAM,SAAS,EAAE,YAAY,CAAC,OAAO,CAiB3C,CAAA"}

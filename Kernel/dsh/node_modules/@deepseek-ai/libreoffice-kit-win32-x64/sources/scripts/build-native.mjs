@@ -1,9 +1,11 @@
 /** Build pinned Core and the owned LOK worker; installation never invokes this script. */
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { configureFlags, nativeBuildOptions, source, verifyConfigureInput } from '../engine/native/configure.mjs';
-import { corePatchFiles } from '../engine/native/core-patches.mjs';
+import { frameForwardingSdkFiles } from '../engine/native/frame-forwarding-sdk.mjs';
+import { corePatchFiles, hasNativePatchSet } from '../engine/native/core-patches.mjs';
 import { verifyBuildPlatform } from '../engine/native/build-platform.mjs';
 import { buildEnvironment as identityEnvironment, buildIdentity } from '../engine/build-identity.mjs';
 import { windowsCoreEnvironment } from '../engine/native/core-environment.mjs';
@@ -36,7 +38,7 @@ function run(command, argv, cwd, env = process.env) {
 }
 const revision = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: core, encoding: 'utf8' });
 if (revision.status !== 0 || revision.stdout.trim() !== source.revision) throw new Error(`Core must be checked out at ${source.revision}`);
-for (const file of corePatchFiles()) {
+if (!hasNativePatchSet(core)) for (const file of corePatchFiles()) {
   const patch = join(root, file);
   const check = (reverse) => spawnSync('git', ['apply', '--check', ...(reverse ? ['--reverse'] : []), patch], { cwd: core, stdio: 'ignore' }).status === 0;
   if (check(false)) run('git', ['apply', patch], core);
@@ -109,22 +111,76 @@ if (!args.includes('--resume')) {
   writeFileSync(identityFile, `${JSON.stringify(identity, null, 2)}\n`);
 }
 if (args.includes('--configure-only')) process.exit(0);
+if (/^(darwin|win32)-(arm64|x64)$/.test(platform)) {
+  frameForwardingSdkFiles(root);
+  const sdk = join(root, 'packages/frame-forwarding');
+  const { buildWebGPU } = await import(pathToFileURL(join(sdk, 'scripts/build-webgpu.mjs')));
+  const prefix = await buildWebGPU({ root: sdk, arch: platform.split('-')[1],
+    output: join(build, 'dsh-webgpu'), cache: join(root, '.build/webgpu-cache'), jobs: Number(parallelism) });
+  // gbuild passes these paths to native compilers/linkers, which cannot resolve /cygdrive paths.
+  const compilerPath = file => process.platform === 'win32' ? file.replaceAll('\\', '/') : file;
+  coreEnvironment.DSH_DAWN_PREFIX = compilerPath(prefix);
+  const library = name => compilerPath(join(prefix, 'lib', platform.startsWith('win32-') ? `${name}.lib` : `lib${name}.a`));
+  coreEnvironment.DSH_DAWN_LIBS = [library('dsh_webgpu'), library('dawn')].map(file => `"${file}"`).join(' ');
+}
+
 {
   const worker = readFileSync(join(root, 'engine/native/worker.cxx'), 'utf8')
     .replace('"../document-operations.hxx"', '"dsh-document-operations.hxx"');
   for (const [name, contents] of [
     ['dsh_native_worker.cxx', worker],
     ['dsh-document-operations.hxx', readFileSync(join(root, 'engine/document-operations.hxx'), 'utf8')],
+    ['load-diagnostics.hxx', readFileSync(join(root, 'engine/native/load-diagnostics.hxx'), 'utf8')],
   ]) {
     const destination = join(core, 'desktop/source/app', name);
     if (!existsSync(destination) || readFileSync(destination, 'utf8') !== contents)
       writeFileSync(destination, contents);
   }
-  run('git', ['add', '--intent-to-add', '--', 'desktop/source/app/dsh_native_worker.cxx',
-    'desktop/source/app/dsh-document-operations.hxx'], core);
+  const slideshow = join(core, 'desktop/source/lib/dsh_slideshow_probe.cxx');
+  const slideshowSource = readFileSync(join(root, 'engine/native/slideshow-probe.cxx'), 'utf8');
+  if (!existsSync(slideshow) || readFileSync(slideshow, 'utf8') !== slideshowSource)
+    writeFileSync(slideshow, slideshowSource);
+  const editor = join(core, 'desktop/source/lib/dsh_editor_session.cxx');
+  const editorSource = readFileSync(join(root, 'engine/native/editor-session.cxx'), 'utf8');
+  if (!existsSync(editor) || readFileSync(editor, 'utf8') !== editorSource) writeFileSync(editor, editorSource);
+  const editorPixels = join(core, 'desktop/source/lib/editor-pixels.hxx');
+  const editorPixelsSource = readFileSync(join(root, 'engine/native/editor-pixels.hxx'), 'utf8');
+  if (!existsSync(editorPixels) || readFileSync(editorPixels, 'utf8') !== editorPixelsSource) writeFileSync(editorPixels, editorPixelsSource);
+  frameForwardingSdkFiles(root);
+  rmSync(join(core, 'desktop/source/lib/dsh_webgpu.h'), { force: true });
+  for (const [source, name] of [
+    ['engine/native/editor-render.hxx', 'editor-render.hxx'],
+    ['packages/frame-forwarding/include/dsh_frame_forwarding.h', 'dsh_frame_forwarding.h'],
+    ['packages/frame-forwarding/src/graphite-interop-internal.hxx', 'graphite-interop-internal.hxx'],
+    ['packages/frame-forwarding/src/producer-internal.h', 'producer-internal.h'],
+    ['packages/frame-forwarding/src/transport.h', 'transport.h'],
+    ['packages/frame-forwarding/src/relay-transport.inc', 'relay-transport.inc'],
+    ['packages/frame-forwarding/src/transport.cc', 'dsh_frame_forwarding_transport.cxx'],
+    ['packages/frame-forwarding/src/producer.cc', 'dsh_frame_forwarding_producer.cxx'],
+  ]) {
+    const contents = readFileSync(join(root, source), 'utf8');
+    const destination = join(core, 'desktop/source/lib', name);
+    if (!existsSync(destination) || readFileSync(destination, 'utf8') !== contents) writeFileSync(destination, contents);
+  }
+  for (const [source, target] of [
+    ['engine/native/graphite.hxx', 'vcl/inc/skia/dsh_graphite.hxx'],
+    ['engine/native/graphite.cxx', 'vcl/skia/dsh_graphite.cxx'],
+    ['engine/native/ganesh.hxx', 'vcl/inc/skia/dsh_ganesh.hxx'],
+    ['engine/native/ganesh.cxx', 'vcl/skia/dsh_ganesh.cxx'],
+    ['engine/native/ganesh-metal.mm', 'vcl/skia/dsh_ganesh_metal.mm'],
+    ['engine/native/ganesh-vulkan.cxx', 'vcl/skia/dsh_ganesh_vulkan.cxx'],
+  ]) {
+    const contents = readFileSync(join(root, source), 'utf8');
+    const destination = join(core, target);
+    if (!existsSync(destination) || readFileSync(destination, 'utf8') !== contents) writeFileSync(destination, contents);
+  }
+  run('git', ['add', '--intent-to-add', '--', 'vcl/inc/skia/dsh_graphite.hxx', 'vcl/skia/dsh_graphite.cxx', 'vcl/inc/skia/dsh_ganesh.hxx', 'vcl/skia/dsh_ganesh.cxx', 'vcl/skia/dsh_ganesh_metal.mm', 'vcl/skia/dsh_ganesh_vulkan.cxx', 'desktop/source/lib/graphite-interop-internal.hxx', 'desktop/source/app/dsh_native_worker.cxx',
+    'desktop/source/app/dsh-document-operations.hxx', 'desktop/source/app/load-diagnostics.hxx', 'desktop/source/lib/dsh_slideshow_probe.cxx', 'desktop/source/lib/dsh_editor_session.cxx',
+    'desktop/source/lib/editor-pixels.hxx', 'desktop/source/lib/editor-render.hxx', 'desktop/source/lib/dsh_frame_forwarding.h',
+    'desktop/source/lib/producer-internal.h', 'desktop/source/lib/transport.h', 'desktop/source/lib/relay-transport.inc', 'desktop/source/lib/dsh_frame_forwarding_transport.cxx', 'desktop/source/lib/dsh_frame_forwarding_producer.cxx'], core);
 }
 run(make, ['build', `PARALLELISM=${parallelism}`], build, coreEnvironment);
-const executable = join(build, `libreoffice-kit${process.platform === 'win32' ? '.exe' : ''}`);
+const executable = join(build, `dsoffice${process.platform === 'win32' ? '.exe' : ''}`);
 const config = readFileSync(join(build, 'config_host.mk'), 'utf8');
 if (!/^export DISABLE_DYNLOADING=TRUE$/m.test(config)) throw new Error('Native engines require static Core linkage');
 const setting = name => {

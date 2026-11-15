@@ -1,0 +1,16 @@
+diff --git a/sc/source/core/data/global.cxx b/sc/source/core/data/global.cxx
+--- a/sc/source/core/data/global.cxx
++++ b/sc/source/core/data/global.cxx
+@@ -499,9 +499,9 @@ void ScGlobal::InitPPT()
+ 
+     if (comphelper::LibreOfficeKit::isActive())
+     {
+-        // LOK: the below limited precision is not enough for RowColumnHeader.
+-        nScreenPPTX = o3tl::convert<double>(pDev->GetDPIX(), o3tl::Length::twip, o3tl::Length::in);
+-        nScreenPPTY = o3tl::convert<double>(pDev->GetDPIY(), o3tl::Length::twip, o3tl::Length::in);
++        // LOK client pixels use 96 DPI independently of the native display.
++        nScreenPPTX = o3tl::convert<double>(96, o3tl::Length::twip, o3tl::Length::in);
++        nScreenPPTY = o3tl::convert<double>(96, o3tl::Length::twip, o3tl::Length::in);
+     }
+     else
+     {

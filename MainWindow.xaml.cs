@@ -1886,11 +1886,7 @@ public sealed partial class MainWindow : Window
         ["跨会话搜索"] = "Cross-session search",
         ["开启后每个 Agent 获得一组只读检索工具，可搜索并引用当前工作区更早的会话；内容索引在首次搜索时打开、全 Agent 共享，侧栏搜索行为不变。"] =
             "When on, every Agent gains a set of read-only search tools to find and cite earlier sessions in the current workspace. The content index opens on the first search and is shared by all Agents; sidebar search behavior is unchanged.",
-        ["多代理（Agent Teams）"] = "Agent teams (multi-agent)",
-        ["开启后 Agent 可把任务委派给团队成员协作完成：成员名册、共享任务板与队友会话在会话内可见。注意：多代理启用期间普通 Subagent 委派按内核设计一并停用。"] =
-            "When on, the Agent can delegate work to teammates and collaborate with them: the roster, shared task board, and teammate sessions are visible in chat. Note: while agent teams are enabled, ordinary subagent delegation is disabled by kernel design.",
         ["启用跨会话搜索"] = "Enable cross-session search",
-        ["启用多代理"] = "Enable agent teams",
         ["挂载状态"] = "Mount status",
         ["电脑控制注册表"] = "Computer-use registry",
         ["Cua Driver 驱动"] = "Cua Driver provider",
@@ -14929,10 +14925,6 @@ public sealed partial class MainWindow : Window
             "跨会话搜索",
             "开启后每个 Agent 获得一组只读检索工具，可搜索并引用当前工作区更早的会话；内容索引在首次搜索时打开、全 Agent 共享，侧栏搜索行为不变。",
             "Setting_session-search_enabled", "启用跨会话搜索"),
-        [DshPluginBootstrap.AgentTeamBundle] = new(
-            "多代理（Agent Teams）",
-            "开启后 Agent 可把任务委派给团队成员协作完成：成员名册、共享任务板与队友会话在会话内可见。注意：多代理启用期间普通 Subagent 委派按内核设计一并停用。",
-            "Setting_agent-team_enabled", "启用多代理"),
     };
 
     /// <summary>「实验性功能」分区：内核 OPTIONAL_BUNDLES 全集（出厂关闭）的开关页。开关增删

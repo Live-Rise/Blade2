@@ -24,6 +24,12 @@ export declare function isSegment(value: string): boolean;
  */
 export declare function checkedRepository(ref: ChangeRequestRef): ForgeRepository;
 /**
+ * Whether a value is a full commit object name that can be inlined into a request.
+ * @param value - candidate commit.
+ * @returns whether it is 40 or 64 hexadecimal digits.
+ */
+export declare function isCommit(value: string): boolean;
+/**
  * Parse a Git remote URL. Accepts `http(s)://[user@]host[:port]/owner/name`,
  * `ssh://[user@]host[:port]/owner/name`, `git://host/owner/name`, and the
  * scp-like `[user@]host:owner/name`, each with an optional `.git` suffix or

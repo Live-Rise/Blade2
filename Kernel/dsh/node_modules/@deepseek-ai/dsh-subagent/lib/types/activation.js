@@ -5,7 +5,7 @@ import { assertNever } from '@deepseek-ai/dsh-util-values';
 import { finalAssistantOutput } from "./assistant-output.js";
 import { epochStopReason } from "./lifecycle.js";
 import { SubagentError } from "./error.js";
-/** Process-local slots shared through uninterrupted continuable parent links. */
+/** Process-local capacity shared by every member of a subagent tree. */
 export class ActivationPool {
     slots = new Set();
     /**

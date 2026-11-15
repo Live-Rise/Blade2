@@ -1,0 +1,21 @@
+diff --git a/sd/source/ui/annotations/annotationmanager.cxx b/sd/source/ui/annotations/annotationmanager.cxx
+--- a/sd/source/ui/annotations/annotationmanager.cxx
++++ b/sd/source/ui/annotations/annotationmanager.cxx
+@@ -1040,7 +1040,7 @@
+         if (pObject)
+         {
+             nIndex++;
+-            pObject->SetVisible(mbShowAnnotations);
++            pObject->SetVisible(mbShowAnnotations && isVisibleAnnotations());
+             continue;
+         }
+ 
+@@ -1146,7 +1146,7 @@
+         }
+ 
+         pNewObject->SetRelativePos(aRectangle.TopLeft());
+-        pNewObject->SetVisible(mbShowAnnotations);
++        pNewObject->SetVisible(mbShowAnnotations && isVisibleAnnotations());
+ 
+         pView->InsertObjectAtView(pNewObject.get(), *pView->GetSdrPageView());
+ 

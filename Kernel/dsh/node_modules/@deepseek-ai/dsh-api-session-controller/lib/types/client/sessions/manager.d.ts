@@ -141,8 +141,6 @@ export declare class SessionManager {
      * @returns completion of the current or newly started read.
      */
     refreshProjections(sessionId: SessionId): Promise<void>;
-    private agentAvailable;
-    private updateParentAvailability;
     /** Full refresh via session.list (single-flight within one Host generation). */
     refreshList(): Promise<void>;
     /**

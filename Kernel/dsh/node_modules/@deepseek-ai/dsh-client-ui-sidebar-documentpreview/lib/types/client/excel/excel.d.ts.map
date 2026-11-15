@@ -1,0 +1,1 @@
+{"version":3,"file":"excel.d.ts","sourceRoot":"","sources":["../../../../src/client/excel/excel.tsx"],"names":[],"mappings":"AAAA,4EAA4E;AAC5E,OAAO,EAA+B,KAAK,SAAS,EAAE,MAAM,OAAO,CAAA;AAMnE,OAAO,KAAK,EAAE,oBAAoB,EAAE,MAAM,qBAAqB,CAAA;AAO/D;;;;;GAKG;AACH,wBAAgB,SAAS,CAAC,EAAE,OAAO,EAAE,MAAM,EAAE,MAAM,EAAE,CAAC,EAAE,OAAO,EAAE,EAAE,oBAAoB,GAAG,SAAS,CA+ClG"}

@@ -88,14 +88,14 @@ export function verifyEngineMetadata(manifest, prebuild) {
   }
   const exact = (actual, expected) => JSON.stringify(actual) === JSON.stringify(expected);
   if (prebuild.platform === 'wasm') {
-    assert(JSON.stringify(manifest.os) === '["linux"]' && manifest.cpu === undefined && manifest.libc === undefined, 'WASM package must install only on Linux, for every CPU and libc');
-    assert(engine?.kind === 'wasm' && engine.loader === 'assets/soffice.cjs' && engine.wasm === 'assets/soffice.wasm'
-      && engine.data === 'assets/soffice.data' && engine.metadata === 'assets/soffice.data.js.metadata'
+    assert(manifest.os === undefined && manifest.cpu === undefined && manifest.libc === undefined, 'WASM package must install on every OS, CPU and libc');
+    assert(engine?.kind === 'wasm' && engine.loader === 'assets/dsoffice.cjs' && engine.wasm === 'assets/dsoffice.wasm'
+      && engine.data === 'assets/dsoffice.data' && engine.metadata === 'assets/dsoffice.data.js.metadata'
       && engine.programDirectory === '/instdir/program', 'Unsupported WASM engine paths');
   } else {
     assert(target && exact(manifest.os, [target.os]) && exact(manifest.cpu, [target.cpu])
       && (target.libc ? exact(manifest.libc, [target.libc]) : manifest.libc === undefined), 'Native platform disagrees with package os/cpu/libc');
-    assert(engine?.kind === 'native' && engine.executable === `bin/libreoffice-kit${target.os === 'win32' ? '.exe' : ''}`
+    assert(engine?.kind === 'native' && engine.executable === `bin/dsoffice${target.os === 'win32' ? '.exe' : ''}`
       && typeof engine.programDirectory === 'string' && (engine.programDirectory === 'program' || engine.programDirectory.startsWith('program/')), 'Unsupported native engine paths');
     safePath(engine.programDirectory);
   }

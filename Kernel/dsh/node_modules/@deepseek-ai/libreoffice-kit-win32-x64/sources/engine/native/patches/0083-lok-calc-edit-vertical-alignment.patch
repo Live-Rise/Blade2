@@ -1,0 +1,15 @@
+diff --git a/sc/source/core/tool/editutil.cxx b/sc/source/core/tool/editutil.cxx
+index 433be6bb1..bfb0c29bb 100644
+--- a/sc/source/core/tool/editutil.cxx
++++ b/sc/source/core/tool/editutil.cxx
+@@ -408,6 +408,10 @@ tools::Rectangle ScEditUtil::GetEditArea( const ScPatternAttr* pPattern, bool bF
+     bool bAsianVertical = pPattern->GetItem( ATTR_STACKED ).GetValue() &&
+         pPattern->GetItem( ATTR_VERTICAL_ASIAN ).GetValue();
+ 
++    // Tiled editing preserves the cell alignment used by document painting.
++    if (bIsTiledRendering && !bAsianVertical)
++        bForceToTop = false;
++
+     if ( eJust == SvxCellVerJustify::Top ||
+             ( bForceToTop && ( ScModule::get()->GetInputOptions().GetTextWysiwyg() || bAsianVertical ) ) )
+         nDifY = nTopMargin;

@@ -11,15 +11,11 @@ import { SubagentError } from "./error.js";
 const SESSION_ID_SCHEMA = z.string().min(1);
 const CONTROL_ID_SCHEMAS = {
     'subagent.prompt': z.object({
-        parentSessionId: SESSION_ID_SCHEMA,
         childSessionId: SESSION_ID_SCHEMA,
-        mode: z.literal('continuable'),
         delivery: z.enum(['queue', 'steer']),
     }),
     'subagent.interrupt': z.object({
-        parentSessionId: SESSION_ID_SCHEMA,
         childSessionId: SESSION_ID_SCHEMA,
-        mode: z.literal('continuable'),
     }),
 };
 /**
@@ -59,7 +55,7 @@ export function rejectPrompt(error, childSessionId, signal) {
             case 'NOT_RESUMABLE':
                 throw new RemoteError('subagent/not-resumable', 'subagent cannot be resumed', { childSessionId }, { cause: error });
             case 'UNAUTHORIZED':
-                throw new RemoteError('subagent/unauthorized', 'subagent does not belong to this parent', { childSessionId }, { cause: error });
+                throw new RemoteError('subagent/unauthorized', 'subagent membership in the active tree could not be verified', { childSessionId }, { cause: error });
             case 'DRAINING':
             case 'ACTIVATION_CLOSING':
             case 'ACTIVATION_LIMIT_REACHED':

@@ -1,0 +1,33 @@
+diff --git a/desktop/source/lib/init.cxx b/desktop/source/lib/init.cxx
+index a605030..716f462 100644
+--- a/desktop/source/lib/init.cxx
++++ b/desktop/source/lib/init.cxx
+@@ -59,6 +59,8 @@
+ 
+ #include <boost/property_tree/json_parser.hpp>
+ #include <boost/algorithm/string.hpp>
++#include <cstdlib>
++#include <cstring>
+ 
+ #include <LibreOfficeKit/LibreOfficeKit.h>
+ #include <LibreOfficeKit/LibreOfficeKitEnums.h>
+@@ -8274,7 +8276,19 @@ static int lo_initialize(LibreOfficeKit* pThis, const char* pAppPath, const char
+                 return false;
+ 
+             // Force headless -- this is only for bitmap rendering.
++            // A requested Skia GPU backend needs the platform VCL plugin: svp forces bitmap
++            // rendering, and bitmap rendering makes Skia select its raster backend. An unset
++            // or raster SAL_SKIA keeps the headless bitmap plugin.
++            const char* dshSkiaMethod = std::getenv("SAL_SKIA");
++            const bool dshSkiaGpu = dshSkiaMethod != nullptr
++                && (std::strcmp(dshSkiaMethod, "metal") == 0 || std::strcmp(dshSkiaMethod, "vulkan") == 0);
++#if defined(MACOSX)
++            rtl::Bootstrap::set(u"SAL_USE_VCLPLUGIN"_ustr, dshSkiaGpu ? u"osx"_ustr : u"svp"_ustr);
++#elif defined(_WIN32)
++            rtl::Bootstrap::set(u"SAL_USE_VCLPLUGIN"_ustr, dshSkiaGpu ? u"win"_ustr : u"svp"_ustr);
++#else
+             rtl::Bootstrap::set(u"SAL_USE_VCLPLUGIN"_ustr, u"svp"_ustr);
++#endif
+ 
+             // We specifically need to make sure we have the "headless"
+             // command arg set (various code specifically checks via

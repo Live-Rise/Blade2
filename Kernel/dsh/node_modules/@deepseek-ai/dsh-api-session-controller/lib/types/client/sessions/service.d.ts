@@ -197,7 +197,8 @@ export declare class ClientSessions implements ISessions {
      *   seq (a real event seq the caller already knows; a cut inside an open
      *   turn is balanced Host-side with synthetic closers, and omission selects
      *   the latest completed-turn prefix), and whether to increment an
-     *   inherited durable title before resolving, plus permission to start source migration.
+     *   inherited durable title, skipping numbers Host-listed titles already use,
+     *   before resolving, plus permission to start source migration.
      * @returns the child session id.
      * @throws {SessionForkError} with the source id.
      * @throws {Error} when a requested child-title rename fails after creation.

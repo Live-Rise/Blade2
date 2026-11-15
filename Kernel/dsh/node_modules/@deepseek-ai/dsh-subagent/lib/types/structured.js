@@ -26,7 +26,7 @@ export const STRUCTURED_OUTPUT_INSTRUCTION = 'When you have your final answer, y
  * @param childCtx - the child agent's scope context (`setup`'s argument).
  * @param schema - the trusted, already-asserted schema subset to enforce (see
  *   `assertObjectJsonSchema` in dsh-tools).
- * @param canComplete - whether accepted input and owned child work have finished.
+ * @param canComplete - whether accepted input has been processed.
  * @returns the attachment handle (read `captured()` after the child settles).
  */
 export function attachStructuredRuntime(childCtx, schema, canComplete) {
@@ -67,7 +67,7 @@ export function attachStructuredRuntime(childCtx, schema, canComplete) {
             if (violations.length > 0)
                 throw new ToolArgsError(violations);
             if (!canComplete())
-                throw new Error('Wait for all delegated child tasks to finish and process pending messages before submitting structured output.');
+                throw new Error('Process pending messages before submitting structured output.');
             // Two-phase commit, keyed by THIS execution: later transformable
             // waterfalls may still turn the success into an error. ToolRuntime has
             // already frozen model-bound arguments at the actual input boundary.

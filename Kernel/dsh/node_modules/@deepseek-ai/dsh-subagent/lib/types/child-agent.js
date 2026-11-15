@@ -130,10 +130,11 @@ export const SUBAGENT_DELEGATION_CONTEXT = 'You are a delegated subagent: your p
     + 'limitation in your reply so the delegating agent can handle it.';
 /**
  * Compose a child before publication and restore historical descriptor overrides.
- * Explicit selection mounts the named preset; omission synchronously joins the
- * parent's current generation. Registrations belong to the child's scope.
+ * Explicit selection mounts the named preset. Omission joins a supplied creator's
+ * current generation; a restored child without a saved preset uses host composition.
+ * Registrations belong to the child's scope.
  * @param childCtx - the child agent's scoped creation context.
- * @param parent - the delegating parent used when no preset is selected.
+ * @param parent - creator for fresh delegation; absent during target-only restoration.
  * @param composition - independent preset and any overrides read from a historical descriptor.
  * @returns A promise when mounting an independent preset; otherwise completes synchronously.
  */
@@ -147,7 +148,8 @@ export function applyChildComposition(childCtx, parent, composition) {
             applyChildOverrides(childCtx, composition);
         });
     }
-    childCtx.get('agentPresets')?.composeFrom(childCtx, parent.ctx);
+    if (parent !== undefined)
+        childCtx.get('agentPresets')?.composeFrom(childCtx, parent.ctx);
     applyChildOverrides(childCtx, composition);
 }
 function applyChildOverrides(childCtx, composition) {

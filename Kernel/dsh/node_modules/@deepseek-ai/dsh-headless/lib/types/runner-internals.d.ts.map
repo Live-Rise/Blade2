@@ -1,0 +1,1 @@
+{"version":3,"file":"runner-internals.d.ts","sourceRoot":"","sources":["../../src/runner-internals.ts"],"names":[],"mappings":"AAAA;;;;;GAKG;AAEH,kFAAkF;AAClF,eAAO,MAAM,SAAS,EAAE;IACtB,MAAM,EAAE;QAAE,KAAK,CAAC,KAAK,EAAE,MAAM,GAAG,OAAO,CAAA;KAAE,CAAA;IACzC,MAAM,EAAE;QAAE,KAAK,CAAC,KAAK,EAAE,MAAM,GAAG,OAAO,CAAA;KAAE,CAAA;IACzC,SAAS,EAAE,MAAM,OAAO,CAAC,MAAM,CAAC,CAAA;CASjC,CAAA"}

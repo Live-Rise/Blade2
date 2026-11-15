@@ -1,0 +1,1 @@
+{"version":3,"file":"BrowserFrame.js","sourceRoot":"","sources":["../../../../src/client/browser/BrowserFrame.ts"],"names":[],"mappings":"AA2CA;;;GAGG;AACH,MAAM,UAAU,iBAAiB;IAC/B,OAAO,EAAE,MAAM,EAAE,SAAS,EAAE,OAAO,EAAE,OAAO,EAAE,OAAO,EAAE,KAAK,EAAE,SAAS,EAAE,KAAK,EAAE,YAAY,EAAE,KAAK;QACjG,KAAK,EAAE,SAAS,EAAE,cAAc,EAAE,SAAS,EAAE,CAAA;AACjD,CAAC"}
